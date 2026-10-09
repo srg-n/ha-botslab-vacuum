@@ -80,6 +80,24 @@ def map_document(room_count: int = 2) -> dict:
     }
 
 
+def sample_map_png(width: int = MAP_WIDTH, height: int = MAP_HEIGHT) -> bytes:
+    """A real PNG of a synthetic floor plan.
+
+    Handing the camera a bare PNG signature instead of a decodable image would
+    let a test pass while the renderer was broken, so the fixture goes through
+    the same code path production uses.
+    """
+    from custom_components.botslab_vacuum import map_util
+
+    pixels = bytes(
+        0 if (x + y) % 7 == 0 else 127 for y in range(height) for x in range(width)
+    )
+    return map_util.render_map_png(width, height, pixels)
+
+
+MAP_PNG = sample_map_png()
+
+
 def device_properties() -> dict:
     return {
         "BatteryLevel": 88,
@@ -127,9 +145,25 @@ def make_config_entry(**kwargs) -> MockConfigEntry:
     )
 
 
-def patch_api(room_count: int = 2) -> None:
-    """Replace every cloud call on the API client with a canned response."""
+def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None:
+    """Replace every cloud call on the API client with a canned response.
+
+    Three separate things have to be neutralised, and missing any one of them
+    makes the config entry fail to load rather than fail the test loudly:
+
+    * ``async_login`` is imported into both ``coordinator`` and
+      ``config_flow``, so it has to be patched in each of them. Leaving it
+      real makes ``ensure_valid_session`` reach the network on every setup.
+    * ``app_login`` has to set ``sid`` and ``push_alias`` on the instance.
+      The real method does, and ``ensure_valid_session`` returns early when
+      both are present; a bare ``AsyncMock`` leaves them empty, which sends
+      every refresh down the re-authentication path instead.
+    * ``BotslabQPush.run`` opens a real TCP connection in a background task.
+    """
     from custom_components.botslab_vacuum import api as api_module
+    from custom_components.botslab_vacuum import config_flow as config_flow_module
+    from custom_components.botslab_vacuum import coordinator as coordinator_module
+    from custom_components.botslab_vacuum import qpush as qpush_module
     from custom_components.botslab_vacuum.models import BotslabMapInfo
 
     props = device_properties()
@@ -157,12 +191,19 @@ def patch_api(room_count: int = 2) -> None:
             }
         ]
 
+    async def app_login(api_self) -> dict:
+        """Mirror the real method, which stores the session on the instance."""
+        api_self.sid = "sid-test"
+        api_self.push_alias = "alias-test"
+        api_self.qid = "qid-test"
+        return {"sid": "sid-test", "push_alias": "alias-test", "qid": "qid-test"}
+
     replacements = {
-        "app_login": AsyncMock(return_value={}),
+        "app_login": app_login,
         "get_devices": get_devices,
         "get_property_extended": AsyncMock(return_value=(props, {})),
         "get_map_json": AsyncMock(return_value=(document, props)),
-        "get_live_map": AsyncMock(return_value=b"\x89PNG\r\n\x1a\n"),
+        "get_live_map": AsyncMock(return_value=MAP_PNG),
         "get_map_info": AsyncMock(side_effect=lambda *a, **k: build_map_info()),
         "get_cached_map_info": lambda _self, *_a, **_k: build_map_info(),
         "get_cached_rooms": lambda _self, *_a, **_k: api_module.BotslabVacuumApi._parse_rooms(
@@ -191,13 +232,26 @@ def patch_api(room_count: int = 2) -> None:
     for name, impl in replacements.items():
         if not hasattr(api_module.BotslabVacuumApi, name):
             continue
-        if isinstance(impl, AsyncMock) or callable(impl):
-            patch.object(api_module.BotslabVacuumApi, name, impl).start()
+        patch.object(api_module.BotslabVacuumApi, name, impl).start()
+
+    tokens = {"q": "q-token", "t": "t-token", "qid": "qid-test"}
+    login_mock = (
+        AsyncMock(side_effect=login_error)
+        if login_error is not None
+        else AsyncMock(return_value=dict(tokens))
+    )
+    patch.object(coordinator_module, "async_login", login_mock).start()
+    patch.object(config_flow_module, "async_login", login_mock).start()
+
+    # The listener runs forever in production; tests only care that it starts
+    # and stops, so the socket itself is replaced.
+    patch.object(qpush_module.BotslabQPush, "run", AsyncMock(return_value=None)).start()
 
 
 @pytest.fixture(autouse=True)
-def auto_mock_api():
-    """Mock the cloud for every test unless it opts out."""
+def mock_cloud():
+    """Apply the cloud mock to every test, then tear all patches down."""
+    patch_api()
     yield
     patch.stopall()
 
