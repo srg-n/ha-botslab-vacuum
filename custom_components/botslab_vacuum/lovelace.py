@@ -6,10 +6,13 @@ change whenever rooms are renamed or the floor plan is edited, so writing them
 by hand goes stale.
 
 This module renders a ready-to-paste card using live geometry. The generated
-YAML embeds concrete entity ids, so it can be pasted as-is.
+YAML embeds concrete entity ids, which the caller resolves from the entity
+registry: an entity id cannot be derived from a unique id, because Home
+Assistant builds it from the entity and device names instead.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 from typing import Any
 
@@ -17,6 +20,26 @@ from .models import BotslabVacuumDevice
 
 # Minimum vertices for a polygon to be drawable.
 MIN_OUTLINE_VERTICES = 3
+
+# Rows of the maintenance card, as
+# ``(key, platform, unique id suffix, label)``. The platform and unique id
+# suffix are what the entity registry is queried with, so this table is the
+# one place that knows which entity backs which setting.
+MAINTENANCE_ROWS: tuple[tuple[str, str, str, str], ...] = (
+    ("filter_life", "sensor", "filter_life", "HEPA Filter"),
+    ("main_brush_life", "sensor", "main_brush_life", "Main Brush"),
+    ("side_brush_life", "sensor", "side_brush_life", "Side Brush"),
+    ("sensor_dirtiness", "sensor", "sensor_dirtiness", "Sensors Cleanliness"),
+    ("water_level", "select", "water_level", "Water Flow Level"),
+    ("mop_mode", "select", "mop_mode", "Cleaning Mode"),
+    ("volume_level", "number", "volume_level", "Voice Volume"),
+    ("auto_boost", "switch", "auto_boost", "Carpet Auto Boost"),
+    ("button_backlight", "switch", "button_backlight", "Button Backlight"),
+    ("collision_protection", "switch", "collision_protection", "Collision Protection"),
+    ("locate", "button", "locate", "Locate Robot"),
+    ("sync_map", "button", "sync_map", "Sync Map"),
+    ("refresh_rooms", "button", "refresh_rooms", "Refresh Rooms"),
+)
 
 
 def _yaml_str(value: str) -> str:
@@ -64,14 +87,19 @@ def build_predefined_selections(device: BotslabVacuumDevice, indent: str = "    
     return "\n".join(lines)
 
 
-def build_map_card(device: BotslabVacuumDevice) -> str:
+def build_map_card(device: BotslabVacuumDevice, entity_ids: Mapping[str, str]) -> str:
     """Return a complete xiaomi-vacuum-map-card configuration for one robot.
 
     The map camera publishes ``calibration_points`` and ``rooms`` as
     attributes, so calibration needs no manual configuration.
+
+    ``entity_ids`` must contain the real ``vacuum`` and ``camera`` entity ids.
+    They are looked up by the caller because Home Assistant derives an entity
+    id from the entity and device names, not from the unique id, so guessing it
+    from the serial number produces a card that points at nothing.
     """
-    vacuum_id = f"vacuum.{device.unique_id}_vacuum"
-    camera_id = f"camera.{device.unique_id}_map_camera"
+    vacuum_id = entity_ids["vacuum"]
+    camera_id = entity_ids["camera"]
     room_count = len(_drawable_rooms(device))
 
     selections = build_predefined_selections(device)
@@ -142,39 +170,34 @@ map_modes:
 """
 
 
-def build_maintenance_card(device: BotslabVacuumDevice) -> str:
-    """Return a plain entities card with this robot's settings."""
-    sn = device.unique_id
-    rows = [
-        ("sensor", "filter_life", "HEPA Filter"),
-        ("sensor", "main_brush_life", "Main Brush"),
-        ("sensor", "side_brush_life", "Side Brush"),
-        ("sensor", "sensor_dirtiness", "Sensors Cleanliness"),
-        ("select", "water_level", "Water Flow Level"),
-        ("select", "mop_mode", "Cleaning Mode"),
-        ("number", "volume_level", "Voice Volume"),
-        ("switch", "auto_boost", "Carpet Auto Boost"),
-        ("switch", "button_backlight", "Button Backlight"),
-        ("switch", "collision_protection", "Collision Protection"),
-        ("button", "locate", "Locate Robot"),
-        ("button", "sync_map", "Sync Map"),
-        ("button", "refresh_rooms", "Refresh Rooms"),
-    ]
+def build_maintenance_card(
+    device: BotslabVacuumDevice, entity_ids: Mapping[str, str]
+) -> str:
+    """Return a plain entities card with this robot's settings.
+
+    Rows whose entity is not registered are left out, which happens for
+    example when the map is disabled and the camera entity was never created.
+    """
     lines = [
         "type: entities",
         f"title: {device.device_title}",
         "show_header_toggle: false",
         "entities:",
     ]
-    for domain, key, label in rows:
-        lines.append(f"  - entity: {domain}.{sn}_{key}")
+    for key, _platform, _unique_suffix, label in MAINTENANCE_ROWS:
+        entity_id = entity_ids.get(key)
+        if not entity_id:
+            continue
+        lines.append(f"  - entity: {entity_id}")
         lines.append(f"    name: {_yaml_str(label)}")
     return "\n".join(lines)
 
 
-def build_full_dashboard_snippet(device: BotslabVacuumDevice) -> str:
+def build_full_dashboard_snippet(
+    device: BotslabVacuumDevice, entity_ids: Mapping[str, str]
+) -> str:
     """Return both cards with a document separator between them."""
     return (
-        f"{build_map_card(device)}\n---\n"
-        f"{build_maintenance_card(device)}\n"
+        f"{build_map_card(device, entity_ids)}\n---\n"
+        f"{build_maintenance_card(device, entity_ids)}\n"
     )

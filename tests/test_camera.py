@@ -4,11 +4,14 @@ from __future__ import annotations
 from homeassistant.core import HomeAssistant
 
 from custom_components.botslab_vacuum.const import DOMAIN
-from custom_components.botslab_vacuum.lovelace import build_map_card
 
-from .conftest import TEST_SN, make_config_entry, patch_api, setup_entry
-
-MAP_CAMERA = f"camera.{TEST_SN}_map_camera"
+from .conftest import (
+    entity_id_for,
+    make_config_entry,
+    patch_api,
+    setup_entry,
+    state_for,
+)
 
 
 async def _setup(hass: HomeAssistant):
@@ -17,19 +20,22 @@ async def _setup(hass: HomeAssistant):
     return hass
 
 
+def _map_state(hass: HomeAssistant):
+    state = state_for(hass, "camera", "map_camera")
+    assert state is not None, "harita kamera entity'si oluşturulmadı"
+    return state
+
+
 async def test_camera_entity_exists(hass: HomeAssistant) -> None:
     """The map is exposed as a camera entity."""
     await _setup(hass)
-    assert hass.states.get(MAP_CAMERA) is not None
+    assert _map_state(hass) is not None
 
 
 async def test_camera_publishes_calibration_points(hass: HomeAssistant) -> None:
     """Calibration corners are published so dashboards need no setup."""
     await _setup(hass)
-    state = hass.states.get(MAP_CAMERA)
-    assert state is not None
-
-    points = state.attributes.get("calibration_points")
+    points = _map_state(hass).attributes.get("calibration_points")
     assert isinstance(points, list) and len(points) == 3
     for point in points:
         assert set(point) == {"vacuum", "map"}
@@ -40,11 +46,11 @@ async def test_camera_publishes_calibration_points(hass: HomeAssistant) -> None:
 async def test_calibration_corners_match_map_geometry(hass: HomeAssistant) -> None:
     """Corner mapping is consistent with the map's own numbers."""
     await _setup(hass)
-    state = hass.states.get(MAP_CAMERA)
+    state = _map_state(hass)
     points = state.attributes["calibration_points"]
 
-    width = state.attributes["width"]
-    height = state.attributes["height"]
+    width = state.attributes["map_width"]
+    height = state.attributes["map_height"]
     resolution = state.attributes["resolution"]
     x_min = state.attributes["x_min"]
     y_min = state.attributes["y_min"]
@@ -64,8 +70,7 @@ async def test_calibration_corners_match_map_geometry(hass: HomeAssistant) -> No
 async def test_camera_publishes_room_outlines(hass: HomeAssistant) -> None:
     """Room polygons are published in the shape map cards consume."""
     await _setup(hass)
-    state = hass.states.get(MAP_CAMERA)
-    rooms = state.attributes.get("rooms")
+    rooms = _map_state(hass).attributes.get("rooms")
 
     assert isinstance(rooms, list)
     assert len(rooms) == 2
@@ -80,7 +85,7 @@ async def test_camera_publishes_room_outlines(hass: HomeAssistant) -> None:
 async def test_room_outline_is_in_robot_coordinates(hass: HomeAssistant) -> None:
     """Outlines stay in millimetres, which is what the card expects."""
     await _setup(hass)
-    rooms = hass.states.get(MAP_CAMERA).attributes["rooms"]
+    rooms = _map_state(hass).attributes["rooms"]
 
     for room in rooms:
         for x, y in room["outline"]:
@@ -89,46 +94,48 @@ async def test_room_outline_is_in_robot_coordinates(hass: HomeAssistant) -> None
             assert abs(x) < 100_000 and abs(y) < 100_000
 
 
-async def test_generated_card_is_valid_yaml(hass: HomeAssistant) -> None:
-    """The generated snippet parses and references the real entities."""
+def _card_config(hass: HomeAssistant) -> dict:
     import yaml
 
-    await _setup(hass)
-    entry = next(iter(hass.config_entries.async_entries(DOMAIN)))
-    coordinator = entry.runtime_data.coordinator
-    robot = next(iter(coordinator.data.values()))
+    from custom_components.botslab_vacuum.lovelace import build_map_card
 
-    card = build_map_card(robot)
-    config = yaml.safe_load(card)
+    entry = next(iter(hass.config_entries.async_entries(DOMAIN)))
+    robot = next(iter(entry.runtime_data.coordinator.data.values()))
+    ids = {
+        "vacuum": entity_id_for(hass, "vacuum", "vacuum"),
+        "camera": entity_id_for(hass, "camera", "map_camera"),
+    }
+    return yaml.safe_load(build_map_card(robot, ids))
+
+
+async def test_generated_card_is_valid_yaml(hass: HomeAssistant) -> None:
+    """The generated snippet parses and references the real entities."""
+    await _setup(hass)
+    config = _card_config(hass)
 
     assert config["type"] == "custom:xiaomi-vacuum-map-card"
-    assert config["entity"] == f"vacuum.{TEST_SN}_vacuum"
-    assert config["map_source"]["camera"] == MAP_CAMERA
+    # Both ids must be the ones Home Assistant actually assigned, or the card
+    # the user pastes points at nothing.
+    assert config["entity"] == entity_id_for(hass, "vacuum", "vacuum")
+    assert config["map_source"]["camera"] == entity_id_for(hass, "camera", "map_camera")
     assert config["calibration_source"] == {"camera": True}
 
 
 async def test_generated_card_services_are_namespaced(hass: HomeAssistant) -> None:
     """Every map mode calls this integration's own services."""
-    import yaml
-
     await _setup(hass)
-    entry = next(iter(hass.config_entries.async_entries(DOMAIN)))
-    robot = next(iter(entry.runtime_data.coordinator.data.values()))
-
-    config = yaml.safe_load(build_map_card(robot))
+    config = _card_config(hass)
     for mode in config["map_modes"]:
         assert mode["service_call_schema"]["service"].startswith(f"{DOMAIN}.")
 
 
 async def test_generated_card_lists_every_room(hass: HomeAssistant) -> None:
     """predefined_selections contains one entry per room."""
-    import yaml
-
     await _setup(hass)
     entry = next(iter(hass.config_entries.async_entries(DOMAIN)))
     robot = next(iter(entry.runtime_data.coordinator.data.values()))
 
-    config = yaml.safe_load(build_map_card(robot))
+    config = _card_config(hass)
     room_mode = next(
         m for m in config["map_modes"] if m["selection_type"] == "ROOM"
     )
@@ -145,6 +152,6 @@ async def test_camera_hidden_when_map_disabled(hass: HomeAssistant) -> None:
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    assert hass.states.get(MAP_CAMERA) is None
+    assert entity_id_for(hass, "camera", "map_camera") is None
     # The vacuum itself must still be available.
-    assert hass.states.get(f"vacuum.{TEST_SN}_vacuum") is not None
+    assert state_for(hass, "vacuum", "vacuum") is not None

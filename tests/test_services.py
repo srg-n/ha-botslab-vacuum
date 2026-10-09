@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.botslab_vacuum.const import DOMAIN
 
-from .conftest import TEST_SN, make_config_entry, patch_api, setup_entry
+from .conftest import TEST_SN, entity_id_for, make_config_entry, patch_api, setup_entry
 
 ALL_SERVICES = [
     "clean_rooms",
@@ -48,7 +48,7 @@ async def test_locate_targets_selected_robot(hass: HomeAssistant) -> None:
     entry = await setup_entry(hass, make_config_entry())
 
     await hass.services.async_call(
-        DOMAIN, "locate", {"entity_id": f"vacuum.{TEST_SN}_vacuum"}, blocking=True
+        DOMAIN, "locate", {"entity_id": entity_id_for(hass, "vacuum", "vacuum")}, blocking=True
     )
     await hass.async_block_till_done()
 
@@ -88,7 +88,7 @@ async def test_clean_rooms_passes_ids_through(hass: HomeAssistant) -> None:
     await hass.services.async_call(
         DOMAIN,
         "clean_rooms",
-        {"entity_id": f"vacuum.{TEST_SN}_vacuum", "room_ids": ["0", "1"]},
+        {"entity_id": entity_id_for(hass, "vacuum", "vacuum"), "room_ids": ["0", "1"]},
         blocking=True,
     )
     await hass.async_block_till_done()
@@ -116,7 +116,7 @@ async def test_service_schemas_accept_payloads(
     await setup_entry(hass, make_config_entry())
 
     await hass.services.async_call(
-        DOMAIN, service, {"entity_id": f"vacuum.{TEST_SN}_vacuum", **payload}, blocking=True
+        DOMAIN, service, {"entity_id": entity_id_for(hass, "vacuum", "vacuum"), **payload}, blocking=True
     )
     await hass.async_block_till_done()
 
@@ -129,7 +129,7 @@ async def test_goto_location_accepts_negative_coordinates(hass: HomeAssistant) -
     await hass.services.async_call(
         DOMAIN,
         "goto_location",
-        {"entity_id": f"vacuum.{TEST_SN}_vacuum", "x": -250, "y": -350},
+        {"entity_id": entity_id_for(hass, "vacuum", "vacuum"), "x": -250, "y": -350},
         blocking=True,
     )
     await hass.async_block_till_done()
@@ -148,6 +148,6 @@ async def test_invalid_zone_payload_is_rejected(hass: HomeAssistant) -> None:
         await hass.services.async_call(
             DOMAIN,
             "clean_zone",
-            {"entity_id": f"vacuum.{TEST_SN}_vacuum", "zones": [[1, 2]]},
+            {"entity_id": entity_id_for(hass, "vacuum", "vacuum"), "zones": [[1, 2]]},
             blocking=True,
         )

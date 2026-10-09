@@ -11,7 +11,8 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.botslab_vacuum.const import (
@@ -125,7 +126,7 @@ def device_properties() -> dict:
     }
 
 
-def make_config_entry(**kwargs) -> MockConfigEntry:
+def make_config_entry(*, unique_id: str | None = None, **kwargs) -> MockConfigEntry:
     """Build a config entry that has not been set up yet."""
     data = {
         CONF_EMAIL: TEST_EMAIL,
@@ -141,7 +142,7 @@ def make_config_entry(**kwargs) -> MockConfigEntry:
         title="Botslab S8",
         data=data,
         options={},
-        unique_id="botslab_1000103000000064241",
+        unique_id=unique_id or "botslab_1000103000000064241",
     )
 
 
@@ -258,10 +259,20 @@ def offline_hass():
     is handed a stand-in instead. Patching the attribute on the zeroconf
     module works because aiohttp_client imports the module and looks the
     function up at call time.
+
+    The camera platform depends on ``http``, which depends on ``network``, and
+    network probes for the source address by opening a UDP socket. That is a
+    second, unrelated socket, so the probe is replaced too. Without it the
+    camera platform fails to set up and every test that touches any entity is
+    reported as an unrelated failure.
     """
     patch(
         "homeassistant.components.zeroconf.async_get_async_zeroconf",
         return_value=MagicMock(),
+    ).start()
+    patch(
+        "homeassistant.components.network.util.async_get_source_ip",
+        return_value="127.0.0.1",
     ).start()
     patch_api()
     yield
@@ -274,6 +285,32 @@ async def setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> MockConfig
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     return entry
+
+
+def entity_id_for(hass: HomeAssistant, platform: str, suffix: str) -> str | None:
+    """Return the real entity id for one of this robot's entities.
+
+    Entity ids cannot be spelled out in a test. Home Assistant builds them from
+    the entity and device names, so ``vacuum.<serial>_vacuum`` does not exist;
+    the only reliable way to address an entity the way Home Assistant does is
+    to ask the entity registry for it.
+    """
+    return er.async_get(hass).async_get_entity_id(platform, DOMAIN, f"{TEST_SN}_{suffix}")
+
+
+def state_for(hass: HomeAssistant, platform: str, suffix: str) -> State | None:
+    """Return the state object for one of this robot's entities."""
+    entity_id = entity_id_for(hass, platform, suffix)
+    return hass.states.get(entity_id) if entity_id else None
+
+
+def entity_ids_for_all_robots(hass: HomeAssistant) -> list[str]:
+    """Return every entity id that belongs to this integration."""
+    return [
+        entry.entity_id
+        for entry in er.async_get(hass).entries.values()
+        if entry.platform == DOMAIN
+    ]
 
 
 @pytest.fixture

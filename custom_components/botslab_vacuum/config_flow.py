@@ -7,6 +7,7 @@ from typing import Any
 import uuid
 
 import voluptuous as vol
+from homeassistant import data_entry_flow
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -100,6 +101,12 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except BotslabApiError:
                 errors["base"] = "cannot_connect"
+            except data_entry_flow.AbortFlow:
+                # Raised by _abort_if_unique_id_configured when the account is
+                # already set up. It signals a deliberate outcome, so it has to
+                # escape: swallowing it would tell the user "unknown error" and
+                # show the form again instead of reporting the duplicate.
+                raise
             except Exception as err:
                 _LOGGER.exception("Unexpected error during setup: %s", err)
                 errors["base"] = "unknown"

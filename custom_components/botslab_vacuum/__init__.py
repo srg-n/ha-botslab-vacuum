@@ -6,6 +6,8 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -159,10 +161,16 @@ def _register_services(hass: HomeAssistant) -> None:
     def _targets(call: ServiceCall) -> list[tuple[BotslabVacuumCoordinator, Any]]:
         """Resolve a service call to the devices it should affect.
 
-        Dashboard map cards address a single robot via ``entity_id``. A call
-        without a target is only accepted from the UI, where Home Assistant
-        fills in the selected entity; scripted calls must name a target
-        explicitly so a command never fans out to every robot on every
+        ``entity_id`` carries real Home Assistant entity ids, which is what
+        dashboard map cards and the UI send. They cannot be compared against a
+        device serial directly: Home Assistant derives an entity id from the
+        entity and device names, so ``vacuum.<serial>_vacuum`` does not exist.
+        Each id is walked back through the entity and device registries to the
+        serial the coordinator stores its data under.
+
+        A call without a target is only accepted from the UI, where Home
+        Assistant fills in the selected entity; scripted calls must name a
+        target explicitly so a command never fans out to every robot on every
         account by accident.
         """
         entity_ids = call.data.get(ATTR_ENTITY_ID) or []
@@ -174,18 +182,40 @@ def _register_services(hass: HomeAssistant) -> None:
             )
             return []
 
-        selected: list[tuple[BotslabVacuumCoordinator, Any]] = []
-        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
-            runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
-            if runtime is None:
-                continue
-            coordinator = runtime.coordinator
-            for dev in (coordinator.data or {}).values():
-                if dev.unique_id in entity_ids:
-                    selected.append((coordinator, dev))
+        entities = er.async_get(hass)
+        devices = dr.async_get(hass)
 
-        found = {d.unique_id for _, d in selected}
-        unknown = [e for e in entity_ids if e not in found]
+        selected: list[tuple[BotslabVacuumCoordinator, Any]] = []
+        unknown: list[str] = []
+        for entity_id in entity_ids:
+            config_entry_id = entities.async_get(entity_id)
+            registry_entry = entities.async_get_entry(entity_id)
+            device_entry = (
+                devices.async_get(registry_entry.device_id)
+                if registry_entry and registry_entry.device_id
+                else None
+            )
+            serial = next(
+                (
+                    identifier
+                    for domain, identifier in (device_entry.identifiers if device_entry else ())
+                    if domain == DOMAIN
+                ),
+                None,
+            )
+            entry = (
+                hass.config_entries.async_get_entry(config_entry_id)
+                if config_entry_id
+                else None
+            )
+            runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
+            device = runtime.coordinator.data.get(serial) if runtime and serial else None
+
+            if runtime is None or device is None:
+                unknown.append(entity_id)
+                continue
+            selected.append((runtime.coordinator, device))
+
         if unknown:
             _LOGGER.warning(
                 "%s called for unknown or offline entity id(s): %s",
@@ -316,12 +346,10 @@ def _register_services(hass: HomeAssistant) -> None:
                 vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
                 vol.Required(ATTR_ZONES): vol.All(
                     cv.ensure_list,
-                    [
-                        vol.All(
-                            vol.Coerce(float),
-                            vol.ExactSequence((vol.Coerce(float),) * 4),
-                        )
-                    ],
+                    # Each zone is an (x1, y1, x2, y2) rectangle. Coercing the
+                    # whole list to float would reject every valid zone, so the
+                    # coercion belongs on the individual coordinates.
+                    [vol.ExactSequence((vol.Coerce(float),) * 4)],
                 ),
                 vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
                 vol.Optional(ATTR_FAN_SPEED): cv.string,

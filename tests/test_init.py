@@ -6,7 +6,13 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.botslab_vacuum.const import DOMAIN, PLATFORMS
 
-from .conftest import TEST_SN, make_config_entry, patch_api, setup_entry
+from .conftest import (
+    TEST_SN,
+    entity_ids_for_all_robots,
+    make_config_entry,
+    patch_api,
+    setup_entry,
+)
 
 
 async def test_setup_creates_runtime_data(hass: HomeAssistant) -> None:
@@ -36,16 +42,17 @@ async def test_entities_created_for_every_platform(hass: HomeAssistant) -> None:
     patch_api()
     await setup_entry(hass, make_config_entry())
 
-    states = hass.states.async_all()
-    domains = {s.domain for s in states if f"_{TEST_SN}" in s.entity_id or TEST_SN in s.entity_id}
+    platforms = {
+        entry.domain for entry in entity_ids_for_all_robots(hass)
+    }
 
-    assert "vacuum" in domains, "no vacuum entity"
-    assert "sensor" in domains, "no sensor entities"
-    assert "button" in domains, "no button entities"
-    assert "switch" in domains, "no switch entities"
-    assert "select" in domains, "no select entities"
-    assert "number" in domains, "no number entities"
-    assert "camera" in domains, "no camera entity"
+    assert "vacuum" in platforms, "no vacuum entity"
+    assert "sensor" in platforms, "no sensor entities"
+    assert "button" in platforms, "no button entities"
+    assert "switch" in platforms, "no switch entities"
+    assert "select" in platforms, "no select entities"
+    assert "number" in platforms, "no number entities"
+    assert "camera" in platforms, "no camera entity"
 
 
 async def test_device_registered(hass: HomeAssistant) -> None:
@@ -55,9 +62,10 @@ async def test_device_registered(hass: HomeAssistant) -> None:
     patch_api()
     await setup_entry(hass, make_config_entry())
 
-    registry = dr.async_get(hass)
-    device = registry.async_get_device(identifiers={(DOMAIN, TEST_SN)})
-    assert device is not None
+    devices = dr.async_get(hass)
+    matches = devices.async_get_devices({(DOMAIN, TEST_SN)})
+    assert len(matches) == 1, f"expected one device, got {len(matches)}"
+    device = matches[0]
     assert device.manufacturer == "Botslab / 360"
 
 
@@ -71,7 +79,9 @@ async def test_unload_stops_push_listener(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
     assert qpush._closing is True
-    assert entry.runtime_data is None
+    # Home Assistant deletes runtime_data outright when unloading, rather than
+    # clearing it to None, so an unset attribute is the expected end state.
+    assert not hasattr(entry, "runtime_data")
     assert not hass.states.async_entity_ids("vacuum")
 
 
@@ -94,10 +104,8 @@ async def test_second_entry_does_not_duplicate_services(hass: HomeAssistant) -> 
     patch_api()
     await setup_entry(hass, make_config_entry())
 
-    second = make_config_entry()
+    second = make_config_entry(unique_id="botslab_second_account")
     second.add_to_hass(hass)
-    # Same unique id would abort; use a different one.
-    second.unique_id = "botslab_second_account"
     await hass.config_entries.async_setup(second.entry_id)
     await hass.async_block_till_done()
 

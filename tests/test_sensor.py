@@ -8,7 +8,7 @@ from homeassistant.helpers import entity_registry as er
 
 from custom_components.botslab_vacuum.const import DOMAIN
 
-from .conftest import TEST_SN, make_config_entry, patch_api, setup_entry
+from .conftest import TEST_SN, make_config_entry, patch_api, setup_entry, state_for
 
 EXPECTED_STATE_CLASS = {
     "battery": "measurement",
@@ -30,7 +30,7 @@ async def _setup(hass: HomeAssistant):
 async def test_vacuum_entity_present(hass: HomeAssistant) -> None:
     """The robot shows up as a vacuum entity."""
     await _setup(hass)
-    state = hass.states.get(f"vacuum.{TEST_SN}_vacuum")
+    state = state_for(hass, "vacuum", "vacuum")
     assert state is not None
     assert state.state == "docked"
 
@@ -41,7 +41,7 @@ async def test_state_classes(
 ) -> None:
     """State classes match what the values actually represent."""
     await _setup(hass)
-    state = hass.states.get(f"sensor.{TEST_SN}_{key}")
+    state = state_for(hass, "sensor", key)
     assert state is not None
 
     # A sensor opted into long-term statistics exposes state_class; one that is
@@ -70,7 +70,7 @@ async def test_area_sensors_expose_area_device_class(hass: HomeAssistant) -> Non
 async def test_duration_sensor_uses_minutes(hass: HomeAssistant) -> None:
     """Duration sensors report minutes with the DURATION device class."""
     await _setup(hass)
-    state = hass.states.get(f"sensor.{TEST_SN}_total_clean_time")
+    state = state_for(hass, "sensor", "total_clean_time")
     assert state is not None
     assert state.state == "900"
     assert state.attributes.get("device_class") == "duration"
@@ -80,7 +80,7 @@ async def test_duration_sensor_uses_minutes(hass: HomeAssistant) -> None:
 async def test_counter_has_no_state_class(hass: HomeAssistant) -> None:
     """A bare counter must not claim a total, because it has no unit."""
     await _setup(hass)
-    state = hass.states.get(f"sensor.{TEST_SN}_tasks_count")
+    state = state_for(hass, "sensor", "tasks_count")
     assert state is not None
     assert state.state == "12"
     assert "state_class" not in state.attributes
@@ -90,7 +90,7 @@ async def test_counter_has_no_state_class(hass: HomeAssistant) -> None:
 async def test_battery_value_and_class(hass: HomeAssistant) -> None:
     """Battery reports the cloud value with the battery device class."""
     await _setup(hass)
-    state = hass.states.get(f"sensor.{TEST_SN}_battery")
+    state = state_for(hass, "sensor", "battery")
     assert state is not None
     assert state.state == "88"
     assert state.attributes.get("device_class") == "battery"
@@ -107,7 +107,7 @@ async def test_consumables_reported(hass: HomeAssistant) -> None:
         "sensor_dirtiness": "50",
     }
     for key, value in expected.items():
-        state = hass.states.get(f"sensor.{TEST_SN}_{key}")
+        state = state_for(hass, "sensor", key)
         assert state is not None, f"{key} missing"
         assert state.state == value
 

@@ -10,6 +10,7 @@ from custom_components.botslab_vacuum import map_util
 from custom_components.botslab_vacuum.models import BotslabMapInfo, BotslabRoom
 from custom_components.botslab_vacuum.lovelace import (
     build_full_dashboard_snippet,
+    build_maintenance_card,
     build_map_card,
 )
 
@@ -196,21 +197,53 @@ def _device(room_count: int = 3):
     )
 
 
+def _ids() -> dict:
+    """Entity ids as the registry would report them, which are not guessable."""
+    return {
+        "vacuum": "vacuum.botslab_s8",
+        "camera": "camera.botslab_s8_cleaning_map",
+        "filter_life": "sensor.botslab_s8_hepa_filter",
+    }
+
+
 def test_generated_card_is_parseable():
     """The emitted card is valid YAML with the expected structure."""
     import yaml
 
-    config = yaml.safe_load(build_map_card(_device()))
+    ids = _ids()
+    config = yaml.safe_load(build_map_card(_device(), ids))
     assert config["type"] == "custom:xiaomi-vacuum-map-card"
-    assert config["entity"] == "vacuum.SN12345_vacuum"
-    assert config["map_source"]["camera"] == "camera.SN12345_map_camera"
+    assert config["entity"] == ids["vacuum"]
+    assert config["map_source"]["camera"] == ids["camera"]
+
+
+def test_card_uses_supplied_entity_ids_not_guessed_ones():
+    """Entity ids come from the registry, never from the serial number."""
+    import yaml
+
+    ids = _ids()
+    card = build_map_card(_device(), ids)
+    config = yaml.safe_load(card)
+
+    # A serial-derived id would be vacuum.SN12345_vacuum, which does not exist.
+    assert "SN12345" not in config["entity"]
+    assert "SN12345" not in config["map_source"]["camera"]
+
+
+def test_maintenance_card_skips_unregistered_rows():
+    """Entities that are not registered are left out of the card."""
+    import yaml
+
+    config = yaml.safe_load(build_maintenance_card(_device(), _ids()))
+    entities = [row["entity"] for row in config["entities"]]
+    assert entities == ["sensor.botslab_s8_hepa_filter"]
 
 
 def test_generated_card_contains_every_room():
     """One predefined selection per room."""
     import yaml
 
-    config = yaml.safe_load(build_map_card(_device(4)))
+    config = yaml.safe_load(build_map_card(_device(4), _ids()))
     room_mode = next(m for m in config["map_modes"] if m["selection_type"] == "ROOM")
     assert len(room_mode["predefined_selections"]) == 4
 
@@ -219,7 +252,7 @@ def test_generated_card_handles_empty_rooms():
     """A robot without geometry still yields a valid card."""
     import yaml
 
-    config = yaml.safe_load(build_map_card(_device(0)))
+    config = yaml.safe_load(build_map_card(_device(0), _ids()))
     room_mode = next(m for m in config["map_modes"] if m["selection_type"] == "ROOM")
     assert room_mode["predefined_selections"] == []
 
@@ -236,7 +269,7 @@ def test_awkward_room_names_survive():
             outline=((0, 0), (10, 0), (10, 10)),
         )
     ]
-    config = yaml.safe_load(build_map_card(device))
+    config = yaml.safe_load(build_map_card(device, _ids()))
     selections = next(
         m for m in config["map_modes"] if m["selection_type"] == "ROOM"
     )["predefined_selections"]
@@ -247,7 +280,7 @@ def test_snippet_has_two_documents():
     """The full snippet is a map card plus a maintenance card."""
     import yaml
 
-    docs = list(yaml.safe_load_all(build_full_dashboard_snippet(_device())))
+    docs = list(yaml.safe_load_all(build_full_dashboard_snippet(_device(), _ids())))
     assert [d["type"] for d in docs] == ["custom:xiaomi-vacuum-map-card", "entities"]
 
 

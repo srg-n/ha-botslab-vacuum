@@ -10,18 +10,49 @@ from typing import Any, Awaitable
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 _LOGGER = logging.getLogger(__name__)
 
+from .const import DOMAIN
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
-from .lovelace import build_full_dashboard_snippet
+from .lovelace import MAINTENANCE_ROWS, build_full_dashboard_snippet
 from .models import BotslabVacuumDevice
 
 # Where the generated snippet is written inside the Home Assistant config dir.
 MAP_CARD_FILENAME = "botslab_map_card.yaml"
+
+# Entities the dashboard cards address, as ``(key, platform, unique id suffix)``.
+# The map card needs the first two; the rest fill the maintenance card.
+CARD_ENTITIES: tuple[tuple[str, str, str], ...] = (
+    ("vacuum", "vacuum", "vacuum"),
+    ("camera", "camera", "map_camera"),
+    *((key, platform, suffix) for key, platform, suffix, _ in MAINTENANCE_ROWS),
+)
+
+
+def _resolve_card_entity_ids(
+    hass: HomeAssistant, device: BotslabVacuumDevice
+) -> dict[str, str]:
+    """Return the real entity ids for one robot's dashboard cards.
+
+    Entity ids cannot be guessed from a unique id: Home Assistant builds them
+    from the entity and device names, so ``camera.<serial>_map_camera`` does not
+    exist. Every id is therefore looked up in the entity registry, and
+    entities that are not registered are left out.
+    """
+    registry = er.async_get(hass)
+    resolved: dict[str, str] = {}
+    for key, platform, suffix in CARD_ENTITIES:
+        entity_id = registry.async_get_entity_id(
+            platform, DOMAIN, f"{device.device_name}_{suffix}"
+        )
+        if entity_id:
+            resolved[key] = entity_id
+    return resolved
 
 
 async def _async_generate_map_card(
@@ -46,7 +77,23 @@ async def _async_generate_map_card(
     await coordinator.async_request_refresh()
 
     device = coordinator.data.get(device.device_name) if coordinator.data else device
-    snippet = build_full_dashboard_snippet(device)
+    entity_ids = _resolve_card_entity_ids(hass, device)
+
+    # A card without both of these cannot work, and they are absent when the
+    # map is disabled and the camera entity was never created.
+    missing = [name for name in ("vacuum", "camera") if name not in entity_ids]
+    if missing:
+        persistent_notification.async_create(
+            hass,
+            "Botslab map card",
+            f"No {', '.join(missing)} entity is registered for "
+            f"{device.device_title}, so the card could not be generated. "
+            "Check that the robot is loaded and that **Enable live map** is on "
+            "in the integration options.",
+        )
+        return
+
+    snippet = build_full_dashboard_snippet(device, entity_ids)
 
     try:
         path = Path(hass.config.path(MAP_CARD_FILENAME))
