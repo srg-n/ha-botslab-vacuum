@@ -80,7 +80,12 @@ async def test_duplicate_account_is_rejected(hass: HomeAssistant) -> None:
             {CONF_EMAIL: TEST_EMAIL, CONF_PASSWORD: TEST_PASSWORD, CONF_REGION: "eu1"},
         )
 
-    assert result["type"] is data_entry_flow.FlowResultType.ABORT
+    assert result["type"] is data_entry_flow.FlowResultType.ABORT, (
+        f"beklenen ABORT, gelen {result['type']}; "
+        f"errors={result.get('errors')}; "
+        f"qid={LOGIN_RESULT['qid']}; "
+        f"kayitlar={[(e.domain, e.unique_id) for e in hass.config_entries.async_entries(DOMAIN)]}"
+    )
     assert result["reason"] == "already_configured"
 
 

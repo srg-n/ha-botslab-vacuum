@@ -28,12 +28,17 @@ from .models import BotslabVacuumDevice
 
 _LOGGER = logging.getLogger(__name__)
 
+# Battery is deliberately absent. Home Assistant 2026.10 removed
+# VacuumEntityFeature.BATTERY and dropped battery_level from
+# StateVacuumEntity entirely, so referencing either one makes this module fail
+# to import and takes the whole config entry down with it. The battery is
+# published as its own sensor with SensorDeviceClass.BATTERY instead, which is
+# how Home Assistant expects battery to be exposed.
 _FEATURES = (
     VacuumEntityFeature.START
     | VacuumEntityFeature.STOP
     | VacuumEntityFeature.PAUSE
     | VacuumEntityFeature.RETURN_HOME
-    | VacuumEntityFeature.BATTERY
     | VacuumEntityFeature.STATE
     | VacuumEntityFeature.FAN_SPEED
     | VacuumEntityFeature.CLEAN_SPOT
@@ -81,11 +86,6 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         if not self.device:
             return None
         return _ACTIVITY_MAP.get(self.device.status, VacuumActivity.IDLE)
-
-    @property
-    def battery_level(self) -> int | None:
-        """Return the battery percentage."""
-        return self.device.battery_level if self.device else None
 
     @property
     def fan_speed(self) -> str | None:
