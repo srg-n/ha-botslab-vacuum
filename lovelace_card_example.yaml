@@ -1,0 +1,253 @@
+# ==============================================================================
+# Home Assistant Lovelace Cards - Botslab Vacuum
+# ==============================================================================
+#
+# HOW TO USE
+#   Settings -> Dashboards -> edit -> paste a block -> Save.
+#   No entity_id editing is required: every block resolves the robot serial
+#   with Jinja at render time.
+#
+# WHY THERE ARE NO HARDCODED ENTITY IDS
+#   Entities are keyed by the robot's SERIAL NUMBER (unique_id is
+#   "<serial>_<key>"), which Botslab assigns. It cannot be known in advance,
+#   so each block does:
+#
+#       {% set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+#                                  | map(attribute='entity_id') | list %}
+#       {% set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' %}
+#
+#   Entity ids then read sensor.<sn>_filter_life, select.<sn>_water_level,
+#   camera.<sn>_map_camera, and so on.
+#
+#   Several robots? Set {% set sn = 'OTHER_SERIAL' %} at the top of a block.
+#
+# ------------------------------------------------------------------------------
+# MAP CARD: requires the HACS frontend card "xiaomi-vacuum-map-card"
+#            (PiotrMachowski/lovelace-xiaomi-vacuum-map-card).
+#            Install it first, otherwise the card renders empty.
+# ------------------------------------------------------------------------------
+# The map camera publishes calibration_points and room outlines as attributes,
+# so no manual calibration is needed - the card reads them directly.
+# ------------------------------------------------------------------------------
+
+
+# ==============================================================================
+# CARD 1 - Vacuum control (standard Home Assistant card)
+# ==============================================================================
+type: vacuum-card
+entity: >
+  {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                              | map(attribute='entity_id') | list -%}
+  {{ ids | first if ids else 'vacuum.botslab_vacuum' }}
+show_toolbar: true
+compact_view: false
+
+---
+# ==============================================================================
+# CARD 2 - Interactive map, room and zone cleaning
+# ==============================================================================
+# map_modes call this integration's own services, not MQTT:
+#   Room cleaning   -> botslab_vacuum.clean_rooms   (room ids)
+#   Zone cleaning   -> botslab_vacuum.clean_zone   (rectangles)
+#   Go to point     -> botslab_vacuum.goto_location (coordinates)
+# ==============================================================================
+type: custom:xiaomi-vacuum-map-card
+title: Botslab Map
+entity: >
+  {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                              | map(attribute='entity_id') | list -%}
+  {{ ids | first if ids else 'vacuum.botslab_vacuum' }}
+map_source:
+  camera: >
+    {%- set ids = states('image') | selectattr('entity_id', 'match', '_map_camera$')
+                               | map(attribute='entity_id') | list -%}
+    {%- set cams = states('camera') | selectattr('entity_id', 'match', '_map_camera$')
+                               | map(attribute='entity_id') | list -%}
+    {{ cams | first if cams else (ids | first if ids else 'camera.botslab_map_camera') }}
+# calibration_points and rooms come from the camera attributes.
+calibration_source:
+  camera: true
+
+map_modes:
+  # ---- clean whole rooms -------------------------------------------------
+  - name: Room Cleaning
+    icon: mdi:floor-plan
+    selection_type: ROOM
+    max_selections: 60
+    repeats_type: EXTERNAL
+    max_repeats: 3
+    service_call_schema:
+      service: botslab_vacuum.clean_rooms
+      service_data:
+        room_ids: "[[selection]]"
+        repeat_times: "[[repeats]]"
+        entity_id: "[[entity_id]]"
+    predefined_selections:
+      # Generated from the robot's own map. Regenerate after adding or
+      # renaming rooms in the Botslab app - the values below are a
+      # placeholder showing the expected shape.
+      - id: "0"
+        label:
+          text: Room 1
+          x: 0
+          y: 0
+          offset_y: 35
+        icon:
+          name: mdi:floor-plan
+          x: 0
+          y: 0
+        outline:
+          - [0, 0]
+          - [1000, 0]
+          - [1000, 1000]
+          - [0, 1000]
+
+  # ---- draw rectangles ---------------------------------------------------
+  - name: Zone Cleaning
+    icon: mdi:select-drag
+    selection_type: MANUAL_RECTANGLE
+    max_selections: 5
+    repeats_type: EXTERNAL
+    max_repeats: 3
+    service_call_schema:
+      service: botslab_vacuum.clean_zone
+      service_data:
+        zones: "[[selection]]"
+        repeat_times: "[[repeats]]"
+        entity_id: "[[entity_id]]"
+
+  # ---- send the robot to a point ----------------------------------------
+  - name: Go To Point
+    icon: mdi:map-marker-plus
+    selection_type: MANUAL_POINT
+    max_selections: 1
+    repeats_type: NONE
+    max_repeats: 1
+    service_call_schema:
+      service: botslab_vacuum.goto_location
+      service_data:
+        x: "[[point_x]]"
+        y: "[[point_y]]"
+        entity_id: "[[entity_id]]"
+
+---
+# ==============================================================================
+# CARD 3 - Fallback map for dashboards without the map card installed
+# ==============================================================================
+type: picture-glance
+title: Cleaning Map
+image: >
+  {%- set ids = states('camera') | selectattr('entity_id', 'match', '_map_camera$')
+                             | map(attribute='entity_id') | list -%}
+  {{ ids | first if ids else 'camera.botslab_map_camera' }}
+entities:
+  - entity: >
+      {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                  | map(attribute='entity_id') | list -%}
+      {{ ids | first if ids else 'vacuum.botslab_vacuum' }}
+    type: vacuum-entity
+
+---
+# ==============================================================================
+# CARD 4 - Consumables, settings and actions
+# ==============================================================================
+# Keys are stable across versions:
+#   sensors  : filter_life, main_brush_life, side_brush_life, sensor_dirtiness
+#   switches : auto_boost, button_backlight, collision_protection
+#   selects  : water_level, mop_mode
+#   number   : volume_level
+#   buttons  : locate, refresh_rooms, sync_map, reset_*
+# ==============================================================================
+type: entities
+title: Maintenance and Settings
+show_header_toggle: false
+entities:
+  - type: section
+    name: Consumables
+    entities:
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'sensor.' ~ sn ~ '_filter_life' }}
+        name: HEPA Filter
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'sensor.' ~ sn ~ '_main_brush_life' }}
+        name: Main Brush
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'sensor.' ~ sn ~ '_side_brush_life' }}
+        name: Side Brush
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'sensor.' ~ sn ~ '_sensor_dirtiness' }}
+        name: Sensors Cleanliness
+
+  - type: section
+    name: Settings
+    entities:
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'select.' ~ sn ~ '_water_level' }}
+        name: Water Flow Level
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'select.' ~ sn ~ '_mop_mode' }}
+        name: Cleaning Mode
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'number.' ~ sn ~ '_volume_level' }}
+        name: Voice Volume
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'switch.' ~ sn ~ '_auto_boost' }}
+        name: Carpet Auto Boost
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'switch.' ~ sn ~ '_button_backlight' }}
+        name: Button Backlight
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'switch.' ~ sn ~ '_collision_protection' }}
+        name: Collision Protection
+
+  - type: section
+    name: Actions
+    entities:
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'button.' ~ sn ~ '_locate' }}
+        name: Locate Robot
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'button.' ~ sn ~ '_sync_map' }}
+        name: Sync Map
+      - entity: >
+          {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                                      | map(attribute='entity_id') | list -%}
+          {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
+          {{ 'button.' ~ sn ~ '_refresh_rooms' }}
+        name: Refresh Rooms

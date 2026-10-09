@@ -1,0 +1,101 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Botslab Hesap Girişi",
+        "description": "Botslab bulut hesabınızla giriş yapın. Entegrasyon hesabınıza bağlı tüm robot süpürgeleri otomatik olarak bulacaktır.",
+        "data": {
+          "email": "E-posta Adresi",
+          "password": "Şifre",
+          "region": "Sunucu Bölgesi"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Botslab Oturumunu Yenile",
+        "description": "{email} hesabı için oturumu yenilemek üzere şifrenizi girin.",
+        "data": {
+          "password": "Şifre"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Botslab bulut sunucularına bağlanılamadı.",
+      "invalid_auth": "Geçersiz e-posta veya şifre. Lütfen bilgilerinizi kontrol edin.",
+      "no_devices_found": "Bu hesap altında robot süpürge bulunamadı.",
+      "unknown": "Beklenmeyen bir hata oluştu."
+    },
+    "abort": {
+      "already_configured": "Bu hesap zaten yapılandırılmış.",
+      "reauth_successful": "Oturum başarıyla yenilendi."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Botslab Süpürge Ayarları",
+        "data": {
+          "poll_interval_active": "Aktif Temizlik Yoklama Aralığı (saniye)",
+          "poll_interval_idle": "Şarjda / Boşta Yoklama Aralığı (saniye)",
+          "enable_map": "Canlı Harita Varlığını Etkinleştir"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": { "name": "Pil Seviyesi" },
+      "clean_time": { "name": "Temizlik Süresi" },
+      "clean_area": { "name": "Temizlenen Alan" },
+      "total_clean_area": { "name": "Toplam Temizlenen Alan" },
+      "total_clean_time": { "name": "Toplam Temizlik Süresi" },
+      "tasks_count": { "name": "Toplam Temizlik Görevi" },
+      "clean_id": { "name": "Temizlik Kimliği" },
+      "error_code": { "name": "Hata Kodu" },
+      "mop_installed": { "name": "Mop Bezi Durumu" },
+      "water_tank_installed": { "name": "Su Tankı Durumu" },
+      "filter_life": { "name": "Filtre Ömrü" },
+      "main_brush_life": { "name": "Ana Fırça Ömrü" },
+      "side_brush_life": { "name": "Yan Fırça Ömrü" },
+      "sensor_dirtiness": { "name": "Sensör Temizliği" }
+    },
+    "button": {
+      "locate": { "name": "Robotu Bul" },
+      "refresh_rooms": { "name": "Odaları Güncelle" },
+      "sync_map": { "name": "Haritayı Eşitle" },
+      "reset_filter": { "name": "Filtre Ömrünü Sıfırla" },
+      "reset_main_brush": { "name": "Ana Fırça Ömrünü Sıfırla" },
+      "reset_side_brush": { "name": "Yan Fırça Ömrünü Sıfırla" },
+      "reset_sensors": { "name": "Sensör Temizliğini Sıfırla" },
+      "generate_map_card": { "name": "Harita Kartı Yapılandırması Üret" }
+    },
+    "switch": {
+      "auto_boost": { "name": "Halıda Otomatik Emiş Artışı" },
+      "button_backlight": { "name": "Tuş Işığı" },
+      "collision_protection": { "name": "Çarpışma Koruması" }
+    },
+    "select": {
+      "water_level": {
+        "name": "Su Pompası Seviyesi",
+        "state": {
+          "low": "Düşük",
+          "medium": "Orta",
+          "high": "Yüksek"
+        }
+      },
+      "mop_mode": {
+        "name": "Temizlik Modu",
+        "state": {
+          "vacuum_and_mop": "Süpür ve Sil",
+          "vacuum_only": "Sadece Süpür",
+          "mop_only": "Sadece Sil"
+        }
+      }
+    },
+    "number": {
+      "volume_level": { "name": "Ses Seviyesi" }
+    },
+    "camera": {
+      "cleaning_map": { "name": "Temizlik Haritası" }
+    }
+  }
+}

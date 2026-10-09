@@ -1,0 +1,101 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Botslab Account Login",
+        "description": "Log in with your Botslab cloud account. The integration will automatically discover all robot vacuums associated with your account.",
+        "data": {
+          "email": "Email Address",
+          "password": "Password",
+          "region": "Server Region"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with Botslab",
+        "description": "Enter the password for {email} to renew your authentication session.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Botslab cloud servers.",
+      "invalid_auth": "Invalid email or password. Please verify your credentials.",
+      "no_devices_found": "No robot vacuums found under this account.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Botslab Vacuum Options",
+        "data": {
+          "poll_interval_active": "Active Polling Interval - Cleaning (seconds)",
+          "poll_interval_idle": "Idle Polling Interval - Docked/Standby (seconds)",
+          "enable_map": "Enable Map Image Entity"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": { "name": "Battery" },
+      "clean_time": { "name": "Cleaning Time" },
+      "clean_area": { "name": "Cleaned Area" },
+      "total_clean_area": { "name": "Total Cleaned Area" },
+      "total_clean_time": { "name": "Total Cleaning Time" },
+      "tasks_count": { "name": "Total Cleaning Tasks" },
+      "clean_id": { "name": "Clean ID" },
+      "error_code": { "name": "Error Code" },
+      "mop_installed": { "name": "Mop Pad Status" },
+      "water_tank_installed": { "name": "Water Tank Status" },
+      "filter_life": { "name": "Filter Life" },
+      "main_brush_life": { "name": "Main Brush Life" },
+      "side_brush_life": { "name": "Side Brush Life" },
+      "sensor_dirtiness": { "name": "Sensors Cleanliness" }
+    },
+    "button": {
+      "locate": { "name": "Locate Robot" },
+      "refresh_rooms": { "name": "Refresh Rooms" },
+      "sync_map": { "name": "Sync Live Map" },
+      "reset_filter": { "name": "Reset Filter Life" },
+      "reset_main_brush": { "name": "Reset Main Brush Life" },
+      "reset_side_brush": { "name": "Reset Side Brush Life" },
+      "reset_sensors": { "name": "Reset Sensors Cleanliness" },
+      "generate_map_card": { "name": "Generate Map Card Config" }
+    },
+    "switch": {
+      "auto_boost": { "name": "Carpet Auto Boost" },
+      "button_backlight": { "name": "Button Backlight" },
+      "collision_protection": { "name": "Collision Protection" }
+    },
+    "select": {
+      "water_level": {
+        "name": "Water Flow Level",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      },
+      "mop_mode": {
+        "name": "Cleaning Mode",
+        "state": {
+          "vacuum_and_mop": "Vacuum & Mop",
+          "vacuum_only": "Vacuum Only",
+          "mop_only": "Mop Only"
+        }
+      }
+    },
+    "number": {
+      "volume_level": { "name": "Voice Volume Level" }
+    },
+    "camera": {
+      "cleaning_map": { "name": "Cleaning Map" }
+    }
+  }
+}

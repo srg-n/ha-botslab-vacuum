@@ -1,0 +1,188 @@
+clean_rooms:
+  name: Clean Rooms
+  description: Commands the Botslab vacuum robot to clean selected rooms with custom repetitions, suction, and water flow.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    room_ids:
+      name: Room IDs
+      description: List of numeric room IDs to clean (e.g. ["0", "1"]).
+      example: ["0", "1"]
+      selector:
+        object:
+    room_names:
+      name: Room Names
+      description: List of human-readable room names as assigned in the Botslab app (case-insensitive).
+      example: ["Room 1", "Room 2"]
+      selector:
+        object:
+    repeat_times:
+      name: Repeat Times
+      description: Number of cleaning cycles for the selected rooms (1 or 2).
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 2
+          mode: box
+    fan_speed:
+      name: Suction Power
+      description: Suction power level for this cleaning run.
+      default: standard
+      selector:
+        select:
+          options:
+            - quiet
+            - standard
+            - powerful
+            - max
+    water_level:
+      name: Water Flow Level
+      description: Water pump flow rate for mopping.
+      selector:
+        select:
+          options:
+            - low
+            - medium
+            - high
+
+clean_zone:
+  name: Clean Zone
+  description: Commands the Botslab vacuum robot to clean custom rectangular zones.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    zones:
+      name: Zones
+      description: List of bounding boxes [[x1, y1, x2, y2]].
+      example: [[-1000, -1000, 1000, 1000]]
+      required: true
+      selector:
+        object:
+    repeat_times:
+      name: Repeat Times
+      description: Number of cleaning passes.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 2
+          mode: box
+    fan_speed:
+      name: Suction Power
+      description: Suction power level for this cleaning run.
+      default: standard
+      selector:
+        select:
+          options:
+            - quiet
+            - standard
+            - powerful
+            - max
+    water_level:
+      name: Water Flow Level
+      description: Water pump flow rate.
+      selector:
+        select:
+          options:
+            - low
+            - medium
+            - high
+
+set_water_flow:
+  name: Set Water Flow
+  description: Change the robot vacuum mopping water pump flow rate.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    water_level:
+      name: Water Flow
+      description: Level of water flow.
+      required: true
+      selector:
+        select:
+          options:
+            - low
+            - medium
+            - high
+
+set_mop_mode:
+  name: Set Mop Mode
+  description: Change cleaning mode between vacuuming and mopping.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    mop_mode:
+      name: Mop Mode
+      description: Cleaning mode type.
+      required: true
+      selector:
+        select:
+          options:
+            - vacuum_and_mop
+            - vacuum_only
+            - mop_only
+
+refresh_rooms:
+  name: Refresh Rooms
+  description: Explicitly fetch the latest room segmentation and room names from the active cloud map.
+  target:
+    entity:
+      domain: vacuum
+
+sync_map:
+  name: Sync Map
+  description: Command the robot to immediately push its live map package to Alibaba Cloud OSS.
+  target:
+    entity:
+      domain: vacuum
+
+goto_location:
+  name: Go To Coordinates
+  description: Command the robot vacuum to navigate to target coordinates (pin-and-go).
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    x:
+      name: X Coordinate
+      description: Target X coordinate on the map.
+      required: true
+      selector:
+        text:
+    y:
+      name: Y Coordinate
+      description: Target Y coordinate on the map.
+      required: true
+      selector:
+        text:
+
+locate:
+  name: Locate Robot
+  description: Play an audible chime or voice greeting on the robot to find it.
+  target:
+    entity:
+      domain: vacuum
+
+reset_consumable:
+  name: Reset Consumable Life
+  description: Reset life counter for a replaced consumable component.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    consumable_type:
+      name: Consumable
+      description: Type of consumable to reset.
+      required: true
+      selector:
+        select:
+          options:
+            - filter
+            - main_brush
+            - side_brush
+            - sensor

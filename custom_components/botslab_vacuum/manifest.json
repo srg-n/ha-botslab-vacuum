@@ -1,0 +1,12 @@
+{
+  "domain": "botslab_vacuum",
+  "name": "Botslab Vacuum Robot",
+  "codeowners": ["@srg-n"],
+  "config_flow": true,
+  "documentation": "https://github.com/srg-n/ha-botslab-vacuum",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/srg-n/ha-botslab-vacuum/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
