@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -249,8 +249,20 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
 
 
 @pytest.fixture(autouse=True)
-def mock_cloud():
-    """Apply the cloud mock to every test, then tear all patches down."""
+def offline_hass():
+    """Keep every test off the network, then undo the patches.
+
+    Home Assistant's shared aiohttp connector is built on a zeroconf backed DNS
+    resolver, and building a real resolver binds UDP sockets, which pytest
+    socket blocks. Since nothing here resolves a ``.local`` name, the resolver
+    is handed a stand-in instead. Patching the attribute on the zeroconf
+    module works because aiohttp_client imports the module and looks the
+    function up at call time.
+    """
+    patch(
+        "homeassistant.components.zeroconf.async_get_async_zeroconf",
+        return_value=MagicMock(),
+    ).start()
     patch_api()
     yield
     patch.stopall()

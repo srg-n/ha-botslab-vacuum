@@ -22,7 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 2025.1.0 is the declared minimum in hacs.json, and it requires 3.13.
+        # 2025.12.4 is what requirements_test.txt pins, via
+        # pytest-homeassistant-custom-component, and it requires 3.13.
         python-version: ["3.13"]
     steps:
       - uses: actions/checkout@v5
