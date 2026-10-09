@@ -29,10 +29,18 @@ TEST_PASSWORD = "hunter2"
 TEST_M2 = "a" * 32
 TEST_SN = "SN12345"
 
-# Required by pytest-homeassistant-custom-component so that the integration in
-# custom_components/ is actually loadable by the test instance. Without this
-# every test fails with "Integration not found".
-pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
+
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations):
+    """Make the integration in custom_components/ loadable by the test instance.
+
+    This has to be an autouse fixture: a module level ``pytestmark`` inside
+    conftest.py is only applied to conftest itself, never to the test modules,
+    so the integration would stay invisible and every test would fail with
+    "Integration not found".
+    """
+    yield
+
 
 MAP_WIDTH = 40
 MAP_HEIGHT = 30

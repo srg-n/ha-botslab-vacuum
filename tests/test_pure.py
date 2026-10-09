@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import random
 
 import pytest
 
@@ -14,12 +15,87 @@ from custom_components.botslab_vacuum.lovelace import (
 
 
 # --------------------------------------------------------------- LZ4 + PNG
-def test_lz4_roundtrip_is_stable():
-    """Decompression is deterministic for the same input."""
-    payload = bytes([0, 10, 0, 127, 255, 0, 127, 1, 2, 3])
-    first = map_util.decompress_lz4_block(payload, 64)
-    second = map_util.decompress_lz4_block(payload, 64)
-    assert first == second
+def _lz4_literal_only(data: bytes) -> bytes:
+    """Build a valid LZ4 block that stores ``data`` as a single literal run.
+
+    An LZ4 block is a series of sequences. Every sequence but the last is
+    ``token + literals + offset + match``; only the final sequence may omit
+    the match, and a decoder recognises it as final purely by the output
+    reaching the declared size. So a match-free block has to be exactly one
+    sequence, otherwise the decoder would read the next sequence's token and
+    literal bytes as an offset and a match length.
+
+    That keeps this helper valid LZ4 without pulling in a compressor, so the
+    round-trip test still exercises the real decompressor.
+
+    A literal nibble of 15 means the length continues in the following bytes:
+    each 0xFF adds a further 255, and the first byte that differs from 0xFF
+    supplies the remainder.
+    """
+    length = len(data)
+    if length < 15:
+        return bytes([length << 4]) + data
+    out = bytearray([0xF0])
+    remaining = length - 15
+    while remaining >= 255:
+        out.append(0xFF)
+        remaining -= 255
+    out.append(remaining)
+    out += data
+    return bytes(out)
+
+
+@pytest.mark.parametrize("size", [1, 7, 14, 15, 16, 100, 255, 600])
+def test_lz4_roundtrip(size):
+    """Literal LZ4 blocks decompress back to the original bytes."""
+    data = bytes((i * 7 + 3) % 256 for i in range(size))
+    block = _lz4_literal_only(data)
+    assert map_util.decompress_lz4_block(block, size) == data
+
+
+def test_lz4_decompression_is_deterministic():
+    """The same block always yields the same output."""
+    data = bytes(range(64))
+    block = _lz4_literal_only(data)
+    first = map_util.decompress_lz4_block(block, len(data))
+    second = map_util.decompress_lz4_block(block, len(data))
+    assert first == second == data
+
+
+def test_lz4_respects_output_size():
+    """Decompression stops at the requested uncompressed size."""
+    data = bytes(range(200))
+    block = _lz4_literal_only(data)
+    assert len(map_util.decompress_lz4_block(block, 50)) == 50
+
+
+@pytest.mark.parametrize(
+    "blob",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(b"\x00", id="token-only"),
+        pytest.param(b"\x10\x41", id="literals-without-offset"),
+        pytest.param(b"\x10\x41\xff", id="dangling-continuation"),
+        pytest.param(b"\xf0\xff", id="truncated-length"),
+        pytest.param(b"\xff" * 8, id="all-continuation"),
+        pytest.param(b"\x00\x0a\x00\x7f\xff\x00\x7f\x01\x02\x03", id="negative-offset"),
+        pytest.param(b"\x10\x41\x00\x00", id="zero-offset"),
+        pytest.param(b"\x10\x41\x01\x00", id="offset-past-output"),
+    ],
+)
+def test_lz4_malformed_block_does_not_raise(blob):
+    """A corrupt cloud payload must not raise; the camera shows a partial frame."""
+    result = map_util.decompress_lz4_block(blob, 64)
+    assert len(result) <= 64
+
+
+def test_lz4_survives_random_input():
+    """Arbitrary bytes never raise and never exceed the requested size."""
+    rng = random.Random(7)
+    for _ in range(500):
+        blob = bytes(rng.getrandbits(8) for _ in range(rng.randint(0, 40)))
+        size = rng.choice([16, 64, 256, 1024])
+        assert len(map_util.decompress_lz4_block(blob, size)) <= size
 
 
 def test_render_produces_valid_png():

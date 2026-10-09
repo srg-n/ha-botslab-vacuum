@@ -10,7 +10,13 @@ import zlib
 
 
 def decompress_lz4_block(src: bytes, uncompressed_size: int) -> bytes:
-    """Decompress raw LZ4 block into bytes."""
+    """Decompress raw LZ4 block into bytes.
+
+    Returns at most ``uncompressed_size`` bytes. Cloud payloads are
+    untrusted input, so output is clamped at every copy step and a malformed
+    offset terminates the block instead of raising: a bad map should render as
+    a partial or blank camera frame, never take the entity down.
+    """
     dst = bytearray()
     src_len = len(src)
     ip = 0
@@ -25,9 +31,10 @@ def decompress_lz4_block(src: bytes, uncompressed_size: int) -> bytes:
                 lit_len += s
                 if s != 255:
                     break
+        lit_len = min(lit_len, uncompressed_size - len(dst))
         dst.extend(src[ip : ip + lit_len])
         ip += lit_len
-        if len(dst) >= uncompressed_size or ip >= src_len:
+        if len(dst) >= uncompressed_size or ip + 1 >= src_len:
             break
         offset = src[ip] | (src[ip + 1] << 8)
         ip += 2
@@ -40,6 +47,11 @@ def decompress_lz4_block(src: bytes, uncompressed_size: int) -> bytes:
                 if s != 255:
                     break
         match_pos = len(dst) - offset
+        if not 0 <= match_pos < len(dst):
+            # Offset points outside the output produced so far, so the block is
+            # corrupt and cannot be recovered from. Offset 0 lands here too.
+            break
+        match_len = min(match_len, uncompressed_size - len(dst))
         for _ in range(match_len):
             dst.append(dst[match_pos])
             match_pos += 1
