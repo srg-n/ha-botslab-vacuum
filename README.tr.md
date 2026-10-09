@@ -5,7 +5,7 @@
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.1%2B-blue.svg?logo=home-assistant)](https://www.home-assistant.io)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg?logo=home-assistant)](https://hacs.xyz)
 [![Lisans: MIT](https://img.shields.io/badge/Lisans-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python)](https://www.python.org)
+[![Python](https://img.shields.io/badge/Python-3.14.2%2B-3776AB.svg?logo=python)](https://www.python.org)
 
 **Botslab** ve **Qihoo 360** robot süpürgeler için doğrudan kullanıma hazır Home Assistant entegrasyonu. Botslab Cloud'a gömülü **QUC Kimlik Doğrulama** (DES + RSA + MD5 imza üretimi) üzerinden bağlanır; robot kontrollerini, sensörleri, oda temizliğini ve anlık durum verilerini Home Assistant'a aktarır.
 
