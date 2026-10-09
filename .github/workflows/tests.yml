@@ -1,5 +1,9 @@
 name: Tests
 
+# Action versions are pinned to the first releases that run on Node 24.
+# actions/checkout@v4 and actions/setup-python@v5 target Node 20, which GitHub
+# deprecated in September 2025: they still run, but only because the runner
+# forces them onto Node 24, and they emit a deprecation warning on every job.
 on:
   push:
     branches: [main]
@@ -21,10 +25,10 @@ jobs:
         # 2025.1.0 is the declared minimum in hacs.json, and it requires 3.13.
         python-version: ["3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -42,9 +46,9 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
