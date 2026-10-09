@@ -63,7 +63,7 @@ async def test_device_registered(hass: HomeAssistant) -> None:
     await setup_entry(hass, make_config_entry())
 
     devices = dr.async_get(hass)
-    matches = devices.async_get_devices({(DOMAIN, TEST_SN)})
+    matches = devices.async_get_devices(identifiers={(DOMAIN, TEST_SN)})
     assert len(matches) == 1, f"expected one device, got {len(matches)}"
     device = matches[0]
     assert device.manufacturer == "Botslab / 360"

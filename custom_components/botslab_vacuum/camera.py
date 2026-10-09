@@ -55,7 +55,12 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
         coordinator: BotslabVacuumCoordinator,
         device: BotslabVacuumDevice,
     ) -> None:
-        super().__init__(coordinator, device)
+        # Camera.__init__ has to run explicitly. The coordinator base class in
+        # the middle of the MRO does not chain upwards, so Camera's own setup
+        # would never happen and the entity fails to be added with
+        # "no attribute '_webrtc_provider'".
+        Camera.__init__(self)
+        BotslabVacuumEntity.__init__(self, coordinator, device)
         self._attr_unique_id = f"{device.device_name}_map_camera"
         self._attr_translation_key = "cleaning_map"
         self._attr_entity_registry_enabled_default = coordinator.enable_map

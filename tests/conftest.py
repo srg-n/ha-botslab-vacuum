@@ -308,7 +308,7 @@ def entity_ids_for_all_robots(hass: HomeAssistant) -> list[str]:
     """Return every entity id that belongs to this integration."""
     return [
         entry.entity_id
-        for entry in er.async_get(hass).entries.values()
+        for entry in er.async_get(hass).entities.values()
         if entry.platform == DOMAIN
     ]
 

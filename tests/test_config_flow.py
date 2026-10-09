@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import voluptuous as vol
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.core import HomeAssistant
 
@@ -136,16 +135,11 @@ async def test_options_flow_uses_suggested_values(hass: HomeAssistant) -> None:
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is data_entry_flow.FlowResultType.FORM
 
-    schema = result["data_schema"].schema
-    # voluptuous markers only have a usable default when one was set; the
-    # sentinel is not callable, so it has to be filtered out.
-    defaults = {
-        str(key.schema): key.default()
-        for key in schema
-        if hasattr(key, "default") and key.default is not vol.UNDEFINED
-    }
-    assert defaults.get("poll_interval_active") == 30
-    assert defaults.get("poll_interval_idle") == 120
+    # Validating an empty payload makes voluptuous fill in the suggested values,
+    # which is how the UI pre-fills the form.
+    defaults = result["data_schema"]({})
+    assert defaults["poll_interval_active"] == 30
+    assert defaults["poll_interval_idle"] == 120
 
 
 async def test_reauth_flow_available(hass: HomeAssistant) -> None:

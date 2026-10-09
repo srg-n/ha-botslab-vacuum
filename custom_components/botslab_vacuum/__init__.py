@@ -188,8 +188,7 @@ def _register_services(hass: HomeAssistant) -> None:
         selected: list[tuple[BotslabVacuumCoordinator, Any]] = []
         unknown: list[str] = []
         for entity_id in entity_ids:
-            config_entry_id = entities.async_get(entity_id)
-            registry_entry = entities.async_get_entry(entity_id)
+            registry_entry = entities.async_get(entity_id)
             device_entry = (
                 devices.async_get(registry_entry.device_id)
                 if registry_entry and registry_entry.device_id
@@ -204,8 +203,8 @@ def _register_services(hass: HomeAssistant) -> None:
                 None,
             )
             entry = (
-                hass.config_entries.async_get_entry(config_entry_id)
-                if config_entry_id
+                hass.config_entries.async_get_entry(registry_entry.config_entry_id)
+                if registry_entry
                 else None
             )
             runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
