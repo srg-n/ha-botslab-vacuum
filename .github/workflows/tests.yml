@@ -17,21 +17,17 @@ concurrency:
 
 jobs:
   tests:
-    name: Unit tests (Python ${{ matrix.python-version }})
+    name: Unit tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # 2025.12.4 is what requirements_test.txt pins, via
-        # pytest-homeassistant-custom-component, and it requires 3.13.
-        python-version: ["3.13"]
     steps:
       - uses: actions/checkout@v5
 
+      # 2026.10.0, the release requirements_test.txt pins through
+      # pytest-homeassistant-custom-component, requires Python 3.14 or newer.
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: requirements_test.txt
 
@@ -51,7 +47,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Pyflakes
         run: |
