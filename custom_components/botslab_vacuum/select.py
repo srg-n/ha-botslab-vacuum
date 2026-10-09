@@ -11,7 +11,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    DOMAIN,
     INT_TO_WATER_LEVEL,
     MOP_MODES,
     WATER_LEVELS,
@@ -58,7 +57,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Botslab select entities."""
-    coordinator: BotslabVacuumCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data.coordinator
     entities = [
         BotslabSelect(coordinator, device, desc)
         for device in coordinator.data.values()

@@ -14,7 +14,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    DOMAIN,
     FAN_SPEEDS,
     STATUS_CLEANING,
     STATUS_DOCKED,
@@ -57,7 +56,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Botslab vacuum entities from config entry."""
-    coordinator: BotslabVacuumCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data.coordinator
     entities = [
         BotslabVacuumRobot(coordinator, device)
         for device in coordinator.data.values()

@@ -20,7 +20,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
 from .models import BotslabVacuumDevice
@@ -34,7 +33,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up map camera entities from a config entry."""
-    coordinator: BotslabVacuumCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data.coordinator
+    if not coordinator.enable_map:
+        # The user turned maps off to save bandwidth and CPU; do not create
+        # camera entities that would immediately start fetching again.
+        return
     async_add_entities(
         BotslabMapCamera(coordinator, device)
         for device in coordinator.data.values()
@@ -55,6 +58,7 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
         super().__init__(coordinator, device)
         self._attr_unique_id = f"{device.device_name}_map_camera"
         self._attr_translation_key = "cleaning_map"
+        self._attr_entity_registry_enabled_default = coordinator.enable_map
 
     @property
     def _map_info(self):  # noqa: ANN202 - BotslabMapInfo | None

@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import voluptuous as vol
@@ -45,10 +46,21 @@ from .const import (
     SERVICE_SET_WATER_LEVEL,
     SERVICE_SYNC_MAP,
 )
-from .coordinator import BotslabVacuumCoordinator
+from .coordinator import BotslabRuntimeData, BotslabVacuumCoordinator
 from .qpush import BotslabQPush
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up the Botslab Vacuum domain.
+
+    Services are registered once per Home Assistant instance rather than once
+    per config entry, so they exist before an account is configured and are
+    not re-registered when another entry is added.
+    """
+    _register_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -103,33 +115,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         qpush.run(), name=f"qpush_{entry.entry_id}"
     )
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "coordinator": coordinator,
-        "api": api,
-        "qpush": qpush,
-        "qpush_task": qpush_task,
-    }
+    # Platforms read their shared objects from here instead of hass.data.
+    entry.runtime_data = BotslabRuntimeData(
+        api=api,
+        coordinator=coordinator,
+        qpush=qpush,
+        qpush_task=qpush_task,
+    )
 
     # Register platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Register custom domain services
-    _register_services(hass)
+    # Reload when the user changes options so polling intervals and the map
+    # toggle take effect without restarting Home Assistant.
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the entry after its options changed."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        data = hass.data[DOMAIN].pop(entry.entry_id)
-        qpush: BotslabQPush = data.get("qpush")
-        if qpush:
-            await qpush.stop()
-        task = data.get("qpush_task")
-        if task and not task.done():
-            task.cancel()
+        runtime: BotslabRuntimeData = entry.runtime_data
+        await runtime.qpush.stop()
+        if runtime.qpush_task and not runtime.qpush_task.done():
+            runtime.qpush_task.cancel()
+        entry.runtime_data = None
 
     return unload_ok
 
@@ -142,27 +159,39 @@ def _register_services(hass: HomeAssistant) -> None:
     def _targets(call: ServiceCall) -> list[tuple[BotslabVacuumCoordinator, Any]]:
         """Resolve a service call to the devices it should affect.
 
-        Dashboard map cards address a single robot via ``entity_id``; a plain
-        service call without a target applies to every configured robot.
+        Dashboard map cards address a single robot via ``entity_id``. A call
+        without a target is only accepted from the UI, where Home Assistant
+        fills in the selected entity; scripted calls must name a target
+        explicitly so a command never fans out to every robot on every
+        account by accident.
         """
-        entity_ids = call.data.get(ATTR_ENTITY_ID)
+        entity_ids = call.data.get(ATTR_ENTITY_ID) or []
+        if not entity_ids:
+            _LOGGER.warning(
+                "%s was called without a target entity, so it was ignored. "
+                "Pass entity_id to choose which robot should run the command.",
+                call.service,
+            )
+            return []
+
         selected: list[tuple[BotslabVacuumCoordinator, Any]] = []
-
-        for entry_data in hass.data.get(DOMAIN, {}).values():
-            coordinator: BotslabVacuumCoordinator = entry_data["coordinator"]
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+            runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
+            if runtime is None:
+                continue
+            coordinator = runtime.coordinator
             for dev in (coordinator.data or {}).values():
-                if entity_ids and dev.unique_id not in entity_ids:
-                    continue
-                selected.append((coordinator, dev))
+                if dev.unique_id in entity_ids:
+                    selected.append((coordinator, dev))
 
-        if entity_ids:
-            found = {d.unique_id for _, d in selected}
-            unknown = [e for e in entity_ids if e not in found]
-            if unknown:
-                _LOGGER.warning(
-                    "Service called for unknown or offline entity id(s): %s",
-                    ", ".join(unknown),
-                )
+        found = {d.unique_id for _, d in selected}
+        unknown = [e for e in entity_ids if e not in found]
+        if unknown:
+            _LOGGER.warning(
+                "%s called for unknown or offline entity id(s): %s",
+                call.service,
+                ", ".join(unknown),
+            )
         return selected
 
     async def handle_clean_rooms(call: ServiceCall) -> None:

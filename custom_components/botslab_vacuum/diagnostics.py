@@ -12,7 +12,6 @@ from .const import (
     CONF_PASSWORD,
     CONF_Q,
     CONF_T,
-    DOMAIN,
 )
 
 _REDACT = {CONF_PASSWORD, CONF_Q, CONF_T, CONF_EMAIL, CONF_M2, "push_alias", "sid"}
@@ -25,8 +24,8 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return redacted diagnostics for a config entry."""
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    coordinator = entry_data.get("coordinator")
+    runtime = getattr(entry, "runtime_data", None)
+    coordinator = runtime.coordinator if runtime else None
     devices = []
 
     if coordinator and coordinator.data:
@@ -55,5 +54,5 @@ async def async_get_config_entry_diagnostics(
         "options": dict(entry.options),
         "device_count": len(devices),
         "devices": devices,
-        "qpush_active": entry_data.get("qpush") is not None,
+        "qpush_active": runtime.qpush is not None if runtime else False,
     }

@@ -1,0 +1,67 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs so a force-push does not queue up several installs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 2025.1.0 is the declared minimum in hacs.json, and it requires 3.13.
+        python-version: ["3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements_test.txt
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements_test.txt
+
+      - name: Run pytest
+        run: python -m pytest --verbose --tb=short
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Pyflakes
+        run: |
+          python -m pip install pyflakes
+          python -m pyflakes custom_components tests
+
+      - name: Validate JSON and YAML
+        run: |
+          python -m pip install pyyaml
+          python - <<'PY'
+          import json, pathlib, yaml
+          root = pathlib.Path(".")
+          for path in root.glob("**/*.json"):
+              json.loads(path.read_text(encoding="utf-8"))
+          for path in list(root.glob("**/*.yaml")) + list(root.glob("**/*.yml")):
+              list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+          print("JSON and YAML parse cleanly")
+          PY

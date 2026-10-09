@@ -15,7 +15,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 _LOGGER = logging.getLogger(__name__)
 
-from .const import DOMAIN
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
 from .lovelace import build_full_dashboard_snippet
@@ -58,10 +57,16 @@ async def _async_generate_map_card(
 
     room_count = len([r for r in device.rooms if len(r.outline) >= 3])
     if not room_count:
-        message = (
-            "No room geometry available yet. Press **Sync Map** on the robot "
-            "first so it uploads its floor plan to the cloud, then press this "
+        hint = (
+            "Map support is currently disabled in the integration options. "
+            "Enable **Enable live map** for this robot, then press this "
             "button again.\n\n"
+            if not coordinator.enable_map
+            else "Press **Sync Map** on the robot first so it uploads its "
+            "floor plan to the cloud, then press this button again.\n\n"
+        )
+        message = (
+            f"No room geometry available yet. {hint}"
             f"Config file: {path if path else '(could not be written)'}"
         )
     else:
@@ -156,7 +161,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Botslab button entities."""
-    coordinator: BotslabVacuumCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data.coordinator
     entities = []
     for device in coordinator.data.values():
         for desc in BUTTON_DESCRIPTIONS:

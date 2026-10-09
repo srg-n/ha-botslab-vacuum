@@ -179,14 +179,15 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Get options flow."""
-        return BotslabVacuumOptionsFlowHandler(config_entry)
+        return BotslabVacuumOptionsFlowHandler()
 
 
 class BotslabVacuumOptionsFlowHandler(OptionsFlow):
-    """Handle options for Botslab Vacuum."""
+    """Handle options for Botslab Vacuum.
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        self.config_entry = config_entry
+    ``config_entry`` is supplied by Home Assistant as a read-only property; it
+    must not be assigned here or the options flow fails from HA 2025.12.
+    """
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -195,17 +196,16 @@ class BotslabVacuumOptionsFlowHandler(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
+        options = self.config_entry.options
+        defaults = {
+            CONF_POLL_INTERVAL_ACTIVE: options.get(CONF_POLL_INTERVAL_ACTIVE, DEFAULT_POLL_INTERVAL_ACTIVE),
+            CONF_POLL_INTERVAL_IDLE: options.get(CONF_POLL_INTERVAL_IDLE, DEFAULT_POLL_INTERVAL_IDLE),
+            CONF_ENABLE_MAP: options.get(CONF_ENABLE_MAP, True),
+        }
+
         schema = vol.Schema(
             {
-                vol.Optional(
-                    CONF_POLL_INTERVAL_ACTIVE,
-                    default=self.config_entry.options.get(
-                        CONF_POLL_INTERVAL_ACTIVE,
-                        self.config_entry.data.get(
-                            CONF_POLL_INTERVAL_ACTIVE, DEFAULT_POLL_INTERVAL_ACTIVE
-                        ),
-                    ),
-                ): NumberSelector(
+                vol.Optional(CONF_POLL_INTERVAL_ACTIVE): NumberSelector(
                     NumberSelectorConfig(
                         min=10,
                         max=120,
@@ -213,15 +213,7 @@ class BotslabVacuumOptionsFlowHandler(OptionsFlow):
                         mode=NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Optional(
-                    CONF_POLL_INTERVAL_IDLE,
-                    default=self.config_entry.options.get(
-                        CONF_POLL_INTERVAL_IDLE,
-                        self.config_entry.data.get(
-                            CONF_POLL_INTERVAL_IDLE, DEFAULT_POLL_INTERVAL_IDLE
-                        ),
-                    ),
-                ): NumberSelector(
+                vol.Optional(CONF_POLL_INTERVAL_IDLE): NumberSelector(
                     NumberSelectorConfig(
                         min=30,
                         max=600,
@@ -229,11 +221,11 @@ class BotslabVacuumOptionsFlowHandler(OptionsFlow):
                         mode=NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Optional(
-                    CONF_ENABLE_MAP,
-                    default=self.config_entry.options.get(CONF_ENABLE_MAP, True),
-                ): BooleanSelector(),
+                vol.Optional(CONF_ENABLE_MAP): BooleanSelector(),
             }
         )
 
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(schema, defaults),
+        )

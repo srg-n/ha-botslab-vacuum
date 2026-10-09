@@ -36,7 +36,7 @@
         "data": {
           "poll_interval_active": "Active Polling Interval - Cleaning (seconds)",
           "poll_interval_idle": "Idle Polling Interval - Docked/Standby (seconds)",
-          "enable_map": "Enable Map Image Entity"
+          "enable_map": "Enable live map and map camera"
         }
       }
     }

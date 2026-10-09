@@ -1,7 +1,9 @@
 """DataUpdateCoordinator for Botslab Vacuum Robot integration."""
 from __future__ import annotations
 
+import asyncio
 import base64
+from dataclasses import dataclass
 from datetime import timedelta
 import json
 import logging
@@ -27,9 +29,24 @@ from .const import (
     MODE_TO_FAN_SPEED,
 )
 from .models import BotslabConsumableStatus, BotslabMapInfo, BotslabRoom, BotslabVacuumDevice
+from .qpush import BotslabQPush
 from .quc_login import BotslabAuthError, async_login
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class BotslabRuntimeData:
+    """Objects created for a config entry and shared with its platforms.
+
+    Stored on ``ConfigEntry.runtime_data`` so platforms receive them through
+    their own config entry instead of reaching into ``hass.data``.
+    """
+
+    api: BotslabVacuumApi
+    coordinator: BotslabVacuumCoordinator
+    qpush: BotslabQPush
+    qpush_task: asyncio.Task[None] | None = None
 
 
 def _decode_room_name(raw_name: str) -> str:

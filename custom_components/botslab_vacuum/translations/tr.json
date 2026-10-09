@@ -36,7 +36,7 @@
         "data": {
           "poll_interval_active": "Aktif Temizlik Yoklama Aralığı (saniye)",
           "poll_interval_idle": "Şarjda / Boşta Yoklama Aralığı (saniye)",
-          "enable_map": "Canlı Harita Varlığını Etkinleştir"
+          "enable_map": "Canlı haritayı ve harita kamerasını etkinleştir"
         }
       }
     }

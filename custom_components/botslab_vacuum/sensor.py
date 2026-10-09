@@ -12,12 +12,11 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfArea, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
 from .models import BotslabVacuumDevice
@@ -50,7 +49,8 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
     BotslabSensorEntityDescription(
         key="clean_area",
         translation_key="clean_area",
-        native_unit_of_measurement="m²",
+        native_unit_of_measurement=UnitOfArea.SQUARE_METERS,
+        device_class=SensorDeviceClass.AREA,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:texture-box",
         value_fn=lambda dev: dev.cleaned_area_sqm,
@@ -90,7 +90,8 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
     BotslabSensorEntityDescription(
         key="total_clean_area",
         translation_key="total_clean_area",
-        native_unit_of_measurement="m²",
+        native_unit_of_measurement=UnitOfArea.SQUARE_METERS,
+        device_class=SensorDeviceClass.AREA,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:chart-areaspline",
         value_fn=lambda dev: dev.total_cleaning_area_sqm,
@@ -107,7 +108,10 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
     BotslabSensorEntityDescription(
         key="tasks_count",
         translation_key="tasks_count",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        # A bare counter has no unit of measurement, so it must not claim a
+        # state class: Home Assistant would try to build long-term statistics
+        # from a total it cannot express.
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:counter",
         value_fn=lambda dev: dev.tasks_total_count,
     ),
@@ -146,7 +150,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Botslab sensor entities."""
-    coordinator: BotslabVacuumCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data.coordinator
     entities = []
     for device in coordinator.data.values():
         for description in SENSOR_DESCRIPTIONS:
