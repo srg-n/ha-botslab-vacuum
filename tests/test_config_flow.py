@@ -135,11 +135,17 @@ async def test_options_flow_uses_suggested_values(hass: HomeAssistant) -> None:
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is data_entry_flow.FlowResultType.FORM
 
-    # Validating an empty payload makes voluptuous fill in the suggested values,
-    # which is how the UI pre-fills the form.
-    defaults = result["data_schema"]({})
-    assert defaults["poll_interval_active"] == 30
-    assert defaults["poll_interval_idle"] == 120
+    # add_suggested_values_to_schema records the current values as a suggestion on
+    # each marker rather than as a voluptuous default, which is what pre-fills
+    # the form in the UI.
+    schema = result["data_schema"].schema
+    suggested = {
+        str(marker.schema): marker.description.get("suggested_value")
+        for marker in schema
+        if marker.description
+    }
+    assert suggested.get("poll_interval_active") == 30
+    assert suggested.get("poll_interval_idle") == 120
 
 
 async def test_reauth_flow_available(hass: HomeAssistant) -> None:

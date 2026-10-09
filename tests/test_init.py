@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 
 from custom_components.botslab_vacuum.const import DOMAIN, PLATFORMS
@@ -43,7 +44,8 @@ async def test_entities_created_for_every_platform(hass: HomeAssistant) -> None:
     await setup_entry(hass, make_config_entry())
 
     platforms = {
-        entry.domain for entry in entity_ids_for_all_robots(hass)
+        entity_id.split(".", 1)[0]
+        for entity_id in entity_ids_for_all_robots(hass)
     }
 
     assert "vacuum" in platforms, "no vacuum entity"
@@ -82,7 +84,15 @@ async def test_unload_stops_push_listener(hass: HomeAssistant) -> None:
     # Home Assistant deletes runtime_data outright when unloading, rather than
     # clearing it to None, so an unset attribute is the expected end state.
     assert not hasattr(entry, "runtime_data")
-    assert not hass.states.async_entity_ids("vacuum")
+
+    # Unloading must stop the robot being usable. A state object may survive
+    # because the registry entry still exists, but it must no longer report a
+    # live robot.
+    leftover = {
+        entity_id: hass.states.get(entity_id).state
+        for entity_id in hass.states.async_entity_ids("vacuum")
+    }
+    assert all(state == STATE_UNAVAILABLE for state in leftover.values()), leftover
 
 
 async def test_reload_after_options_change(hass: HomeAssistant) -> None:
