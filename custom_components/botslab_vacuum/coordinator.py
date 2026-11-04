@@ -208,7 +208,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             fan_speed = MODE_TO_FAN_SPEED.get(suction_level, "standard")
 
             # Mop & Water Settings
-            water_level_int = int(props.get("PadWetness", 1) or 1)
+            water_level_int = int(props.get("PadWetness") or props.get("water_level") or 1)
             mop_mode_int = int(props.get("MopModeSwitching", 0) or 0)
             mop_mode_str = INT_TO_MOP_MODE.get(mop_mode_int, "vacuum_and_mop")
             mop_installed = bool(props.get("MoppingPadInstalled", False))
