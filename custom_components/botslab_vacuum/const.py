@@ -62,7 +62,7 @@ REGIONS: Final[dict[str, dict[str, str]]] = {
         "iot": "ap1-iot-deviceapi.botslab.com",
     },
     "cn": {
-        "name": "China Mainland (360 Smart Life - Experimental)",
+        "name": "China Mainland (360 Smart Life)",
         "api": "q.smart.360.cn",
         "login": "passport.360.cn",
         "iot": "iot.360.cn",
@@ -71,15 +71,31 @@ REGIONS: Final[dict[str, dict[str, str]]] = {
 }
 DEFAULT_REGION: Final = "eu1"
 
-# --- Legacy Qihoo 360 Endpoints & Settings ---
+# --- Legacy Qihoo 360 Endpoints, Constants & Protocols ---
 QUC_FROM_CHINA: Final = "mpl_smarthome_and"
 QUC_APP_CHINA: Final = "360Robot"
 QUC_MSIGKEY_CHINA: Final = "i7v2m5x6q"
 EP_360_LOGIN: Final = "/common/user/login"
 EP_360_DEV_LIST: Final = "/common/dev/GetList"
 EP_360_CMD_SEND: Final = "/clean/cmd/send"
+EP_360_RECORD_LIST: Final = "/clean/record/getList"
+EP_360_RECORD_GET_ONE: Final = "/clean/record/getOne"
 LEGACY_360_USER_AGENT: Final = "QihooSuperApp_NoPods/11.1.0 (iPhone; iOS 15.6; Scale/3.00)"
 LEGACY_360_MINT_UA: Final = "qhsa-iphone-11.1.0"
+COOKIE_Q_360: Final = "u=&t=1;t=&v=2.0&a=1"
+
+INFO_360_STATUS: Final = "20001"
+INFO_360_START: Final = "21005"
+INFO_360_RETURN: Final = "21012"
+INFO_360_PAUSE: Final = "21017"
+INFO_360_LOCATE: Final = "21020"
+INFO_360_FAN_SPEED: Final = "21022"
+INFO_360_SETTINGS: Final = "21024"
+INFO_360_CONSUMABLES: Final = "21015"
+INFO_360_RESET_CONSUMABLE: Final = "21016"
+
+AUTH_EXPIRED_ERRNOS_360: Final = (102, 103, 401, 403, -2, 10001, 10002)
+BATTERY_KEYS_360: Final = ("elecReal", "elec", "battery", "batteryLevel", "power")
 
 # --- REST Endpoints ---
 EP_APP_LOGIN: Final = "/v1/app/login"
@@ -130,6 +146,21 @@ MODE_TO_FAN_SPEED: Final[dict[int, str]] = {
     4: FAN_SPEED_MAX,
 }
 
+# Mapping between Home Assistant fan speeds and legacy 360 workNoisy strings / cmd 21022
+FAN_SPEEDS_HA_TO_360: Final[dict[str, str]] = {
+    FAN_SPEED_QUIET: "quiet",
+    FAN_SPEED_STANDARD: "auto",
+    FAN_SPEED_POWERFUL: "strong",
+    FAN_SPEED_MAX: "max",
+}
+
+FAN_SPEEDS_360_TO_HA: Final[dict[str, str]] = {
+    "quiet": FAN_SPEED_QUIET,
+    "auto": FAN_SPEED_STANDARD,
+    "strong": FAN_SPEED_POWERFUL,
+    "max": FAN_SPEED_MAX,
+}
+
 # --- Vacuum Activities ---
 STATUS_DOCKED: Final = "docked"
 STATUS_CLEANING: Final = "cleaning"
@@ -153,6 +184,9 @@ CONF_REGION: Final = "region"
 CONF_M2: Final = "m2"
 CONF_Q: Final = "q"
 CONF_T: Final = "t"
+CONF_QID: Final = "qid"
+CONF_SID: Final = "sid"
+CONF_PUSHKEY: Final = "pushkey"
 CONF_POLL_INTERVAL: Final = "poll_interval"
 CONF_POLL_INTERVAL_ACTIVE: Final = "poll_interval_active"
 CONF_POLL_INTERVAL_IDLE: Final = "poll_interval_idle"

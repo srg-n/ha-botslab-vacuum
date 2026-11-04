@@ -46,6 +46,7 @@ from .const import (
     CONF_POLL_INTERVAL_ACTIVE,
     CONF_POLL_INTERVAL_IDLE,
     CONF_Q,
+    CONF_QID,
     CONF_REGION,
     CONF_T,
     DEFAULT_POLL_INTERVAL_ACTIVE,
@@ -171,6 +172,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     m2 = entry.data[CONF_M2]
     q = entry.data.get(CONF_Q, "")
     t = entry.data.get(CONF_T, "")
+    qid = entry.data.get(CONF_QID, "")
 
     poll_interval_active = entry.options.get(
         CONF_POLL_INTERVAL_ACTIVE,
@@ -190,6 +192,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         m2=m2,
         q=q,
         t=t,
+        qid=qid,
     )
 
     coordinator = BotslabVacuumCoordinator(
@@ -204,17 +207,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initial data load
     await coordinator.async_config_entry_first_refresh()
 
-    # Launch QPush real-time socket listener in background
-    qpush = BotslabQPush(
-        session=session,
-        device_id=m2,
-        get_alias=lambda: api.push_alias,
-        on_push=lambda payload: hass.async_create_task(coordinator.async_on_push(payload)),
-        ensure_session=coordinator.ensure_valid_session,
-    )
-    qpush_task = hass.async_create_background_task(
-        qpush.run(), name=f"qpush_{entry.entry_id}"
-    )
+    # Launch QPush real-time socket listener in background for international accounts.
+    # Legacy 360 China accounts poll via REST and do not use the international QPush gateway.
+    qpush: BotslabQPush | None = None
+    qpush_task = None
+    if not api.is_legacy_360:
+        qpush = BotslabQPush(
+            session=session,
+            device_id=m2,
+            get_alias=lambda: api.push_alias,
+            on_push=lambda payload: hass.async_create_task(coordinator.async_on_push(payload)),
+            ensure_session=coordinator.ensure_valid_session,
+        )
+        qpush_task = hass.async_create_background_task(
+            qpush.run(), name=f"qpush_{entry.entry_id}"
+        )
 
     # Platforms read their shared objects from here instead of hass.data.
     entry.runtime_data = BotslabRuntimeData(
@@ -251,7 +258,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         runtime: BotslabRuntimeData = entry.runtime_data
-        await runtime.qpush.stop()
+        if runtime.qpush is not None:
+            await runtime.qpush.stop()
         if runtime.qpush_task and not runtime.qpush_task.done():
             runtime.qpush_task.cancel()
         entry.runtime_data = None

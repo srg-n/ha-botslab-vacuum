@@ -32,6 +32,7 @@ from .const import (
     CONF_POLL_INTERVAL_ACTIVE,
     CONF_POLL_INTERVAL_IDLE,
     CONF_Q,
+    CONF_QID,
     CONF_REGION,
     CONF_T,
     DEFAULT_POLL_INTERVAL_ACTIVE,
@@ -70,12 +71,14 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
             session = async_get_clientsession(self.hass)
             try:
                 tokens = await async_login(session, region, email, password, m2)
+                qid = tokens.get("qid", "")
                 api = BotslabVacuumApi(
                     session=session,
                     region=region,
                     m2=m2,
                     q=tokens["q"],
                     t=tokens["t"],
+                    qid=qid,
                 )
                 await api.app_login()
                 devices = await api.get_devices()
@@ -83,7 +86,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 if not devices:
                     errors["base"] = "no_devices_found"
                 else:
-                    await self.async_set_unique_id(f"botslab_{tokens['qid']}")
+                    await self.async_set_unique_id(f"botslab_{qid or email}")
                     self._abort_if_unique_id_configured()
 
                     return self.async_create_entry(
@@ -95,6 +98,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_M2: m2,
                             CONF_Q: tokens["q"],
                             CONF_T: tokens["t"],
+                            CONF_QID: qid,
                         },
                     )
             except BotslabAuthError:
@@ -158,6 +162,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
             session = async_get_clientsession(self.hass)
             try:
                 tokens = await async_login(session, region, email, password, m2)
+                qid = tokens.get("qid") or self._reauth_entry.data.get(CONF_QID, "")
                 self.hass.config_entries.async_update_entry(
                     self._reauth_entry,
                     data={
@@ -165,6 +170,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_PASSWORD: password,
                         CONF_Q: tokens["q"],
                         CONF_T: tokens["t"],
+                        CONF_QID: qid,
                     },
                 )
                 await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
@@ -199,12 +205,14 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
             session = async_get_clientsession(self.hass)
             try:
                 tokens = await async_login(session, region, email, password, m2)
+                qid = tokens.get("qid") or entry.data.get(CONF_QID, "")
                 api = BotslabVacuumApi(
                     session=session,
                     region=region,
                     m2=m2,
                     q=tokens["q"],
                     t=tokens["t"],
+                    qid=qid,
                 )
                 await api.app_login()
                 devices = await api.get_devices()
@@ -212,7 +220,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 if not devices:
                     errors["base"] = "no_devices_found"
                 else:
-                    await self.async_set_unique_id(f"botslab_{tokens['qid']}")
+                    await self.async_set_unique_id(f"botslab_{qid or email}")
                     self._abort_if_unique_id_mismatch()
 
                     return self.async_update_reload_and_abort(
@@ -225,6 +233,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_M2: m2,
                             CONF_Q: tokens["q"],
                             CONF_T: tokens["t"],
+                            CONF_QID: qid,
                         },
                     )
             except BotslabAuthError:

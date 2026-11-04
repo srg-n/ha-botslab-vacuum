@@ -65,6 +65,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up Botslab switch entities."""
     coordinator = entry.runtime_data.coordinator
+    if coordinator.api.is_legacy_360:
+        return
     entities = [
         BotslabSwitch(coordinator, device, desc)
         for device in coordinator.data.values()

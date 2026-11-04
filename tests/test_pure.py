@@ -377,9 +377,25 @@ def test_map_info_calibration():
 def test_china_region_constants():
     """Verify China legacy 360 region configuration and endpoints."""
     from custom_components.botslab_vacuum.const import (
+        AUTH_EXPIRED_ERRNOS_360,
+        BATTERY_KEYS_360,
+        COOKIE_Q_360,
         EP_360_CMD_SEND,
         EP_360_DEV_LIST,
         EP_360_LOGIN,
+        EP_360_RECORD_GET_ONE,
+        EP_360_RECORD_LIST,
+        FAN_SPEEDS_360_TO_HA,
+        FAN_SPEEDS_HA_TO_360,
+        INFO_360_CONSUMABLES,
+        INFO_360_FAN_SPEED,
+        INFO_360_LOCATE,
+        INFO_360_PAUSE,
+        INFO_360_RESET_CONSUMABLE,
+        INFO_360_RETURN,
+        INFO_360_SETTINGS,
+        INFO_360_START,
+        INFO_360_STATUS,
         LEGACY_360_MINT_UA,
         LEGACY_360_USER_AGENT,
         QUC_APP_CHINA,
@@ -399,8 +415,25 @@ def test_china_region_constants():
     assert EP_360_LOGIN == "/common/user/login"
     assert EP_360_DEV_LIST == "/common/dev/GetList"
     assert EP_360_CMD_SEND == "/clean/cmd/send"
+    assert EP_360_RECORD_LIST == "/clean/record/getList"
+    assert EP_360_RECORD_GET_ONE == "/clean/record/getOne"
+    assert COOKIE_Q_360 == "u=&t=1;t=&v=2.0&a=1"
     assert "iPhone" in LEGACY_360_USER_AGENT
     assert "qhsa" in LEGACY_360_MINT_UA
+    assert 102 in AUTH_EXPIRED_ERRNOS_360
+    assert 103 in AUTH_EXPIRED_ERRNOS_360
+    assert "elecReal" in BATTERY_KEYS_360
+    assert INFO_360_STATUS == "20001"
+    assert INFO_360_START == "21005"
+    assert INFO_360_RETURN == "21012"
+    assert INFO_360_PAUSE == "21017"
+    assert INFO_360_LOCATE == "21020"
+    assert INFO_360_FAN_SPEED == "21022"
+    assert INFO_360_SETTINGS == "21024"
+    assert INFO_360_CONSUMABLES == "21015"
+    assert INFO_360_RESET_CONSUMABLE == "21016"
+    assert FAN_SPEEDS_HA_TO_360["standard"] == "auto"
+    assert FAN_SPEEDS_360_TO_HA["auto"] == "standard"
 
 
 def test_build_login_params_china():
@@ -416,10 +449,93 @@ def test_build_login_params_china():
     p_intl = build_login_params("user@example.com", "hunter2", "m2", is_china=False)
     assert p_intl["from"] == QUC_FROM
     assert p_intl["app"] == "Botslab"
+    assert p_intl["needDeviceCheck"] == "1"
+    assert p_intl["quc_sdk_version"] == "v3.2.7"
 
     # China
     p_cn = build_login_params("user@example.com", "hunter2", "m2", is_china=True)
     assert p_cn["from"] == QUC_FROM_CHINA
     assert p_cn["app"] == QUC_APP_CHINA
+    assert p_cn["needDeviceCheck"] == "0"
+    assert p_cn["quc_sdk_version"] == "v3.2.4.6"
+    assert p_cn["v"] == "2.24.0"
+    assert p_cn["os_sdk_version"] == "android_33"
+    assert p_cn["os_manufacturer"] == "Google"
     assert p_cn["sig"] != p_intl["sig"]
+
+
+def test_legacy_360_headers():
+    """Verify Cookie and User-Agent headers for legacy 360 backend."""
+    from unittest.mock import MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+    from custom_components.botslab_vacuum.const import COOKIE_Q_360, LEGACY_360_USER_AGENT
+
+    session = MagicMock()
+    api = BotslabVacuumApi(
+        session=session,
+        region="cn",
+        m2="fake_m2",
+        q="fake_q",
+        t="fake_t",
+        qid="12345678",
+    )
+    api.sid = "sid_abc123"
+
+    assert api.is_legacy_360 is True
+    hdrs = api._headers("application/x-www-form-urlencoded")
+    assert hdrs["User-Agent"] == LEGACY_360_USER_AGENT
+    assert hdrs["Content-Type"] == "application/x-www-form-urlencoded"
+    assert f"q={COOKIE_Q_360}" in hdrs["Cookie"]
+    assert "qid=12345678" in hdrs["Cookie"]
+    assert "sid=sid_abc123" in hdrs["Cookie"]
+
+
+def test_legacy_360_check_errno():
+    """Verify errno handling maps expired sessions to BotslabAuthError and others to BotslabCommandError."""
+    from unittest.mock import MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+    from custom_components.botslab_vacuum.exceptions import BotslabCommandError
+    from custom_components.botslab_vacuum.quc_login import BotslabAuthError
+
+    api = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+
+    # errno 0 = success
+    api._check_360_errno({"errno": 0}, "test")
+
+    # Auth expired errnos
+    for err in (102, 103, 401, 403, -2, 10001, 10002):
+        with pytest.raises(BotslabAuthError):
+            api._check_360_errno({"errno": err, "errmsg": "expired"}, "test")
+
+    # Generic command error
+    with pytest.raises(BotslabCommandError):
+        api._check_360_errno({"errno": 999, "errmsg": "bad parameter"}, "test")
+
+
+def test_legacy_360_working_status_mapping():
+    """Verify mapping of 360 status strings to standard status states."""
+    from custom_components.botslab_vacuum.api import working_status_to_state
+    from custom_components.botslab_vacuum.const import (
+        STATUS_CLEANING,
+        STATUS_DOCKED,
+        STATUS_ERROR,
+        STATUS_IDLE,
+        STATUS_PAUSED,
+        STATUS_RETURNING,
+    )
+
+    assert working_status_to_state("smartClean") == STATUS_CLEANING
+    assert working_status_to_state("sweep") == STATUS_CLEANING
+    assert working_status_to_state("reAppointClean") == STATUS_CLEANING
+    assert working_status_to_state("charge") == STATUS_DOCKED
+    assert working_status_to_state("charging") == STATUS_DOCKED
+    assert working_status_to_state("fullcharge") == STATUS_DOCKED
+    assert working_status_to_state("pause") == STATUS_PAUSED
+    assert working_status_to_state("chargeback") == STATUS_RETURNING
+    assert working_status_to_state("return") == STATUS_RETURNING
+    assert working_status_to_state("gocharge") == STATUS_RETURNING
+    assert working_status_to_state("idle") == STATUS_IDLE
+    assert working_status_to_state("standby") == STATUS_IDLE
+    assert working_status_to_state("error") == STATUS_ERROR
+
 

@@ -43,42 +43,53 @@ def build_login_params(
     app_name = QUC_APP_CHINA if is_china else "Botslab"
     sig_key = QUC_MSIGKEY_CHINA if is_china else QUC_MSIGKEY
 
+    need_device_check = "0" if is_china else "1"
+    quc_sdk_ver = "v3.2.4.6" if is_china else "v3.2.7"
+    v = "2.24.0" if is_china else "2.28.5"
+    ui_ver = "4.3.4.1-alert-ui" if is_china else "4.4.6-alert-ui"
+    os_sdk_ver = "android_33" if is_china else "android_30"
+    m_sys_ver = "android 13" if is_china else "android 11"
+
     params: dict[str, str] = {
         "loginType": "801",
-        "os_sdk_version": "android_30",
+        "os_sdk_version": os_sdk_ver,
         "mid": mid,
-        "quc_sdk_version": "v3.2.7",
-        "mname": "Galaxy Tab Active Pro",
-        "ua": "Dalvik/2.1.0 (Linux; U; Android 11; SM-T545 Build/RP1A.200720.012)",
-        "os_manufacturer": "samsung",
-        "mSystemVersion": "android 11",
+        "quc_sdk_version": quc_sdk_ver,
+        "mname": "" if is_china else "Galaxy Tab Active Pro",
+        "ua": (
+            "Dalvik/2.1.0 (Linux; U; Android 13; sdk_gphone64_arm64 Build/TE1A.240213.009)"
+            if is_china
+            else "Dalvik/2.1.0 (Linux; U; Android 11; SM-T545 Build/RP1A.200720.012)"
+        ),
+        "os_manufacturer": "Google" if is_china else "samsung",
+        "mSystemVersion": m_sys_ver,
         "head_type": "q",
-        "os_board": "sdm710",
-        "os_model": "SM-T545",
+        "os_board": "goldfish_arm64" if is_china else "sdm710",
+        "os_model": "sdk_gphone64_arm64" if is_china else "SM-T545",
         "password": md5_hex(password),
         "quc_lang": "en",
-        "sh": "1920.0",
+        "sh": "2337.0" if is_china else "1920.0",
         "vt_guid": now_ms,
         "is_keep_alive": "1",
         "from": quc_from,
-        "needDeviceCheck": "1",
+        "needDeviceCheck": need_device_check,
         "oaid": "",
         "app": app_name,
         "trace_id": f"src_and_1217_{now_ms}",
-        "ui_ver": "4.4.6-alert-ui",
+        "ui_ver": ui_ver,
         "method": QUC_METHOD,
         "res_mode": "1",
-        "sw": "1200.0",
+        "sw": "1080.0" if is_china else "1200.0",
         "format": "json",
         "qh_id": "",
         "device_os": "android",
         "device_lang": "zh-CN",
         "sec_type": "bool",
-        "v": "2.28.5",
+        "v": v,
         "fields": "qid,username,nickname,loginemail,head_pic,mobile",
         "androidid": androidid,
         "username": email,
-        "sdpi": "1.5",
+        "sdpi": "2.625" if is_china else "1.5",
     }
     params["sig"] = compute_sig(params, sig_key)
     return params

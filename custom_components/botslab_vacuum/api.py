@@ -19,10 +19,25 @@ from .const import (
     APP_KEY,
     APP_SECRET,
     APP_VER,
+    AUTH_EXPIRED_ERRNOS_360,
+    BATTERY_KEYS_360,
+    COOKIE_Q_360,
     EP_360_CMD_SEND,
     EP_360_DEV_LIST,
     EP_360_LOGIN,
+    EP_360_RECORD_GET_ONE,
+    EP_360_RECORD_LIST,
     FAN_SPEED_TO_MODE,
+    FAN_SPEEDS_HA_TO_360,
+    INFO_360_CONSUMABLES,
+    INFO_360_FAN_SPEED,
+    INFO_360_LOCATE,
+    INFO_360_PAUSE,
+    INFO_360_RESET_CONSUMABLE,
+    INFO_360_RETURN,
+    INFO_360_SETTINGS,
+    INFO_360_START,
+    INFO_360_STATUS,
     LEGACY_360_MINT_UA,
     LEGACY_360_USER_AGENT,
     MOP_MODE_TO_INT,
@@ -66,15 +81,35 @@ def _room_color(index: int) -> tuple[int, int, int]:
 
 
 def working_status_to_state(status_code: Any) -> str:
-    """Map Botslab working status code to standard status string."""
+    """Map Botslab / 360 working status code to standard status string."""
     code_str = str(status_code).lower()
-    if code_str in ("clean", "cleaning", "sweep", "sweeping", "1", "2"):
+    if code_str in (
+        "clean",
+        "cleaning",
+        "sweep",
+        "sweeping",
+        "smartclean",
+        "reappointclean",
+        "aroundclean",
+        "spotclean",
+        "totalclean",
+        "1",
+        "2",
+    ):
         return STATUS_CLEANING
-    if code_str in ("charge", "charging", "docked", "dock", "5", "6"):
+    if code_str in ("charge", "charging", "docked", "dock", "fullcharge", "5", "6"):
         return STATUS_DOCKED
     if code_str in ("pause", "paused", "3"):
         return STATUS_PAUSED
-    if code_str in ("goback", "go_charging", "returning", "4"):
+    if code_str in (
+        "goback",
+        "go_charging",
+        "returning",
+        "chargeback",
+        "return",
+        "gocharge",
+        "4",
+    ):
         return STATUS_RETURNING
     if code_str in ("error", "fault", "warn"):
         return STATUS_ERROR
@@ -91,6 +126,7 @@ class BotslabVacuumApi:
         m2: str,
         q: str,
         t: str,
+        qid: str | None = None,
     ) -> None:
         self.session = session
         self.region = region
@@ -99,7 +135,8 @@ class BotslabVacuumApi:
         self.t = t
         self.sid: str | None = None
         self.push_alias: str = ""
-        self.qid: str | None = None
+        self.qid: str | None = qid
+        self._legacy_cached_status: dict[str, str] = {}
 
         reg_info = REGIONS.get(region, REGIONS["eu1"])
         self.base_url = f"https://{reg_info['api']}"
@@ -145,7 +182,18 @@ class BotslabVacuumApi:
         }
 
     def _headers(self, content_type: str | None = None) -> dict[str, str]:
-        hdrs: dict[str, str] = {
+        if self.is_legacy_360:
+            cookie_str = f"q={COOKIE_Q_360}; qid={self.qid or ''}; sid={self.sid or ''}"
+            hdrs: dict[str, str] = {
+                "User-Agent": LEGACY_360_USER_AGENT,
+                "Accept": "*/*",
+                "Cookie": cookie_str,
+            }
+            if content_type:
+                hdrs["Content-Type"] = content_type
+            return hdrs
+
+        hdrs = {
             "User-Agent": USER_AGENT,
             "Accept": "application/json",
             "Accept-Encoding": "gzip",
@@ -172,6 +220,20 @@ class BotslabVacuumApi:
         if content_type:
             hdrs["Content-Type"] = content_type
         return hdrs
+
+    def _check_360_errno(self, result: dict[str, Any], label: str) -> None:
+        """Check response status code from 360 cloud and map auth/command errors."""
+        errno = result.get("errno", 0)
+        if errno == 0:
+            return
+        errmsg = result.get("errmsg") or result.get("msg") or "unknown error"
+        if errno in AUTH_EXPIRED_ERRNOS_360:
+            raise BotslabAuthError(
+                f"Legacy 360 {label}: session expired or invalid (errno {errno}): {errmsg}"
+            )
+        raise BotslabCommandError(
+            f"Legacy 360 {label}: rejected (errno {errno}): {errmsg}"
+        )
 
     async def _legacy_360_login(self) -> dict[str, Any]:
         """Mint session id (sid) and pushKey for legacy Qihoo 360 cloud servers."""
@@ -210,9 +272,7 @@ class BotslabVacuumApi:
         except Exception as err:
             raise BotslabApiError(f"Legacy 360 login failed: {err}") from err
 
-        errno = data.get("errno", -1)
-        if errno != 0:
-            raise BotslabAuthError(f"Legacy 360 login failed (code {errno}): {data.get('errmsg')}")
+        self._check_360_errno(data, "login")
 
         res = data.get("data") or {}
         sid = res.get("sid")
@@ -232,17 +292,6 @@ class BotslabVacuumApi:
     async def _legacy_360_get_devices(self) -> list[dict[str, Any]]:
         """Fetch device list from legacy Qihoo 360 cloud."""
         url = f"{self.base_url}{EP_360_DEV_LIST}"
-        cookie_parts = [f"q={self.q}", f"t={self.t}"]
-        if self.qid:
-            cookie_parts.append(f"qid={self.qid}")
-        if self.sid:
-            cookie_parts.append(f"sid={self.sid}")
-        headers = {
-            "Cookie": "; ".join(cookie_parts),
-            "User-Agent": LEGACY_360_USER_AGENT,
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "*/*",
-        }
         body = {
             "countryId": "US",
             "devType": "3",
@@ -254,23 +303,31 @@ class BotslabVacuumApi:
             async with self.session.post(
                 url,
                 data=body,
-                headers=headers,
+                headers=self._headers("application/x-www-form-urlencoded"),
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
             ) as resp:
                 data = await resp.json(content_type=None)
         except Exception as err:
             raise BotslabApiError(f"Legacy 360 get_devices failed: {err}") from err
 
-        errno = data.get("errno", -1)
-        if errno != 0:
-            raise BotslabApiError(f"Legacy 360 get_devices error (code {errno}): {data.get('errmsg')}")
+        self._check_360_errno(data, "GetList")
 
-        raw_list = (data.get("data") or {}).get("list") or []
+        data_dict = data.get("data") or {}
+        raw_list = (
+            data_dict.get("list")
+            or data_dict.get("devList")
+            or data_dict.get("devices")
+            or data_dict.get("cleanDevList")
+            or []
+        )
+        if isinstance(data_dict, list):
+            raw_list = data_dict
+
         normalized_devices: list[dict[str, Any]] = []
         for item in raw_list:
             if not isinstance(item, dict):
                 continue
-            sn = str(item.get("sn") or item.get("device_name") or "").strip()
+            sn = str(item.get("sn") or item.get("device_name") or item.get("devSn") or "").strip()
             if not sn:
                 continue
             self._legacy_device_cache[sn] = item
@@ -297,17 +354,6 @@ class BotslabVacuumApi:
     ) -> dict[str, Any]:
         """Send command to legacy Qihoo 360 vacuum cloud (q.smart.360.cn)."""
         url = f"{self.base_url}{EP_360_CMD_SEND}"
-        cookie_parts = [f"q={self.q}", f"t={self.t}"]
-        if self.qid:
-            cookie_parts.append(f"qid={self.qid}")
-        if self.sid:
-            cookie_parts.append(f"sid={self.sid}")
-        headers = {
-            "Cookie": "; ".join(cookie_parts),
-            "User-Agent": LEGACY_360_USER_AGENT,
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "*/*",
-        }
         if isinstance(data, (dict, list)):
             data_str = json.dumps(data, separators=(",", ":"))
         else:
@@ -327,19 +373,56 @@ class BotslabVacuumApi:
             async with self.session.post(
                 url,
                 data=body,
-                headers=headers,
+                headers=self._headers("application/x-www-form-urlencoded"),
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
             ) as resp:
                 res = await resp.json(content_type=None)
         except Exception as err:
             raise BotslabApiError(f"Legacy 360 cmd {info_type} network failed: {err}") from err
 
-        errno = res.get("errno", 0)
-        if errno != 0:
-            raise BotslabCommandError(
-                f"Legacy 360 command {info_type} rejected (errno {errno}): {res.get('errmsg')}"
-            )
+        self._check_360_errno(res, f"cmd/{info_type}")
         return res
+
+    async def get_latest_clean_record(self, sn: str) -> dict[str, Any] | None:
+        """Fetch latest clean record map and metrics from legacy 360 cloud."""
+        async def _post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+            url = f"{self.base_url}{path}"
+            body = {
+                "sn": sn,
+                "devType": "3",
+                "from": "mpc_and",
+                "taskid": str(uuid.uuid4()),
+                "appVer": "11.0.0",
+                "lang": "de_DE",
+                **payload,
+            }
+            try:
+                async with self.session.post(
+                    url,
+                    headers=self._headers("application/x-www-form-urlencoded"),
+                    data=body,
+                    timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                ) as resp:
+                    result = await resp.json(content_type=None)
+            except Exception as err:
+                raise BotslabApiError(f"Legacy 360 record error ({path}): {err}") from err
+            self._check_360_errno(result, path)
+            return result.get("data") or {}
+
+        try:
+            listing = await _post(EP_360_RECORD_LIST, {"lastId": "", "pageSize": "5"})
+            records = listing.get("list") or listing.get("records") or []
+            for item in records:
+                clean_id = item.get("cleanId")
+                if not clean_id:
+                    continue
+                record = await _post(EP_360_RECORD_GET_ONE, {"cleanId": clean_id})
+                rec = record.get("record") or record
+                if rec.get("map") and rec.get("width") and rec.get("height"):
+                    return rec
+        except Exception as err:
+            _LOGGER.debug("Legacy 360 latest clean record fetch failed: %s", err)
+        return None
 
     async def _legacy_360_get_properties(
         self, sn: str
@@ -356,27 +439,50 @@ class BotslabVacuumApi:
             "ErrorCode": raw_dev.get("error_code", 0),
         }
 
+        # Check raw device for battery keys
+        for bkey in BATTERY_KEYS_360:
+            if bkey in raw_dev and raw_dev[bkey] is not None:
+                props["BatteryLevel"] = raw_dev[bkey]
+                break
+
+        # Check raw device for fan speed
+        if "workNoisy" in raw_dev:
+            props["workNoisy"] = raw_dev["workNoisy"]
+
+        # Check raw device for volume
+        if "vol" in raw_dev and isinstance(raw_dev["vol"], (int, float)):
+            props["VolumeLevel"] = int(raw_dev["vol"]) * 10
+
         # Trigger status poll on legacy 360 cloud (infoType 20001)
         try:
-            res = await self.send_legacy_360_cmd(sn, "20001", "")
+            res = await self.send_legacy_360_cmd(sn, INFO_360_STATUS, "")
             cmd_data = res.get("data")
             if isinstance(cmd_data, dict):
-                if "status" in cmd_data:
-                    props["WorkingStatus"] = cmd_data["status"]
-                if "battery" in cmd_data:
-                    props["BatteryLevel"] = cmd_data["battery"]
+                for bkey in BATTERY_KEYS_360:
+                    if bkey in cmd_data and cmd_data[bkey] is not None:
+                        props["BatteryLevel"] = cmd_data[bkey]
+                        break
+                for skey in ("mode", "workMode", "runStatus", "cleanMode", "status"):
+                    if skey in cmd_data and cmd_data[skey] is not None:
+                        props["WorkingStatus"] = cmd_data[skey]
+                        props[skey] = cmd_data[skey]
+                        break
+                if "workNoisy" in cmd_data:
+                    props["workNoisy"] = cmd_data["workNoisy"]
+                if "vol" in cmd_data and isinstance(cmd_data["vol"], (int, float)):
+                    props["VolumeLevel"] = int(cmd_data["vol"]) * 10
                 if "clean_time" in cmd_data:
                     props["TEST_CleaningTime"] = cmd_data["clean_time"]
                 if "clean_area" in cmd_data:
                     props["CleaningArea"] = cmd_data["clean_area"]
-                if "fan_speed" in cmd_data or "wind" in cmd_data:
-                    props["SuctionPowLevel"] = cmd_data.get("fan_speed") or cmd_data.get("wind")
+        except BotslabAuthError:
+            raise
         except Exception as err:
-            _LOGGER.debug("Legacy 360 status poll (20001) returned: %s", err)
+            _LOGGER.debug("Legacy 360 status poll (20001) error: %s", err)
 
         # Trigger consumables poll (infoType 21015)
         try:
-            res_c = await self.send_legacy_360_cmd(sn, "21015", "")
+            res_c = await self.send_legacy_360_cmd(sn, INFO_360_CONSUMABLES, "")
             c_data = res_c.get("data")
             if isinstance(c_data, dict):
                 if "filter" in c_data:
@@ -385,8 +491,31 @@ class BotslabVacuumApi:
                     props["RollBrushLifeTime"] = c_data["main_brush"]
                 if "side_brush" in c_data:
                     props["EdgeBrushLifeTime"] = c_data["side_brush"]
+        except BotslabAuthError:
+            raise
         except Exception:
             pass
+
+        # Update cached status for smart resume/pause
+        st = working_status_to_state(props["WorkingStatus"])
+        self._legacy_cached_status[sn] = st
+
+        # Read latest clean record for area, time and map info
+        try:
+            record = await self.get_latest_clean_record(sn)
+            if record:
+                if "cleanTime" in record or "clean_time" in record:
+                    props["TEST_CleaningTime"] = record.get("cleanTime") or record.get("clean_time")
+                if "cleanArea" in record or "clean_area" in record:
+                    props["CleaningArea"] = record.get("cleanArea") or record.get("clean_area")
+                if "totalArea" in record:
+                    props["TotalCleaningArea"] = record.get("totalArea")
+                if "totalTime" in record:
+                    props["TotalCleaningTime"] = record.get("totalTime")
+        except BotslabAuthError:
+            raise
+        except Exception as err:
+            _LOGGER.debug("Legacy 360 clean record poll error: %s", err)
 
         return props, {}
 
@@ -663,6 +792,9 @@ class BotslabVacuumApi:
         """
         if self.is_legacy_360:
             props, _ = await self.get_property_extended(sn, product_key)
+            record = await self.get_latest_clean_record(sn)
+            if record:
+                return record, props
             return None, props
 
         props, signs = await self.get_property_extended(sn, product_key)
@@ -857,7 +989,17 @@ class BotslabVacuumApi:
         self._cached_map_info[sn] = map_info
 
         oss_info = self._parse_oss_info(props.get("MapPkgOssInfo"))
-        upload_id = str(oss_info.get("UploadID") or oss_info.get("CleanID") or "")
+        upload_id = str(
+            oss_info.get("UploadID")
+            or oss_info.get("CleanID")
+            or map_json.get("cleanId")
+            or map_json.get("clean_id")
+            or ""
+        )
+
+        # In legacy 360 maps, cleaning path is stored in record posArray
+        if not cleaning_path and isinstance(map_json.get("posArray"), list):
+            cleaning_path = map_json["posArray"]
 
         # Re-use cached map only if neither layout, robot pose, nor path changed
         if (
@@ -991,51 +1133,52 @@ class BotslabVacuumApi:
     async def start_clean(self, sn: str, product_key: str) -> None:
         """Start or resume default cleaning."""
         if self.is_legacy_360:
-            await self.send_legacy_360_cmd(sn, "21005", {"mode": "smartClean", "globalCleanTimes": 1})
+            if self._legacy_cached_status.get(sn) == STATUS_PAUSED:
+                await self.send_legacy_360_cmd(sn, INFO_360_PAUSE, {"cmd": "continue"})
+            else:
+                await self.send_legacy_360_cmd(
+                    sn, INFO_360_START, {"mode": "smartClean", "globalCleanTimes": 1}
+                )
+            self._legacy_cached_status[sn] = STATUS_CLEANING
             return
         await self.invoke_sync(sn, product_key, "StartDefaultClean", {"CleanTimes": 1})
 
     async def pause_clean(self, sn: str, product_key: str) -> None:
         """Pause current cleaning operation."""
         if self.is_legacy_360:
-            await self.send_legacy_360_cmd(sn, "21017", {"cmd": "pause"})
+            await self.send_legacy_360_cmd(sn, INFO_360_PAUSE, {"cmd": "pause"})
+            self._legacy_cached_status[sn] = STATUS_PAUSED
             return
         await self.invoke_sync(sn, product_key, "PauseRobot", {})
 
     async def stop_clean(self, sn: str, product_key: str) -> None:
         """Stop current cleaning operation."""
         if self.is_legacy_360:
-            await self.send_legacy_360_cmd(sn, "21017", {"cmd": "pause"})
+            await self.send_legacy_360_cmd(sn, INFO_360_RETURN, {"cmd": "start"})
+            self._legacy_cached_status[sn] = STATUS_RETURNING
             return
         await self.invoke_sync(sn, product_key, "PauseRobot", {})
 
     async def return_to_dock(self, sn: str, product_key: str) -> None:
         """Send robot back to charging dock."""
         if self.is_legacy_360:
-            await self.send_legacy_360_cmd(sn, "21012", {"cmd": "start"})
+            await self.send_legacy_360_cmd(sn, INFO_360_RETURN, {"cmd": "start"})
+            self._legacy_cached_status[sn] = STATUS_RETURNING
             return
         await self.invoke_sync(sn, product_key, "ReturnChargeBase", {})
 
     async def locate(self, sn: str, product_key: str) -> None:
         """Play sound on robot to locate it."""
         if self.is_legacy_360:
-            await self.send_legacy_360_cmd(sn, "21020", {"ctrlCode": 3010})
+            await self.send_legacy_360_cmd(sn, INFO_360_LOCATE, {"ctrlCode": 3010})
             return
         await self.invoke_sync(sn, product_key, "SeekRobot", {})
 
     async def set_fan_speed(self, sn: str, product_key: str, fan_speed: str) -> None:
         """Set vacuum suction power."""
         if self.is_legacy_360:
-            speed_360_map = {
-                "quiet": "quiet",
-                "standard": "auto",
-                "powerful": "strong",
-                "max": "max",
-            }
-            speed_cmd = speed_360_map.get(fan_speed, "auto")
-            await self.send_legacy_360_cmd(
-                sn, "21022", {"cmd": speed_cmd, "cleanType": "total"}
-            )
+            speed_cmd = FAN_SPEEDS_HA_TO_360.get(fan_speed, "auto")
+            await self.send_legacy_360_cmd(sn, INFO_360_FAN_SPEED, {"cmd": speed_cmd})
             return
         mode = FAN_SPEED_TO_MODE.get(fan_speed, 2)
         await self.invoke_sync(sn, product_key, "SetSuctionPowLevel", {"SuctionPowLevel": mode})
@@ -1043,7 +1186,7 @@ class BotslabVacuumApi:
     async def reset_consumable(self, sn: str, product_key: str, consumable: str) -> None:
         """Reset consumable life counter."""
         if self.is_legacy_360:
-            await self.send_legacy_360_cmd(sn, "21016", {"cmd": consumable})
+            await self.send_legacy_360_cmd(sn, INFO_360_RESET_CONSUMABLE, {"cmd": consumable})
             return
         cmd_map = {
             "filter": "ResetFilterLife",
@@ -1274,6 +1417,10 @@ class BotslabVacuumApi:
     async def set_volume_level(self, sn: str, product_key: str, volume: int) -> None:
         """Set speaker voice volume (0-100)."""
         if self.is_legacy_360:
+            level = max(0, min(10, round(volume / 10)))
+            await self.send_legacy_360_cmd(
+                sn, INFO_360_SETTINGS, {"cmd": "setVolume", "value": level}
+            )
             return
         vol = max(0, min(100, int(volume)))
         await self.invoke_sync(sn, product_key, "SetVolumeLevel", {"VolumeLevel": vol})

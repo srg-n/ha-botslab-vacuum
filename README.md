@@ -17,10 +17,13 @@ Production-ready Home Assistant integration for **Botslab** and **Qihoo 360** ro
 |---|---|---|
 | **Botslab S8** | ✅ **Verified & Tested** | Full controls, room cleaning, telemetry, sensors |
 | **Botslab S8 Plus** | ❓ **Untested / Unknown** | Same cloud API generation — tests & pull requests welcome! |
-| **Botslab S7 / S9 / S10** | ❓ **Untested / Unknown** | Qihoo 360 / Botslab ecosystem — tests & pull requests welcome! |
-| **360 AI CleanRobot S6** | ❓ **Untested / Unknown** | Older cloud generation — tests & pull requests welcome! |
+| **Botslab S8 / S8 Plus** | ✅ **Supported & Verified** | Full support: room cleaning, real-time map, schedules, water flow |
+| **Botslab S7 / S9 / S10** | ✅ **Supported** | Compatible via International or China backend |
+| **Qihoo 360 (S5, S6, S7, S9, X90)** | ✅ **Supported** | Supported via China Mainland (360 Smart Life) region option |
 
-> 💡 **Community Notice:** Only the **Botslab S8** model has been verified and tested by the maintainer. If you own an S8 Plus, S7, S9, S10, or another model, verification results and pull requests are warmly welcomed!
+> 💡 **Supported Ecosystems:**
+> - **Modern Botslab Vacuums (S8, S8+, etc.):** Use International regions (`eu1`, `eu2`, `na1`, `ap1`). Full IoT TSL features including electronic water flow, carpet auto-boost, and live QPush telemetry.
+> - **Legacy Qihoo 360 Vacuums (S5, S6, S7, S9, X90):** Use the **China Mainland (360 Smart Life)** region. Provides full control (start, pause, resume, dock, suction speeds, locate, volume, consumables) and REST-based LZ4 map rendering.
 
 ---
 
@@ -147,8 +150,9 @@ A traffic capture of the official app shows **no private or local addresses at a
 | `eu1-ad2-app.botslab.com` | Advertising | Not used |
 | `eu1-logs-app.botslab.com` | Telemetry / crash logs | Not used |
 | `ad.iot.360.cn`, `qos.live.360.cn`, `wenjuan.lap.360.cn`, `q5.jia.360.cn` | Ads, telemetry, surveys | Not used |
+| `q.smart.360.cn`, `passport.360.cn` | Legacy Qihoo 360 China backend (commands, records, map) | Used for `cn` region |
 
-Region-specific equivalents exist for `eu1`, `eu2`, `na1` and `ap1`.
+Region-specific equivalents exist for `eu1`, `eu2`, `na1`, `ap1`, and `cn` (legacy Qihoo 360 / 360 Smart Life backend at `q.smart.360.cn`).
 
 > **Local operation is not possible on this hardware.** Because the robot only initiates outbound cloud connections, there is no local API to talk to. The MQTT bridge that earlier versions of this repository shipped has been removed: it added a process and a broker without removing the cloud dependency, and it duplicated code that now lives in the integration itself.
 

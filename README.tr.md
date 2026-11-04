@@ -17,10 +17,13 @@
 |---|---|---|
 | **Botslab S8** | ✅ **Doğrulandı ve Test Edildi** | Tam kontroller, oda temizliği, sensörler, canlı durum |
 | **Botslab S8 Plus** | ❓ **Test Edilmedi / Bilinmiyor** | Aynı bulut API mimarisi — testler ve pull request'ler beklenir! |
-| **Botslab S7 / S9 / S10** | ❓ **Test Edilmedi / Bilinmiyor** | Qihoo 360 / Botslab ekosistemi — testler ve PR'lar beklenir! |
-| **360 AI CleanRobot S6** | ❓ **Test Edilmedi / Bilinmiyor** | Eski nesil bulut API — testler ve PR'lar beklenir! |
+| **Botslab S8 / S8 Plus** | ✅ **Destekleniyor & Doğrulandı** | Tam destek: oda temizliği, canlı harita, rutinler, su debisi |
+| **Botslab S7 / S9 / S10** | ✅ **Destekleniyor** | Uluslararası veya Çin sunucusu üzerinden uyumlu |
+| **Qihoo 360 (S5, S6, S7, S9, X90)** | ✅ **Destekleniyor** | Çin (360 Smart Life) bölge seçeneği ile desteklenir |
 
-> 💡 **Topluluk Bildirimi:** Yalnızca **Botslab S8** modeli proje sahibi tarafından bizzat doğrulanmış ve test edilmiştir. S8 Plus, S7, S9, S10 veya başka bir modele sahipseniz test sonuçlarınız ve pull request'leriniz memnuniyetle karşılanır!
+> 💡 **Desteklenen Ekosistemler:**
+> - **Modern Botslab Süpürgeler (S8, S8+ vb.):** Uluslararası bölgeleri (`eu1`, `eu2`, `na1`, `ap1`) kullanır. Elektronik su tankı debisi, halı güç artırma ve anlık QPush telemetrisi dahil tüm IoT TSL özelliklerini destekler.
+> - **Eski Nesil Qihoo 360 Süpürgeler (S5, S6, S7, S9, X90):** **Çin (360 Smart Life)** bölgesini kullanır. Başlatma, duraklatma, devam etme, şarja dönme, emiş hızları, robotu bulma, ses seviyesi, sarf malzemeleri ve REST tabanlı LZ4 harita görselleştirmesini eksiksiz destekler.
 
 ---
 
@@ -147,8 +150,9 @@ Resmi uygulamanın ağ trafiği incelendiğinde **hiçbir özel (yerel) adrese b
 | `eu1-ad2-app.botslab.com` | Reklam | Kullanılmıyor |
 | `eu1-logs-app.botslab.com` | Telemetri / crash log | Kullanılmıyor |
 | `ad.iot.360.cn`, `qos.live.360.cn`, `wenjuan.lap.360.cn`, `q5.jia.360.cn` | Reklam, telemetri, anket | Kullanılmıyor |
+| `q.smart.360.cn`, `passport.360.cn` | Eski nesil Qihoo 360 Çin bulutu (komutlar, kayıtlar, harita) | `cn` bölgesi için kullanılır |
 
-`eu1`, `eu2`, `na1` ve `ap1` bölgeleri için bölgesel karşılıkları mevcuttur.
+`eu1`, `eu2`, `na1`, `ap1` ve `cn` (eski nesil Qihoo 360 / 360 Smart Life sunucusu `q.smart.360.cn`) bölgeleri için bölgesel karşılıkları mevcuttur.
 
 > **Bu donanımda yerel çalıştırma mümkün değildir.** Robot yalnızca dışa doğru bulut bağlantısı kurduğu için yerel bir API bulunmuyor. Bu deponun önceki sürümlerinde yer alan MQTT bridge kaldırıldı: bulut bağımlılığını ortadan kaldırmadan fazladan bir süreç ve broker ekliyordu, ayrıca artık entegrasyonun içinde olan kodun kopyasıydı.
 

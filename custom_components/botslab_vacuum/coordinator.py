@@ -19,15 +19,18 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import BotslabVacuumApi, working_status_to_state
 from .const import (
     ACTIVE_STATUSES,
+    BATTERY_KEYS_360,
     CONF_EMAIL,
     CONF_M2,
     CONF_PASSWORD,
     CONF_Q,
+    CONF_QID,
     CONF_REGION,
     CONF_T,
     DEFAULT_POLL_INTERVAL_ACTIVE,
     DEFAULT_POLL_INTERVAL_IDLE,
     DOMAIN,
+    FAN_SPEEDS_360_TO_HA,
     INT_TO_MOP_MODE,
     MODE_TO_FAN_SPEED,
 )
@@ -48,7 +51,7 @@ class BotslabRuntimeData:
 
     api: BotslabVacuumApi
     coordinator: BotslabVacuumCoordinator
-    qpush: BotslabQPush
+    qpush: BotslabQPush | None = None
     qpush_task: asyncio.Task[None] | None = None
 
 
@@ -106,11 +109,15 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             tokens = await async_login(self.api.session, region, email, password, m2)
             self.api.q = tokens["q"]
             self.api.t = tokens["t"]
+            if tokens.get("qid"):
+                self.api.qid = tokens["qid"]
 
             # Update persisted tokens in config entry without triggering reload
             new_data = dict(self.entry.data)
             new_data[CONF_Q] = tokens["q"]
             new_data[CONF_T] = tokens["t"]
+            if tokens.get("qid"):
+                new_data[CONF_QID] = tokens["qid"]
             self.hass.config_entries.async_update_entry(self.entry, data=new_data)
         else:
             _LOGGER.debug("Refreshing Botslab session sid using existing tokens...")
@@ -182,13 +189,24 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 props.get("WorkingStatus")
                 or props.get("TEST_WorkingStatus")
                 or props.get("working_status")
+                or props.get("mode")
+                or props.get("workMode")
+                or props.get("runStatus")
+                or props.get("cleanMode")
                 or props.get("status")
                 or "0"
             )
             status = working_status_to_state(raw_status)
 
-            # Battery
-            battery = int(props.get("BatteryLevel", props.get("battery", 100)) or 100)
+            # Battery (check standard BatteryLevel first, then 360 keys)
+            battery = 100
+            for bkey in ("BatteryLevel", *BATTERY_KEYS_360):
+                if bkey in props and props[bkey] is not None:
+                    try:
+                        battery = int(props[bkey])
+                        break
+                    except (TypeError, ValueError):
+                        continue
 
             # Clean time & area
             clean_time = int(
@@ -201,11 +219,14 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             )
 
             # Fan speed / Suction mode
-            suction_level = int(
-                props.get("SuctionPowLevel", props.get("suction_pow_level", props.get("fan_speed", 2)))
-                or 2
-            )
-            fan_speed = MODE_TO_FAN_SPEED.get(suction_level, "standard")
+            if "workNoisy" in props and props["workNoisy"] in FAN_SPEEDS_360_TO_HA:
+                fan_speed = FAN_SPEEDS_360_TO_HA[props["workNoisy"]]
+            else:
+                suction_level = int(
+                    props.get("SuctionPowLevel", props.get("suction_pow_level", props.get("fan_speed", 2)))
+                    or 2
+                )
+                fan_speed = MODE_TO_FAN_SPEED.get(suction_level, "standard")
 
             # Mop & Water Settings
             water_level_int = int(props.get("PadWetness") or props.get("water_level") or 1)
