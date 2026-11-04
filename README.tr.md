@@ -20,9 +20,16 @@
 | **Botslab S7 / S9 / S10** | ⚠️ **Doğrulanmadı / Test Edilmedi** | Uluslararası veya Çin sunucusu üzerinden uyumlu mimari |
 | **Qihoo 360 (S5, S6, S7, S9, X90)** | ⚠️ **Deneysel Destek (Doğrulanmadı / Test Edilmedi)** | Çin (360 Smart Life) bölge seçeneği ile protokol desteği |
 
-> 💡 **Desteklenen Ekosistemler:**
-> - **Modern Botslab Süpürgeler (S8, S8+ vb.):** Uluslararası bölgeleri (`eu1`, `eu2`, `na1`, `ap1`) kullanır. Elektronik su tankı debisi, halı güç artırma ve anlık QPush telemetrisi dahil tüm IoT TSL özelliklerini destekler.
-> - **Eski Nesil Qihoo 360 Süpürgeler (S5, S6, S7, S9, X90):** **Çin (360 Smart Life)** bölgesini kullanır. Başlatma, duraklatma, devam etme, şarja dönme, emiş hızları, robotu bulma, ses seviyesi, sarf malzemeleri ve REST tabanlı LZ4 harita görselleştirmesini eksiksiz destekler.
+> 💡 **Hangi Sunucu Bölgesini (Server Region) Seçmelisiniz? (Altın Kural)**
+> Seçiminiz, evinizin fiziksel konumuna göre DEĞİL, **süpürgenizin kayıtlı olduğu mobil uygulamaya göre** belirlenir:
+> 
+> 1. **Süpürgeniz "360 Robot" veya "360 Smart Life" uygulamasında kayıtlıysa (örn. 360 S5, S6, S7, S9, X90):**
+>    - **Seçilecek Bölge:** **`China Mainland (360 Smart Life)` (`cn`)**
+>    - ⚠️ **Avrupa'da veya Türkiye'de yaşıyor olsanız dahi**, eski model bir 360 süpürgeniz varsa mutlaka **`China Mainland (360 Smart Life)`** bölgesini seçmelisiniz! Çünkü eski 360 ekosistemi tüm dünyadaki cihazları merkezi Qihoo sunucusuna (`q.smart.360.cn` / `passport.360.cn`) bağlar. `Europe 1` seçerseniz sunucu *Hesap bulunamadı* hatası verecektir. Giriş yaparken 360 uygulamasındaki e-posta ve şifrenizi kullanın.
+> 
+> 2. **Süpürgeniz modern "Botslab" uygulamasında kayıtlıysa (örn. Botslab S8, S8 Plus):**
+>    - **Seçilecek Bölge:** Fiziksel olarak bulunduğunuz bölge (örn. Türkiye ve Avrupa için **`Europe 1 (Frankfurt)`**, ABD için **`North America`** vb.).
+>    - Bu modeller modern bölgesel Botslab IoT bulutunu (`*-sapp-api.botslab.com`) kullanır. Elektronik su tankı debisi, halı güç artırma ve anlık QPush telemetrisi dahil tüm IoT TSL özelliklerini destekler.
 
 ---
 
@@ -77,7 +84,9 @@ Dosya indirme veya kopyalama işlemleriyle uğraşmadan, doğrudan HACS üzerind
 4. Kategori olarak **Entegrasyon** (Integration) seçin ve **Ekle** (Add) butonuna basın.
 5. Listede beliren **Botslab Vacuum Robot** kutusuna tıklayıp sağ alt köşedeki **İndir** (Download) butonuna basın.
 6. **Home Assistant'ı yeniden başlatın** (**Ayarlar ➔ Sistem ➔ Yeniden Başlat**).
-7. **Ayarlar ➔ Cihazlar ve Hizmetler ➔ Entegrasyon Ekle** adımlarını izleyin, **"Botslab Vacuum"** aratın ve Botslab mobil uygulama e-posta ve şifrenizle giriş yapın!
+7. **Ayarlar ➔ Cihazlar ve Hizmetler ➔ Entegrasyon Ekle** adımlarını izleyin, **"Botslab Vacuum"** aratın ve giriş yapın:
+   - **Modern Botslab Modelleri (örn. S8):** Bulunduğunuz bölgeyi (örn. `Europe 1 (Frankfurt)`) seçin ve Botslab mobil uygulama e-posta ve şifrenizle giriş yapın.
+   - **Eski Nesil Qihoo 360 Modelleri (örn. S5, S6, S7):** Avrupa'da veya Türkiye'de yaşıyor olsanız dahi bölge olarak **`China Mainland (360 Smart Life)`** seçin ve 360 Smart Life / 360 Robot uygulaması e-posta ve şifrenizle giriş yapın.
 
 ---
 
