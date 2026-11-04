@@ -14,6 +14,7 @@ from the same cloud payload the image is rendered from, so they always agree.
 from __future__ import annotations
 
 import logging
+from typing import Final
 
 from homeassistant.components.camera import Camera
 from homeassistant.config_entries import ConfigEntry
@@ -25,6 +26,8 @@ from .entity import BotslabVacuumEntity
 from .models import BotslabVacuumDevice
 
 _LOGGER = logging.getLogger(__name__)
+
+PARALLEL_UPDATES: Final = 0
 
 
 async def async_setup_entry(
@@ -79,7 +82,7 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
         info = self._map_info
         if info is None:
             return {}
-        return {
+        attrs = {
             "calibration_points": info.calibration_points(),
             "rooms": info.room_attributes(),
             "map_width": info.width,
@@ -88,6 +91,19 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
             "y_min": info.y_min,
             "resolution": info.resolution,
         }
+        if info.dock_position:
+            attrs["dock"] = list(info.dock_position)
+        if info.no_go_zones:
+            attrs["no_go_zones"] = info.no_go_zones
+        if info.scale > 1:
+            attrs["crop"] = {
+                "cmin": info.cmin,
+                "cmax": info.cmax,
+                "rmin": info.rmin,
+                "rmax": info.rmax,
+                "scale": info.scale,
+            }
+        return attrs
 
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
@@ -103,7 +119,10 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
         # sight. Ask for it directly so a docked robot still shows its map.
         try:
             return await self.coordinator.api.get_live_map(
-                device.device_name, device.product_key
+                device.device_name,
+                device.product_key,
+                robot_pose=device.robot_pose,
+                cleaning_path=device.cleaning_path,
             )
         except Exception as err:  # noqa: BLE001 - surfaced through the log
             _LOGGER.debug("Map fetch for camera %s failed: %s", self._attr_unique_id, err)

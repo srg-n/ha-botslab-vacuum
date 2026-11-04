@@ -31,7 +31,12 @@ from .const import (
     USER_AGENT,
     WATER_LEVEL_TO_INT,
 )
-from .map_util import decompress_lz4_block, render_map_png
+from .map_util import (
+    decompress_lz4_block,
+    render_map_advanced,
+    render_map_png,
+    room_cover_rects,
+)
 from .models import BotslabMapInfo, BotslabRoom
 from .quc_login import BotslabApiError, BotslabAuthError
 
@@ -532,7 +537,7 @@ class BotslabVacuumApi:
         return rooms
 
     def _build_map_info(self, map_json: dict[str, Any]) -> BotslabMapInfo | None:
-        """Assemble map geometry (grid size, origin, resolution, rooms)."""
+        """Assemble map geometry (grid size, origin, resolution, rooms, dock, no-go)."""
         width = map_json.get("width")
         height = map_json.get("height")
         if not width or not height:
@@ -546,6 +551,15 @@ class BotslabVacuumApi:
             y_min = float(map_json.get("y_min") or 0)
         except (TypeError, ValueError):
             x_min = y_min = 0.0
+
+        dock = map_json.get("chargeHandlePos")
+        dock_pos = (
+            (float(dock[0]), float(dock[1]))
+            if isinstance(dock, (list, tuple)) and len(dock) >= 2
+            else None
+        )
+        no_go = map_json.get("area") or []
+
         return BotslabMapInfo(
             width=int(width),
             height=int(height),
@@ -553,6 +567,8 @@ class BotslabVacuumApi:
             y_min=y_min,
             resolution=resolution,
             rooms=self._parse_rooms(map_json),
+            dock_position=dock_pos,
+            no_go_zones=no_go if isinstance(no_go, list) else [],
         )
 
     async def fetch_rooms(self, sn: str, product_key: str) -> list[BotslabRoom]:
@@ -573,14 +589,25 @@ class BotslabVacuumApi:
         """Return cached map geometry for a device, if already fetched."""
         return self._cached_map_info.get(sn)
 
-    async def get_live_map(self, sn: str, product_key: str) -> bytes | None:
-        """Fetch, decompress and render the latest map PNG, with room overlays.
+    def clear_map_cache(self, sn: str | None = None) -> None:
+        """Invalidate map caches so the next poll fetches a fresh map."""
+        self._cached_upload_id = None
+        self._cached_map_bytes = None
+        if sn:
+            self._cached_map_info.pop(sn, None)
+            self._cached_rooms.pop(sn, None)
+        else:
+            self._cached_map_info.clear()
+            self._cached_rooms.clear()
 
-        Room polygons are read from the same payload and painted on top of
-        the grid so a dashboard can show where each room sits. The map
-        geometry (origin, resolution, room outlines) is cached separately in
-        ``get_map_info`` because dashboards need it for calibration.
-        """
+    async def get_live_map(
+        self,
+        sn: str,
+        product_key: str,
+        robot_pose: list[float] | tuple[float, ...] | None = None,
+        cleaning_path: list[list[int]] | None = None,
+    ) -> bytes | None:
+        """Fetch, decompress and render high-resolution map with live overlays."""
         map_json, props = await self.get_map_json(sn, product_key)
         if not map_json:
             return self._cached_map_bytes
@@ -593,7 +620,14 @@ class BotslabVacuumApi:
         oss_info = self._parse_oss_info(props.get("MapPkgOssInfo"))
         upload_id = str(oss_info.get("UploadID") or oss_info.get("CleanID") or "")
 
-        if upload_id and upload_id == self._cached_upload_id and self._cached_map_bytes:
+        # Re-use cached map only if neither layout, robot pose, nor path changed
+        if (
+            upload_id
+            and upload_id == self._cached_upload_id
+            and self._cached_map_bytes
+            and not robot_pose
+            and not cleaning_path
+        ):
             return self._cached_map_bytes
 
         try:
@@ -606,19 +640,27 @@ class BotslabVacuumApi:
                     f"decompressed size {len(pixels)} != expected {width * height}"
                 )
 
-            overlays: list[tuple[list[tuple[float, float]], tuple[int, int, int]]] = []
+            png_bytes, geom = render_map_advanced(
+                width=width,
+                height=height,
+                pixels=pixels,
+                resolution=map_info.resolution if map_info else 0.05,
+                x_min=map_info.x_min if map_info else 0.0,
+                y_min=map_info.y_min if map_info else 0.0,
+                rooms=map_info.rooms if map_info else [],
+                no_go_zones=map_info.no_go_zones if map_info else [],
+                dock_pos=map_info.dock_position if map_info else None,
+                robot_pose=robot_pose,
+                cleaning_path=cleaning_path,
+                scale=4,
+            )
             if map_info:
-                for index, room in enumerate(map_info.rooms):
-                    if len(room.outline) < 3:
-                        continue
-                    overlays.append(
-                        (
-                            map_info.polygon_to_pixels(room.outline),
-                            _room_color(index),
-                        )
-                    )
+                map_info.cmin = geom[0]
+                map_info.cmax = geom[1]
+                map_info.rmin = geom[2]
+                map_info.rmax = geom[3]
+                map_info.scale = geom[4]
 
-            png_bytes = render_map_png(width, height, pixels, overlays)
             self._cached_upload_id = upload_id
             self._cached_map_bytes = png_bytes
             return png_bytes
@@ -788,27 +830,57 @@ class BotslabVacuumApi:
             "isAttrOn": 1,
         }
 
-        upload_info = await self.get_upload_config(sn, product_key)
-        if not upload_info:
-            raise BotslabApiError("Cannot clean rooms: OSS upload config unavailable")
+        try:
+            upload_info = await self.get_upload_config(sn, product_key)
+            if not upload_info:
+                raise BotslabApiError("Cannot clean rooms: OSS upload config unavailable")
 
-        uploaded_url = await self._upload_to_oss(upload_info, sweep_payload)
-        if not uploaded_url:
-            raise BotslabApiError("Cannot clean rooms: OSS upload failed")
+            uploaded_url = await self._upload_to_oss(upload_info, sweep_payload)
+            if not uploaded_url:
+                raise BotslabApiError("Cannot clean rooms: OSS upload failed")
 
-        res = await self.invoke_async(
-            sn,
-            product_key,
-            "StartCleanInAreas",
-            {
-                "MapID": map_id,
-                "CleanID": clean_id,
-                "Url": uploaded_url,
-            },
-        )
-        req_id = res.get("data", {}).get("request_id")
-        if req_id:
-            await self.wait_async_reply(req_id, timeout=5)
+            res = await self.invoke_async(
+                sn,
+                product_key,
+                "StartCleanInAreas",
+                {
+                    "MapID": map_id,
+                    "CleanID": clean_id,
+                    "Url": uploaded_url,
+                },
+            )
+            req_id = res.get("data", {}).get("request_id")
+            if req_id:
+                await self.wait_async_reply(req_id, timeout=5)
+        except Exception as err:
+            _LOGGER.warning(
+                "Native StartCleanInAreas failed for %s (%s). Attempting room_cover_rects fallback...",
+                sn,
+                err,
+            )
+            fallback_zones: list[list[float]] = []
+            for r in sa.get("value", []):
+                if r.get("id") in int_room_ids and r.get("vertexs"):
+                    rects = room_cover_rects(r["vertexs"], cell=100, max_rects=6)
+                    for rect in rects:
+                        fallback_zones.append([float(c) for c in rect])
+
+            if not fallback_zones:
+                raise BotslabApiError(f"Room cleaning failed and no fallback zones found: {err}") from err
+
+            _LOGGER.info(
+                "Executing room cleaning fallback with %d tiled rectangles for %s",
+                len(fallback_zones),
+                sn,
+            )
+            await self.clean_zone(
+                sn=sn,
+                product_key=product_key,
+                zones=fallback_zones,
+                repeat_times=repeat_times,
+                fan_speed=fan_speed,
+                water_level=water_level,
+            )
 
     async def clean_zone(
         self,
@@ -925,3 +997,57 @@ class BotslabVacuumApi:
     async def stop_map_sync(self, sn: str, product_key: str) -> None:
         """Tell robot to stop syncing live map to OSS."""
         await self.invoke_sync(sn, product_key, "StopSyncMapPkgToOss", {})
+
+    async def set_no_go_zones(
+        self,
+        sn: str,
+        product_key: str,
+        map_id: int | str,
+        places: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Set/replace/clear the forbidden (no-go) zones via SetFbdPlaces."""
+        return await self.invoke_sync(
+            sn,
+            product_key,
+            "SetFbdPlaces",
+            {
+                "MapID": int(map_id),
+                "FbdPlacesList": json.dumps(places, separators=(",", ":")),
+            },
+        )
+
+    async def get_clean_track(
+        self, sn: str, product_key: str, start_idx: int = 0
+    ) -> dict[str, Any]:
+        """Fetch one page of the live cleaning track."""
+        res = await self.invoke_sync(
+            sn,
+            product_key,
+            "GetCleanTrackWithPosIdx",
+            {"StartPosIndex": int(start_idx)},
+        )
+        raw = res.get("data", {}).get("result") or res.get("result")
+        outer = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        tk = outer.get("Track", outer)
+        return json.loads(tk) if isinstance(tk, str) else (tk or {})
+
+    async def get_clean_track_all(
+        self, sn: str, product_key: str, max_points: int = 20000
+    ) -> list[list[int]]:
+        """Paginate the cleaning track into a list of [x, y] coordinates (mm)."""
+        pts: list[list[int]] = []
+        idx = 0
+        while len(pts) < max_points:
+            try:
+                tk = await self.get_clean_track(sn, product_key, idx)
+            except Exception:
+                break
+            seg = tk.get("posArray") or tk.get("PosArray") or []
+            if not seg:
+                break
+            pts.extend(seg)
+            total = int(tk.get("totalPoints") or tk.get("TotalPoints") or len(pts))
+            idx = len(pts)
+            if idx >= total:
+                break
+        return pts

@@ -186,3 +186,123 @@ reset_consumable:
             - main_brush
             - side_brush
             - sensor
+
+set_no_go_zones:
+  name: Set No-Go Zones
+  description: Create, replace, or clear forbidden (no-go) zones on the active map.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    zones:
+      name: Zones
+      description: List of [x1, y1, x2, y2] rectangles in vacuum coordinates (mm).
+      example: [[-1000, -1000, 1000, 1000]]
+      default: []
+      selector:
+        object:
+    mode:
+      name: Mode
+      description: Mode of operation ("replace" overwrites, "add" appends, "clear" removes all).
+      default: replace
+      selector:
+        select:
+          options:
+            - replace
+            - add
+            - clear
+
+set_schedule:
+  name: Set Schedule
+  description: Create or update a scheduled cleaning routine.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    time:
+      name: Time
+      description: Start time HH:MM (24h).
+      required: true
+      example: "08:30"
+      selector:
+        time:
+    days:
+      name: Days
+      description: Weekdays (0=Sunday .. 6=Saturday).
+      required: true
+      example: [1, 3, 5]
+      selector:
+        object:
+    room_ids:
+      name: Room IDs
+      description: Ordered list of room IDs to clean (empty = whole house).
+      default: []
+      example: ["0", "1"]
+      selector:
+        object:
+    suction:
+      name: Suction Power
+      description: Suction level for this routine.
+      default: auto
+      selector:
+        select:
+          options:
+            - quiet
+            - standard
+            - powerful
+            - max
+            - auto
+    passes:
+      name: Passes
+      description: Cleaning passes (1 = single, 2 = double deep pass).
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 2
+    active:
+      name: Active
+      description: Whether this routine is active and should run.
+      default: true
+      selector:
+        boolean:
+    slot:
+      name: Slot Index
+      description: Routine slot index to update (-1 to append new).
+      default: -1
+      selector:
+        number:
+          min: -1
+          max: 50
+
+delete_schedule:
+  name: Delete Schedule
+  description: Remove a cleaning routine by its slot index.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    slot:
+      name: Slot Index
+      description: Routine index to remove (from schedules sensor attributes).
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 50
+
+run_schedule:
+  name: Run Routine Now
+  description: Immediately execute a stored cleaning routine by its slot index.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    slot:
+      name: Slot Index
+      description: Routine index to run immediately.
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 50

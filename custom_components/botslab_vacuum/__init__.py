@@ -1,27 +1,42 @@
 """Home Assistant integration for Botslab Vacuum Robots."""
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.typing import ConfigType
-from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 import voluptuous as vol
 
 from .api import BotslabVacuumApi
 from .const import (
+    ACTIVE_STATUSES,
+    ATTR_ACTIVE,
     ATTR_CONSUMABLE_TYPE,
+    ATTR_DAYS,
     ATTR_ENTITY_ID,
     ATTR_FAN_SPEED,
+    ATTR_MODE,
     ATTR_MOP_MODE,
+    ATTR_PASSES,
     ATTR_REPEAT_TIMES,
     ATTR_ROOM_IDS,
     ATTR_ROOM_NAMES,
+    ATTR_SLOT,
+    ATTR_SUCTION,
+    ATTR_TIME,
     ATTR_WATER_LEVEL,
     ATTR_X,
     ATTR_Y,
@@ -40,11 +55,15 @@ from .const import (
     PLATFORMS,
     SERVICE_CLEAN_ROOMS,
     SERVICE_CLEAN_ZONE,
+    SERVICE_DELETE_SCHEDULE,
     SERVICE_GOTO_LOCATION,
     SERVICE_LOCATE,
     SERVICE_REFRESH_ROOMS,
     SERVICE_RESET_CONSUMABLE,
+    SERVICE_RUN_SCHEDULE,
     SERVICE_SET_MOP_MODE,
+    SERVICE_SET_NO_GO_ZONES,
+    SERVICE_SET_SCHEDULE,
     SERVICE_SET_WATER_LEVEL,
     SERVICE_SYNC_MAP,
 )
@@ -52,6 +71,85 @@ from .coordinator import BotslabRuntimeData, BotslabVacuumCoordinator
 from .qpush import BotslabQPush
 
 _LOGGER = logging.getLogger(__name__)
+
+# Frontend cards bundled in ./www and auto-registered so dashboards work zero-config
+_CARDS = ["botslab-routines-card.js", "xiaomi-vacuum-map-card.js"]
+
+
+async def _register_resources(hass: HomeAssistant, base: str, ver: str) -> bool:
+    """Register bundled frontend cards in Lovelace resources."""
+    data = hass.data.get("lovelace")
+    resources = getattr(data, "resources", None)
+    if resources is None and isinstance(data, dict):
+        resources = data.get("resources")
+    if resources is None or not hasattr(resources, "async_create_item"):
+        return False
+    try:
+        if not getattr(resources, "loaded", True):
+            await resources.async_load()
+            resources.loaded = True
+        by_base = {item["url"].split("?")[0]: item for item in resources.async_items()}
+        for c in _CARDS:
+            url = f"{base}/{c}"
+            full = f"{url}?v={ver}"
+            item = by_base.get(url)
+            if item is None:
+                await resources.async_create_item({"res_type": "module", "url": full})
+            elif item.get("url") != full:
+                await resources.async_update_item(
+                    item["id"], {"res_type": "module", "url": full}
+                )
+        return True
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Botslab resource registration failed: %s", err)
+        return False
+
+
+async def _register_frontend(hass: HomeAssistant) -> None:
+    """Register static path and Lovelace resources for bundled frontend cards."""
+    store = hass.data.setdefault(DOMAIN, {})
+    if store.get("_frontend_registered"):
+        return
+    store["_frontend_registered"] = True
+    www = Path(__file__).parent / "www"
+    base = f"/{DOMAIN}/www"
+    try:
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(f"{base}/{c}", str(www / c), True) for c in _CARDS]
+        )
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Botslab static path registration failed: %s", err)
+        return
+    try:
+        ver = (await async_get_integration(hass, DOMAIN)).version or "0"
+    except Exception:  # noqa: BLE001
+        ver = "0"
+    if not await _register_resources(hass, base, ver):
+        for c in _CARDS:
+            add_extra_js_url(hass, f"{base}/{c}?v={ver}")
+    _LOGGER.debug("Botslab bundled frontend cards registered")
+
+
+async def _run_due_routines(
+    hass: HomeAssistant, coordinator: BotslabVacuumCoordinator, now: Any
+) -> None:
+    """Evaluate and run scheduled HA-driven routines matching current time."""
+    day = (now.weekday() + 1) % 7  # 0=Sunday .. 6=Saturday
+    hhmm = now.strftime("%H:%M")
+    for r in coordinator.routines:
+        if not r.get("active") or r.get("time") != hhmm:
+            continue
+        days = r.get("days") or []
+        if days and day not in days:
+            continue
+        if any(d.status in ACTIVE_STATUSES for d in coordinator.data.values()):
+            _LOGGER.info("Botslab routine '%s' skipped: vacuum is already active", hhmm)
+            continue
+        try:
+            await coordinator.async_run_routine(r)
+            _LOGGER.info("Botslab routine fired at %s (rooms=%s)", hhmm, r.get("room_ids"))
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Botslab routine run failed: %s", err)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -67,6 +165,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Botslab Vacuum from a config entry."""
+    await _register_frontend(hass)
     session = async_get_clientsession(hass)
     region = entry.data.get(CONF_REGION, DEFAULT_REGION)
     m2 = entry.data[CONF_M2]
@@ -127,6 +226,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Register platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # HA-driven routine runner: evaluate once every minute
+    @callback
+    def _tick(now: Any) -> None:
+        hass.async_create_task(_run_due_routines(hass, coordinator, now))
+
+    entry.async_on_unload(async_track_time_change(hass, _tick, second=0))
 
     # Reload when the user changes options so polling intervals and the map
     # toggle take effect without restarting Home Assistant.
@@ -232,8 +338,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
         wanted_names = [n.strip().lower() for n in (room_names or []) if n and n.strip()]
         if not room_ids and not wanted_names:
-            _LOGGER.warning("clean_rooms called without room IDs or room names")
-            return
+            raise ServiceValidationError("clean_rooms called without room IDs or room names")
 
         for coordinator, dev in _targets(call):
             target_ids = list(room_ids or [])
@@ -269,8 +374,7 @@ def _register_services(hass: HomeAssistant) -> None:
         water = call.data.get(ATTR_WATER_LEVEL)
 
         if not zones:
-            _LOGGER.warning("clean_zone called without zones")
-            return
+            raise ServiceValidationError("clean_zone called without zones")
 
         for coordinator, dev in _targets(call):
             await coordinator.api.clean_zone(
@@ -319,6 +423,103 @@ def _register_services(hass: HomeAssistant) -> None:
         for coordinator, dev in _targets(call):
             await coordinator.api.reset_consumable(dev.device_name, dev.product_key, consumable)
             await coordinator.async_request_refresh()
+
+    async def handle_set_no_go_zones(call: ServiceCall) -> None:
+        zones = call.data.get(ATTR_ZONES, [])
+        mode = call.data.get(ATTR_MODE, "replace")
+
+        for coordinator, dev in _targets(call):
+            map_id = dev.current_map_id
+            if not map_id:
+                map_json, props = await coordinator.api.get_map_json(dev.device_name, dev.product_key)
+                raw_oss = props.get("MapPkgOssInfo") if props else None
+                oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
+                map_id = int(oss_info.get("MapID", 28239))
+
+            existing = []
+            if dev.map_info and dev.map_info.no_go_zones:
+                existing = list(dev.map_info.no_go_zones)
+
+            new_zones = []
+            for z in zones or []:
+                if len(z) >= 4:
+                    x1, y1, x2, y2 = (
+                        int(round(z[0])),
+                        int(round(z[1])),
+                        int(round(z[2])),
+                        int(round(z[3])),
+                    )
+                    new_zones.append({
+                        "vertexs": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
+                        "active": "forbid",
+                        "forbidType": "all",
+                        "tag": "",
+                    })
+
+            if mode == "clear":
+                result = []
+            elif mode == "add":
+                result = existing + new_zones
+            else:  # replace
+                result = new_zones
+
+            for i, a in enumerate(result):
+                a["id"] = i
+                a.setdefault("name", f"rect{i}")
+
+            await coordinator.api.set_no_go_zones(
+                sn=dev.device_name,
+                product_key=dev.product_key,
+                map_id=map_id,
+                places=result,
+            )
+            coordinator.api.clear_map_cache(dev.device_name)
+            await coordinator.async_request_refresh()
+
+    async def handle_set_schedule(call: ServiceCall) -> None:
+        time_str = call.data[ATTR_TIME]
+        days = call.data[ATTR_DAYS]
+        room_ids = call.data.get(ATTR_ROOM_IDS, [])
+        suction = call.data.get(ATTR_SUCTION, "auto")
+        passes = call.data.get(ATTR_PASSES, 1)
+        active = call.data.get(ATTR_ACTIVE, True)
+        slot = call.data.get(ATTR_SLOT, -1)
+
+        routine = {
+            "time": time_str,
+            "days": [int(d) for d in (days or [])],
+            "room_ids": [str(r) for r in (room_ids or [])],
+            "suction": suction,
+            "passes": 2 if int(passes) == 2 else 1,
+            "active": bool(active),
+        }
+
+        for coordinator, _ in _targets(call):
+            routines = list(coordinator.routines)
+            if 0 <= slot < len(routines):
+                routines[slot] = routine
+            else:
+                routines.append(routine)
+            await coordinator.save_routines(routines)
+
+    async def handle_delete_schedule(call: ServiceCall) -> None:
+        slot = int(call.data[ATTR_SLOT])
+        for coordinator, _ in _targets(call):
+            routines = list(coordinator.routines)
+            if 0 <= slot < len(routines):
+                routines.pop(slot)
+                await coordinator.save_routines(routines)
+            else:
+                _LOGGER.warning("delete_schedule: slot %d out of range", slot)
+
+    async def handle_run_schedule(call: ServiceCall) -> None:
+        slot = int(call.data[ATTR_SLOT])
+        for coordinator, _ in _targets(call):
+            routines = coordinator.routines
+            if 0 <= slot < len(routines):
+                await coordinator.async_run_routine(routines[slot])
+            else:
+                _LOGGER.warning("run_schedule: slot %d out of range", slot)
 
     hass.services.async_register(
         DOMAIN,
@@ -417,6 +618,66 @@ def _register_services(hass: HomeAssistant) -> None:
             {
                 vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
                 vol.Required(ATTR_CONSUMABLE_TYPE): cv.string,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_NO_GO_ZONES,
+        handle_set_no_go_zones,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Optional(ATTR_ZONES, default=[]): vol.All(
+                    cv.ensure_list,
+                    [vol.ExactSequence((vol.Coerce(float),) * 4)],
+                ),
+                vol.Optional(ATTR_MODE, default="replace"): vol.In(["replace", "add", "clear"]),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_SCHEDULE,
+        handle_set_schedule,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Required(ATTR_TIME): cv.string,
+                vol.Required(ATTR_DAYS): vol.All(cv.ensure_list, [vol.All(vol.Coerce(int), vol.Range(min=0, max=6))]),
+                vol.Optional(ATTR_ROOM_IDS, default=[]): vol.All(cv.ensure_list, [cv.string]),
+                vol.Optional(ATTR_SUCTION, default="auto"): vol.In(
+                    ["quiet", "standard", "powerful", "max", "auto"]
+                ),
+                vol.Optional(ATTR_PASSES, default=1): vol.In([1, 2]),
+                vol.Optional(ATTR_ACTIVE, default=True): cv.boolean,
+                vol.Optional(ATTR_SLOT, default=-1): vol.Coerce(int),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DELETE_SCHEDULE,
+        handle_delete_schedule,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Required(ATTR_SLOT): vol.Coerce(int),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RUN_SCHEDULE,
+        handle_run_schedule,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Required(ATTR_SLOT): vol.Coerce(int),
             }
         ),
     )

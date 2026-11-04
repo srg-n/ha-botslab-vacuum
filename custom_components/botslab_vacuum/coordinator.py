@@ -11,6 +11,9 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import BotslabVacuumApi, working_status_to_state
@@ -119,18 +122,46 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         try:
             await self.ensure_valid_session()
         except BotslabAuthError as err:
-            raise UpdateFailed(f"Authentication failed: {err}") from err
+            async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"reauth_required_{self.entry.entry_id}",
+                is_fixable=True,
+                issue_domain=DOMAIN,
+                severity=IssueSeverity.ERROR,
+                translation_key="reauth_required",
+                translation_placeholders={"email": self.entry.data.get(CONF_EMAIL, "")},
+                data={"entry_id": self.entry.entry_id},
+            )
+            raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
         except Exception as err:
             raise UpdateFailed(f"Session setup failed: {err}") from err
 
         try:
             device_list = await self.api.get_devices()
-        except BotslabAuthError:
+        except BotslabAuthError as err:
             self.api.sid = None
-            await self.ensure_valid_session()
-            device_list = await self.api.get_devices()
+            try:
+                await self.ensure_valid_session()
+                device_list = await self.api.get_devices()
+            except BotslabAuthError:
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    f"reauth_required_{self.entry.entry_id}",
+                    is_fixable=True,
+                    issue_domain=DOMAIN,
+                    severity=IssueSeverity.ERROR,
+                    translation_key="reauth_required",
+                    translation_placeholders={"email": self.entry.data.get(CONF_EMAIL, "")},
+                    data={"entry_id": self.entry.entry_id},
+                )
+                raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
         except Exception as err:
             raise UpdateFailed(f"Error fetching device list: {err}") from err
+
+        # Clear reauth issue on successful authentication
+        async_delete_issue(self.hass, DOMAIN, f"reauth_required_{self.entry.entry_id}")
 
         device_map: dict[str, BotslabVacuumDevice] = {}
 
@@ -197,6 +228,16 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             current_loc = props.get("CurrentLocation")
             err_code = int(props.get("ErrorCode", 0) or 0)
 
+            # Parse robot pose [x, y, angle]
+            robot_pose: list[float] | None = None
+            if isinstance(current_loc, str):
+                try:
+                    current_loc = json.loads(current_loc)
+                except Exception:
+                    pass
+            if isinstance(current_loc, (list, tuple)) and len(current_loc) >= 2:
+                robot_pose = [float(x) for x in current_loc]
+
             raw_oss = props.get("MapPkgOssInfo")
             oss_dict = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
             map_id = str(oss_dict.get("MapID", ""))
@@ -210,14 +251,24 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 sensor_clean_pct=int(props.get("SensorLifeTime", props.get("sensor_life", 100)) or 100),
             )
 
-            # Live Map Image with Smart Adaptive Fetching
+            # Live Map Image with Smart Adaptive Fetching & Live Overlays
             map_bytes: bytes | None = None
             dev_map_info: BotslabMapInfo | None = None
+            dev_is_active = status in ACTIVE_STATUSES
+            cleaning_path: list[list[int]] = []
+
+            if dev_is_active:
+                try:
+                    cleaning_path = await self.api.get_clean_track_all(sn, pk)
+                except Exception as err:
+                    _LOGGER.debug("Cleaning track fetch error for %s: %s", sn, err)
+
             if self.enable_map:
-                dev_is_active = status in ACTIVE_STATUSES
                 if dev_is_active or (sn not in self._map_cache):
                     try:
-                        map_bytes = await self.api.get_live_map(sn, pk)
+                        map_bytes = await self.api.get_live_map(
+                            sn, pk, robot_pose=robot_pose, cleaning_path=cleaning_path
+                        )
                         if map_bytes:
                             self._map_cache[sn] = map_bytes
                         else:
@@ -269,6 +320,10 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 tasks_total_count=tasks_count,
                 clean_sub_status=str(clean_sub_status) if clean_sub_status is not None else None,
                 current_location=current_loc if isinstance(current_loc, list) else None,
+                dock_position=dev_map_info.dock_position if dev_map_info else None,
+                no_go_zones=dev_map_info.no_go_zones if dev_map_info else [],
+                cleaning_path=cleaning_path,
+                robot_pose=robot_pose,
                 map_image_bytes=map_bytes,
                 map_info=dev_map_info,
             )
@@ -289,6 +344,21 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 int(new_interval.total_seconds()),
             )
 
+        # Remove stale devices from device registry
+        try:
+            device_registry = dr.async_get(self.hass)
+            entry_devices = dr.async_entries_for_config_entry(
+                device_registry, self.entry.entry_id
+            )
+            for dev_entry in entry_devices:
+                for domain, sn in dev_entry.identifiers:
+                    if domain == DOMAIN and sn not in device_map:
+                        _LOGGER.info("Removing stale device %s from device registry", sn)
+                        device_registry.async_remove_device(dev_entry.id)
+                        break
+        except Exception as err:
+            _LOGGER.debug("Device registry cleanup skipped: %s", err)
+
         return device_map
 
     async def async_refresh_rooms(self, sn: str) -> list[BotslabRoom]:
@@ -307,4 +377,41 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         """Handle incoming real-time push event from QPush TCP socket."""
         _LOGGER.debug("QPush real-time event received: %s", payload)
         # When a push event arrives (status change, map update, etc.), immediately refresh coordinator
+        await self.async_request_refresh()
+
+    @property
+    def routines(self) -> list[dict[str, Any]]:
+        """Return list of saved cleaning routines from config entry options."""
+        return list(self.entry.options.get("routines", []))
+
+    async def save_routines(self, routines: list[dict[str, Any]]) -> None:
+        """Persist updated routines to config entry options."""
+        self.hass.config_entries.async_update_entry(
+            self.entry, options={**self.entry.options, "routines": routines}
+        )
+        self.async_update_listeners()
+
+    async def async_run_routine(self, routine: dict[str, Any]) -> None:
+        """Execute a routine now (rooms+order+passes+suction, or whole-house)."""
+        suction = routine.get("suction")
+        passes = int(routine.get("passes") or 1)
+        room_ids = [str(x) for x in (routine.get("room_ids") or [])]
+        first_dev = next(iter(self.data.values()), None) if self.data else None
+        if not first_dev:
+            _LOGGER.warning("No vacuum available to run routine")
+            return
+        sn = first_dev.device_name
+        pk = first_dev.product_key
+        if room_ids:
+            await self.api.clean_rooms(
+                sn=sn,
+                product_key=pk,
+                room_ids=room_ids,
+                repeat_times=passes,
+                fan_speed=suction if suction and suction != "auto" else None,
+            )
+        else:
+            if suction and suction != "auto":
+                await self.api.set_fan_speed(sn, pk, suction)
+            await self.api.start_clean(sn, pk)
         await self.async_request_refresh()

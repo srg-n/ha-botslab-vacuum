@@ -321,3 +321,54 @@ def test_login_params_use_md5_password():
     params = build_login_params("user@example.com", "hunter2", "m2")
     assert params["password"] == md5_hex("hunter2")
     assert "hunter2" not in json.dumps(params)
+
+
+def test_room_cover_rects():
+    """Room polygons are correctly decomposed into coverage rectangles."""
+    poly = [(0, 0), (2000, 0), (2000, 2000), (0, 2000)]
+    rects = map_util.room_cover_rects(poly)
+    assert len(rects) >= 1
+    assert len(rects[0]) == 4
+
+
+def test_render_map_advanced():
+    """Advanced map renderer renders PNG with dock, robot pose, path, and no-go zones."""
+    grid = bytearray(100 * 100)
+    for r in range(20, 60):
+        for c in range(30, 70):
+            grid[r * 100 + c] = 1
+
+    png_bytes, info = map_util.render_map_advanced(
+        width=100,
+        height=100,
+        pixels=bytes(grid),
+        resolution=0.05,
+        x_min=0.0,
+        y_min=0.0,
+        scale=3,
+        robot_pose=(2000, 2000, 90),
+        cleaning_path=[(1500, 1500), (2000, 2000)],
+        dock_pos=(1600, 1200),
+        no_go_zones=[{"points": [(1500, 1500), (1800, 1500), (1800, 1800), (1500, 1800)]}],
+    )
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    assert len(info) == 5  # cmin, cmax, rmin, rmax, scale
+
+
+def test_map_info_calibration():
+    """BotslabMapInfo computes 3-point affine calibration."""
+    info = BotslabMapInfo(
+        width=100,
+        height=100,
+        cmin=20,
+        cmax=60,
+        rmin=20,
+        rmax=60,
+        scale=3,
+        dock_position=(1600, 1200),
+    )
+    cal = info.calibration_points()
+    assert len(cal) == 3
+    for pt in cal:
+        assert "vacuum" in pt
+        assert "map" in pt

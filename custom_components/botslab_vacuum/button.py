@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Any, Awaitable
+from typing import Any, Awaitable, Final
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
@@ -21,6 +21,8 @@ from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
 from .lovelace import MAINTENANCE_ROWS, build_full_dashboard_snippet
 from .models import BotslabVacuumDevice
+
+PARALLEL_UPDATES: Final = 0
 
 # Where the generated snippet is written inside the Home Assistant config dir.
 MAP_CARD_FILENAME = "botslab_map_card.yaml"

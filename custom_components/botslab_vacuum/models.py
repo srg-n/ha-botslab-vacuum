@@ -72,16 +72,27 @@ class BotslabMapInfo:
     y_min: float = 0.0
     resolution: float = 0.05
     rooms: list[BotslabRoom] = field(default_factory=list)
+    cmin: int = 0
+    rmin: int = 0
+    cmax: int = 0
+    rmax: int = 0
+    scale: int = 1
+    dock_position: tuple[float, float] | None = None
+    no_go_zones: list[dict[str, Any]] = field(default_factory=list)
 
     def robot_to_pixel(self, x_mm: float, y_mm: float) -> tuple[float, float]:
         """Convert a robot coordinate (mm) to a pixel on the rendered grid.
 
         Robot coordinates are millimetres with Y growing north; the raster
-        grows downward, so Y is mirrored.
+        grows downward, so Y is mirrored. When cropping and scaling are active,
+        coordinates are offset by the cropped origin and multiplied by scale.
         """
-        px = (x_mm / 1000.0 - self.x_min) / self.resolution
-        py = self.height - (y_mm / 1000.0 - self.y_min) / self.resolution
-        return (px, py)
+        cx = (x_mm / 1000.0 - self.x_min) / self.resolution
+        cy = (y_mm / 1000.0 - self.y_min) / self.resolution
+        if self.scale > 1 and self.cmax > self.cmin:
+            return ((cx - self.cmin) * self.scale, (self.rmax - cy) * self.scale)
+        py = self.height - cy
+        return (cx, py)
 
     def polygon_to_pixels(
         self, outline: tuple[tuple[int, int], ...]
@@ -95,6 +106,21 @@ class BotslabMapInfo:
         Three corners are enough for the standard affine transform used by
         Lovelace map cards to map taps back to robot coordinates.
         """
+        if self.scale > 1 and self.cmax > self.cmin:
+            pts = [
+                (self.x_min * 1000.0, self.y_min * 1000.0),
+                (self.x_min * 1000.0 + 1000.0, self.y_min * 1000.0),
+                (self.x_min * 1000.0, self.y_min * 1000.0 + 1000.0),
+            ]
+            out = []
+            for vx, vy in pts:
+                px, py = self.robot_to_pixel(vx, vy)
+                out.append({
+                    "vacuum": {"x": round(vx), "y": round(vy)},
+                    "map": {"x": round(px), "y": round(py)},
+                })
+            return out
+
         left_mm = self.x_min * 1000
         bottom_mm = (self.y_min + self.height * self.resolution) * 1000
         top_mm = self.y_min * 1000
@@ -167,6 +193,10 @@ class BotslabVacuumDevice:
     tasks_total_count: int = 0
     clean_sub_status: str | None = None
     current_location: list[int] | None = None
+    dock_position: tuple[float, float] | None = None
+    no_go_zones: list[dict[str, Any]] = field(default_factory=list)
+    cleaning_path: list[list[int]] = field(default_factory=list)
+    robot_pose: list[float] | None = None
     map_image_bytes: bytes | None = None
     map_info: BotslabMapInfo | None = None
 

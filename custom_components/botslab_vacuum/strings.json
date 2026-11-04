@@ -16,6 +16,15 @@
         "data": {
           "password": "Password"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Botslab Account",
+        "description": "Update the connection settings for your Botslab cloud account.",
+        "data": {
+          "email": "Email Address",
+          "password": "Password",
+          "region": "Server Region"
+        }
       }
     },
     "error": {
@@ -26,7 +35,8 @@
     },
     "abort": {
       "already_configured": "This account is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "Reconfiguration was successful."
     }
   },
   "options": {
@@ -56,7 +66,8 @@
       "filter_life": { "name": "Filter Life" },
       "main_brush_life": { "name": "Main Brush Life" },
       "side_brush_life": { "name": "Side Brush Life" },
-      "sensor_dirtiness": { "name": "Sensors Cleanliness" }
+      "sensor_dirtiness": { "name": "Sensors Cleanliness" },
+      "schedules": { "name": "Schedules" }
     },
     "button": {
       "locate": { "name": "Locate Robot" },
@@ -96,6 +107,26 @@
     },
     "camera": {
       "cleaning_map": { "name": "Cleaning Map" }
+    }
+  },
+  "issues": {
+    "reauth_required": {
+      "title": "Botslab Authentication Expired",
+      "description": "Authentication for {email} has expired. Please re-authenticate to restore connectivity."
+    }
+  },
+  "exceptions": {
+    "invalid_auth": {
+      "message": "Authentication failed. Please verify your credentials."
+    },
+    "cannot_connect": {
+      "message": "Failed to connect to Botslab cloud servers."
+    },
+    "command_failed": {
+      "message": "The command sent to the vacuum cleaner failed."
+    },
+    "device_offline": {
+      "message": "The vacuum cleaner is currently offline."
     }
   }
 }

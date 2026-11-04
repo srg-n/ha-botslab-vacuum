@@ -33,9 +33,18 @@
   - Su Seviyesi seçimi (`Low`, `Medium`, `High`)
   - Temizlik Modu seçimi (`Vacuum & Mop`, `Vacuum Only`, `Mop Only`)
   - Robotu Bul sesli uyarısı (`locate`)
-- 🚪 **Dinamik Oda Temizliği:**
+- 🚪 **Dinamik Oda Temizliği & Yasaklı Alanlar (No-Go Zones):**
   - Haritanızdaki bölünmüş odaları otomatik olarak tanır
   - Home Assistant üzerinden oda bazlı temizlik servislerini doğrudan tetikler
+  - **Yasaklı Alanlar (`SetFbdPlaces`):** Home Assistant servis çağrısıyla doğrudan haritaya sanal duvar ve girilmez alanlar tanımlayabilme
+- 🗺️ **Gelişmiş Yüksek Çözünürlüklü Harita & Sıfır Yapılandırmalı Kartlar:**
+  - Pillow tabanlı dinamik kenar kırpma (auto-crop) ile gereksiz siyah boşlukları yok etme
+  - Yeşil şarj istasyonu ikonu, camgöbeği (cyan) anlık temizlik rotası ve robotun baktığı yönü gösteren yön oku
+  - Harici HACS indirmesi gerektirmeyen, otomatik yüklenen hazır Lovelace kartları (`xiaomi-vacuum-map-card` ve `botslab-routines-card`)
+- ⏱️ **HA Tabanlı Rutin & Zamanlayıcı Motoru:**
+  - İstenen günlerde, saatlerde, seçili odalarda ve farklı emiş güçlerinde otomatik temizlik rutinleri
+  - Home Assistant dahili hafızasında saklanır (yeniden başlatmalardan etkilenmez)
+  - Özel zamanlama sensörü ve Türkçe/İngilizce otomatik dil destekli kontrol kartı
 - 📊 **Sarf Malzemesi & Bakım Sensörleri:**
   - HEPA Filtre kalan ömrü (saat)
   - Ana Fırça kalan ömrü (saat)
@@ -80,6 +89,16 @@ Eğer HACS kullanmıyorsanız:
    ```
 2. Home Assistant'ı yeniden başlatın.
 3. **Ayarlar ➔ Cihazlar ve Hizmetler ➔ Entegrasyon Ekle** üzerinden **Botslab Vacuum** entegrasyonunu ekleyin.
+
+---
+
+## 📚 Dokümantasyon & Teknik Referanslar
+
+Protokol analizi, servis yükleri ve mimari detaylar için `docs/` klasöründeki teknik belgeleri inceleyebilirsiniz:
+
+- [Protokol Spesifikasyonu (`docs/PROTOCOL.md`)](docs/PROTOCOL.md) — Ağ protokolü, imzalama şeması, QUC kimlik adımları ve Alibaba Cloud OSS / Alink etkileşimleri.
+- [Kontrol & Komut Referansı (`docs/CONTROL.md`)](docs/CONTROL.md) — Bulut komutları (`SetFbdPlaces`, `StartCleanInAreas` vb.), servis şemaları ve oda temizlik yükleri.
+- [Entegrasyon Mimarisi (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md) — Sistem veri akışı, hibrit QPUSH + uyarlanabilir sorgulama modeli, Pillow harita işleme ve dahili rutin motoru.
 
 ---
 
@@ -154,15 +173,32 @@ show_toolbar: true
 
 Entity'ler robotun seri numarasına göre adlandırıldığı için, yukarıdaki Jinja bloğu sizin hiçbir şeyi düzenlemenize gerek kalmadan doğru entity'yi bulur.
 
+### Sıfır Yapılandırmalı Dahili Kartlar
+
+Gerekli Lovelace kartları entegrasyonla birlikte gelir ve başlatma sırasında otomatik olarak Home Assistant'a kaydedilir:
+- `/botslab_vacuum/www/xiaomi-vacuum-map-card.js` (Oda seçimi, bölge temizliği ve nokta navigasyonu sunan harita kartı)
+- `/botslab_vacuum/www/botslab-routines-card.js` (Otomatik Türkçe/İngilizce dil destekli rutin ve zamanlama yönetim kartı)
+
+Harici olarak HACS üzerinden kart aramanıza veya kaynak eklemenize gerek yoktur.
+
 ### Eviniz için harita kartı üretme
 
 Oda konturları evinize özeldir ve Botslab uygulamasında oda adı/şekli değiştiğinde değişir. Elle yazmak yerine:
 
-1. HACS'tan *xiaomi-vacuum-map-card* frontend kartını kurun.
-2. Robot haritayı yüklesin diye **Haritayı Senkronize Et** butonuna basın.
-3. **Harita Kartı Yapılandırması Üret** butonuna basın.
+1. Robot haritayı yüklesin diye Home Assistant'ta **Haritayı Senkronize Et** butonuna basın.
+2. **Harita Kartı Yapılandırması Üret** butonuna basın.
 
 Entegrasyon, robotun kendi haritasından tüm oda konturlarını doldurarak hazır bir kartı Home Assistant config dizinindeki `botslab_map_card.yaml` dosyasına yazar. Dashboard'unuza **Manual** kartı ekleyip içeriğini yapıştırmanız yeterli.
+
+### Zamanlanmış Rutinler Kart Örneği
+
+Dashboard'unuza Türkçe destekli rutin yönetim kartını eklemek için:
+
+```yaml
+type: custom:botslab-routines-card
+entity: sensor.botslab_schedules_CIHAZ_ID
+vacuum_entity: vacuum.botslab_vacuum_CIHAZ_ID
+```
 
 Odaları değiştirdikten sonra 2. ve 3. adımları tekrarlayın.
 

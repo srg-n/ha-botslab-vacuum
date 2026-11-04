@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.components.vacuum import (
     StateVacuumEntity,
@@ -11,6 +11,7 @@ from homeassistant.components.vacuum import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -24,9 +25,12 @@ from .const import (
 )
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
+from .exceptions import BotslabCommandError, BotslabDeviceOfflineError
 from .models import BotslabVacuumDevice
 
 _LOGGER = logging.getLogger(__name__)
+
+PARALLEL_UPDATES: Final = 0
 
 # Battery is deliberately absent. Home Assistant 2026.10 removed
 # VacuumEntityFeature.BATTERY and dropped battery_level from
@@ -130,6 +134,8 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             "clean_id": dev.clean_id,
             "clean_sub_status": dev.clean_sub_status,
             "current_location": dev.current_location,
+            "dock_position": dev.dock_position,
+            "no_go_zones": dev.no_go_zones,
             "error_code": dev.error_code,
             "available_rooms": [
                 {"id": r.room_id, "name": r.name, "outline": [list(p) for p in r.outline]}
@@ -209,8 +215,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
                     selected_ids.append(rid)
 
         if not selected_ids:
-            _LOGGER.warning("clean_rooms called with no valid room IDs or matching room names")
-            return
+            raise ServiceValidationError("clean_rooms called with no valid room IDs or matching room names")
 
         await self.coordinator.api.clean_rooms(
             self.device.device_name,

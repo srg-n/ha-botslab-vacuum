@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -20,6 +20,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
 from .models import BotslabVacuumDevice
+
+PARALLEL_UPDATES: Final = 0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -84,6 +86,7 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
         translation_key="sensor_dirtiness",
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
         icon="mdi:radar",
         value_fn=lambda dev: dev.consumables.sensor_clean_pct,
     ),
@@ -112,6 +115,7 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
         # state class: Home Assistant would try to build long-term statistics
         # from a total it cannot express.
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
         icon="mdi:counter",
         value_fn=lambda dev: dev.tasks_total_count,
     ),
@@ -120,6 +124,7 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
         translation_key="clean_id",
         icon="mdi:identifier",
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
         value_fn=lambda dev: dev.clean_id,
     ),
     BotslabSensorEntityDescription(
@@ -155,6 +160,7 @@ async def async_setup_entry(
     for device in coordinator.data.values():
         for description in SENSOR_DESCRIPTIONS:
             entities.append(BotslabSensor(coordinator, device, description))
+        entities.append(BotslabSchedulesSensor(coordinator, device))
     async_add_entities(entities)
 
 
@@ -180,3 +186,47 @@ class BotslabSensor(BotslabVacuumEntity, SensorEntity):
         if not self.device:
             return None
         return self.entity_description.value_fn(self.device)
+
+
+class BotslabSchedulesSensor(BotslabVacuumEntity, SensorEntity):
+    """Exposes HA-driven cleaning routines for dashboard cards."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "schedules"
+    _attr_icon = "mdi:calendar-clock"
+
+    def __init__(
+        self,
+        coordinator: BotslabVacuumCoordinator,
+        device: BotslabVacuumDevice,
+    ) -> None:
+        super().__init__(coordinator, device)
+        self._attr_unique_id = f"{device.device_name}_schedules"
+
+    @property
+    def native_value(self) -> int:
+        """Return the count of configured routines."""
+        return len(self.coordinator.routines)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Publish routine definitions and room names for the frontend card."""
+        routines_out = []
+        for i, r in enumerate(self.coordinator.routines):
+            routines_out.append({
+                "slot": i,
+                "time": r.get("time"),
+                "days": r.get("days", []),
+                "room_ids": r.get("room_ids", []),
+                "suction": r.get("suction", "auto"),
+                "passes": r.get("passes", 1),
+                "active": r.get("active", True),
+            })
+        rooms_dict = {
+            str(rm.room_id): rm.name
+            for rm in (self.device.rooms if self.device else [])
+        }
+        return {
+            "schedules": routines_out,
+            "rooms": rooms_dict,
+        }

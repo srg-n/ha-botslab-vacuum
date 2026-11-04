@@ -1,0 +1,144 @@
+{
+  "entity": {
+    "sensor": {
+      "battery": {
+        "default": "mdi:battery"
+      },
+      "clean_time": {
+        "default": "mdi:timer-outline"
+      },
+      "clean_area": {
+        "default": "mdi:texture-box"
+      },
+      "filter_life": {
+        "default": "mdi:air-filter"
+      },
+      "main_brush_life": {
+        "default": "mdi:brush"
+      },
+      "side_brush_life": {
+        "default": "mdi:fan"
+      },
+      "sensor_dirtiness": {
+        "default": "mdi:radar"
+      },
+      "total_clean_area": {
+        "default": "mdi:chart-areaspline"
+      },
+      "total_clean_time": {
+        "default": "mdi:history"
+      },
+      "tasks_count": {
+        "default": "mdi:counter"
+      },
+      "clean_id": {
+        "default": "mdi:identifier"
+      },
+      "error_code": {
+        "default": "mdi:alert-circle-outline"
+      },
+      "mop_installed": {
+        "default": "mdi:water-check"
+      },
+      "water_tank_installed": {
+        "default": "mdi:cup-water"
+      },
+      "schedules": {
+        "default": "mdi:calendar-clock"
+      }
+    },
+    "switch": {
+      "auto_boost": {
+        "default": "mdi:fan-plus"
+      },
+      "button_backlight": {
+        "default": "mdi:lightbulb-outline"
+      },
+      "collision_protection": {
+        "default": "mdi:shield-car"
+      }
+    },
+    "button": {
+      "generate_card": {
+        "default": "mdi:card-text-outline"
+      },
+      "refresh_rooms": {
+        "default": "mdi:map-marker-path"
+      },
+      "sync_map": {
+        "default": "mdi:cloud-sync"
+      },
+      "reset_filter": {
+        "default": "mdi:air-filter"
+      },
+      "reset_main_brush": {
+        "default": "mdi:brush"
+      },
+      "reset_side_brush": {
+        "default": "mdi:fan"
+      },
+      "reset_sensor": {
+        "default": "mdi:radar"
+      }
+    },
+    "select": {
+      "water_level": {
+        "default": "mdi:water-opacity"
+      },
+      "mop_mode": {
+        "default": "mdi:liquid-spot"
+      }
+    },
+    "number": {
+      "volume_level": {
+        "default": "mdi:volume-high"
+      }
+    },
+    "camera": {
+      "live_map": {
+        "default": "mdi:floor-plan"
+      }
+    }
+  },
+  "services": {
+    "clean_rooms": {
+      "service": "mdi:floor-plan"
+    },
+    "clean_zone": {
+      "service": "mdi:select-drag"
+    },
+    "set_water_level": {
+      "service": "mdi:water-opacity"
+    },
+    "set_mop_mode": {
+      "service": "mdi:liquid-spot"
+    },
+    "refresh_rooms": {
+      "service": "mdi:map-marker-path"
+    },
+    "sync_map": {
+      "service": "mdi:cloud-sync"
+    },
+    "goto_location": {
+      "service": "mdi:crosshairs-gps"
+    },
+    "locate": {
+      "service": "mdi:volume-high"
+    },
+    "reset_consumable": {
+      "service": "mdi:restore"
+    },
+    "set_no_go_zones": {
+      "service": "mdi:vector-square-remove"
+    },
+    "set_schedule": {
+      "service": "mdi:calendar-plus"
+    },
+    "delete_schedule": {
+      "service": "mdi:calendar-remove"
+    },
+    "run_schedule": {
+      "service": "mdi:calendar-play"
+    }
+  }
+}

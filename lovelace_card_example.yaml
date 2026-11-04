@@ -130,6 +130,18 @@ map_modes:
         y: "[[point_y]]"
         entity_id: "[[entity_id]]"
 
+  # ---- forbidden / no-go zones -------------------------------------------
+  - name: No-Go Zones
+    icon: mdi:cancel
+    selection_type: MANUAL_RECTANGLE
+    max_selections: 10
+    service_call_schema:
+      service: botslab_vacuum.set_no_go_zones
+      service_data:
+        zones: "[[selection]]"
+        mode: add
+        entity_id: "[[entity_id]]"
+
 ---
 # ==============================================================================
 # CARD 3 - Fallback map for dashboards without the map card installed
@@ -251,3 +263,13 @@ entities:
           {%- set sn = (ids | first | replace('vacuum.', '')) if ids else 'SERIAL' -%}
           {{ 'button.' ~ sn ~ '_refresh_rooms' }}
         name: Refresh Rooms
+
+---
+# ==============================================================================
+# CARD 5 - Scheduled Cleaning Routines (bundled card)
+# ==============================================================================
+type: custom:botslab-routines-card
+entity: >
+  {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                              | map(attribute='entity_id') | list -%}
+  {{ ids | first if ids else 'vacuum.botslab_vacuum' }}

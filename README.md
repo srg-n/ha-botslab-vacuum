@@ -33,9 +33,18 @@ Production-ready Home Assistant integration for **Botslab** and **Qihoo 360** ro
   - Water Level selection (`Low`, `Medium`, `High`)
   - Cleaning Mode selection (`Vacuum & Mop`, `Vacuum Only`, `Mop Only`)
   - Find / Locate Robot audio trigger (`locate`)
-- 🚪 **Dynamic Room Cleaning:**
+- 🚪 **Dynamic Room Cleaning & No-Go Zones:**
   - Automatically identifies partitioned rooms from your map
   - Exposes room cleaning actions/services directly in Home Assistant
+  - **No-Go Zones (`SetFbdPlaces`):** Set virtual forbidden cleaning zones and boundaries directly via service call
+- 🗺️ **High-Resolution Map Rendering & Zero-Config Frontend:**
+  - Dynamic Pillow auto-crop eliminating black void borders
+  - Dock station glyph, live cleaning path polyline, and robot heading orientation arrow
+  - Zero-config bundled Lovelace cards (`xiaomi-vacuum-map-card` and `botslab-routines-card`) automatically served
+- ⏱️ **HA-Driven Routine & Schedule Engine:**
+  - Multi-room, suction-customizable scheduled cleaning routines
+  - Persisted in Home Assistant storage (survives restarts)
+  - Dedicated schedule sensor and custom Lovelace routines management card
 - 📊 **Consumables & Maintenance Sensors:**
   - HEPA Filter remaining lifetime (hours)
   - Main Brush remaining lifetime (hours)
@@ -80,6 +89,16 @@ If you do not have HACS installed:
    ```
 2. Restart Home Assistant.
 3. Go to **Settings ➔ Devices & Services ➔ Add Integration** and select **Botslab Vacuum**.
+
+---
+
+## 📚 Documentation & Technical References
+
+For in-depth protocol analysis, payload schemas, and system design, refer to the technical guides in `docs/`:
+
+- [Protocol Specification (`docs/PROTOCOL.md`)](docs/PROTOCOL.md) — Wire protocol, signing algorithms, QUC auth steps, and Alibaba Cloud OSS / Alink interactions.
+- [Control & Payload Reference (`docs/CONTROL.md`)](docs/CONTROL.md) — Exhaustive catalog of cloud commands (`SetFbdPlaces`, `StartCleanInAreas`, etc.), service payload schemas, and room cleaning formats.
+- [Integration Architecture (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md) — System flow, hybrid QPUSH + adaptive polling model, Pillow map rendering pipeline, and routine engine internals.
 
 ---
 
@@ -154,15 +173,32 @@ show_toolbar: true
 
 Entities are keyed by the robot's serial number, so the Jinja above resolves them without you editing anything.
 
+### Zero-Config Bundled Frontend Cards
+
+The integration automatically serves and registers the required Lovelace cards upon startup:
+- `/botslab_vacuum/www/xiaomi-vacuum-map-card.js` (Pre-bundled map viewer with room tap, zone cleaning, and point navigation)
+- `/botslab_vacuum/www/botslab-routines-card.js` (Pre-bundled routine & schedule manager card with automatic EN/TR localization)
+
+No manual HACS frontend installation or resource configuration is required.
+
 ### Generating a map card for your floor plan
 
 Room outlines are specific to your home and change whenever rooms are renamed or edited in the Botslab app. Rather than hand-writing them:
 
-1. Install the *xiaomi-vacuum-map-card* frontend card from HACS.
-2. Press the **Sync Live Map** button so the robot uploads its floor plan.
-3. Press **Generate Map Card Config**.
+1. Press the **Sync Live Map** button in Home Assistant so the robot uploads its floor plan.
+2. Press **Generate Map Card Config**.
 
 The integration then writes a complete, ready-to-paste card to `botslab_map_card.yaml` in your Home Assistant config directory, with every room outline filled in from the robot's own map. Add a **Manual** card in your dashboard and paste it.
+
+### Scheduled Routines Card Example
+
+Add a custom routine manager card to your dashboard:
+
+```yaml
+type: custom:botslab-routines-card
+entity: sensor.botslab_schedules_YOUR_DEVICE_ID
+vacuum_entity: vacuum.botslab_vacuum_YOUR_DEVICE_ID
+```
 
 Repeat steps 2 and 3 after changing rooms.
 

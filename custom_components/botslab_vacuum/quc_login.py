@@ -24,16 +24,9 @@ from .crypto import (
     gen_key_material,
     md5_hex,
 )
+from .exceptions import BotslabApiError, BotslabAuthError
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class BotslabAuthError(Exception):
-    """Authentication failed or invalid credentials."""
-
-
-class BotslabApiError(Exception):
-    """General Botslab API error."""
 
 
 def build_login_params(email: str, password: str, m2: str) -> dict[str, str]:

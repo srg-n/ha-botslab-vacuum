@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
@@ -14,6 +14,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
 from .models import BotslabVacuumDevice
+
+PARALLEL_UPDATES: Final = 0
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -1,12 +1,44 @@
 """Pure-Python LZ4 block decompressor and PNG map renderer for Botslab vacuums.
 
-Zero external dependencies required (no Pillow, no C extensions).
+Features:
+  - Pure-Python LZ4 block decompressor (safe bounded copy, zero native deps).
+  - Pure-Python scanline polygon filler and raw PNG encoder (fallback).
+  - High-resolution cropped rendering with Pillow:
+      * Auto-crop (removes empty background margins).
+      * Nearest-neighbor crisp scaling.
+      * Translucent room color fills, boundary outlines, and room labels.
+      * Red translucent forbidden / no-go zone overlays.
+      * Charging dock station glyph.
+      * Live robot circle marker + directional heading arrow.
+      * Live cleaning trail / trajectory path.
+  - Room polygon decomposition into axis-aligned rectangles (room_cover_rects)
+    as a robust fallback clean strategy.
 """
 from __future__ import annotations
 
 import base64
+import io
+import json
+import math
 import struct
 import zlib
+from typing import Any
+
+# Color Palette (RGB / RGBA)
+C_UNKNOWN = (18, 20, 26)
+C_FLOOR = (236, 240, 245)
+C_WALL = (44, 56, 82)
+C_NOGO_FILL = (224, 74, 74, 80)
+C_NOGO_LINE = (224, 74, 74, 235)
+C_DOCK = (46, 196, 110)
+C_ROBOT = (255, 140, 0)
+C_PATH = (90, 200, 250, 215)
+
+ROOM_PALETTE: list[tuple[int, int, int]] = [
+    (122, 193, 255), (255, 193, 122), (150, 214, 160), (214, 150, 200),
+    (224, 208, 130), (150, 200, 214), (220, 150, 150), (178, 170, 230),
+    (160, 210, 200), (230, 180, 140), (190, 200, 150), (200, 160, 210),
+]
 
 
 def decompress_lz4_block(src: bytes, uncompressed_size: int) -> bytes:
@@ -48,8 +80,6 @@ def decompress_lz4_block(src: bytes, uncompressed_size: int) -> bytes:
                     break
         match_pos = len(dst) - offset
         if not 0 <= match_pos < len(dst):
-            # Offset points outside the output produced so far, so the block is
-            # corrupt and cannot be recovered from. Offset 0 lands here too.
             break
         match_len = min(match_len, uncompressed_size - len(dst))
         for _ in range(match_len):
@@ -58,20 +88,104 @@ def decompress_lz4_block(src: bytes, uncompressed_size: int) -> bytes:
     return bytes(dst)
 
 
+# ---------------------------------------------------------------------------
+# Room Polygon Decomposition (room_cover_rects fallback)
+# ---------------------------------------------------------------------------
+
+def _rasterize_poly(poly: list[list[float]] | list[tuple[float, float]], cell: int):
+    """Rasterize a polygon (mm) to a boolean occupancy grid of `cell`-mm cells."""
+    xs = [p[0] for p in poly]
+    ys = [p[1] for p in poly]
+    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+    w = max(1, int((x1 - x0) // cell) + 1)
+    h = max(1, int((y1 - y0) // cell) + 1)
+    n = len(poly)
+    grid = [[False] * w for _ in range(h)]
+    for r in range(h):
+        cy = y0 + (r + 0.5) * cell
+        xc: list[float] = []
+        for i in range(n):
+            ax, ay = poly[i]
+            bx, by = poly[(i + 1) % n]
+            if (ay <= cy < by) or (by <= cy < ay):
+                xc.append(ax + (bx - ax) * (cy - ay) / (by - ay))
+        xc.sort()
+        for k in range(0, len(xc) - 1, 2):
+            ca = max(0, int((xc[k] - x0) // cell))
+            cb = min(w - 1, int((xc[k + 1] - x0) // cell))
+            for c in range(ca, cb + 1):
+                grid[r][c] = True
+    return grid, x0, y0, w, h
+
+
+def _largest_rect(grid: list[list[bool]], used: list[list[bool]], w: int, h: int):
+    """Find largest all-free axis-aligned rectangle via histogram stack."""
+    best = (0, 0, 0, 0, 0)  # area, r0, c0, r1, c1
+    heights = [0] * w
+    for r in range(h):
+        for c in range(w):
+            heights[c] = heights[c] + 1 if (grid[r][c] and not used[r][c]) else 0
+        stack: list[tuple[int, int]] = []
+        for c in range(w + 1):
+            cur = heights[c] if c < w else 0
+            start = c
+            while stack and stack[-1][1] > cur:
+                sc, sh = stack.pop()
+                area = sh * (c - sc)
+                if area > best[0]:
+                    best = (area, r - sh + 1, sc, r, c - 1)
+                start = sc
+            stack.append((start, cur))
+    return best
+
+
+def room_cover_rects(
+    poly: list[list[float]] | list[tuple[float, float]],
+    cell: int = 100,
+    max_rects: int = 10,
+    min_cov: float = 0.93,
+) -> list[list[int]]:
+    """Cover a room polygon with axis-aligned bounding rectangles.
+
+    Useful fallback clean strategy for firmware/models where native
+    StartCleanInAreas is unavailable. Returns ``[[x1, y1, x2, y2], ...]`` (mm).
+    """
+    if len(poly) < 3:
+        return []
+    grid, x0, y0, w, h = _rasterize_poly(poly, cell)
+    total = sum(row.count(True) for row in grid)
+    if not total:
+        return []
+    used = [[False] * w for _ in range(h)]
+    rects: list[list[int]] = []
+    covered = 0
+    for _ in range(max_rects):
+        area, r0, c0, r1, c1 = _largest_rect(grid, used, w, h)
+        if area <= 0:
+            break
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                used[r][c] = True
+        covered += area
+        rects.append([
+            int(x0 + c0 * cell), int(y0 + r0 * cell),
+            int(x0 + (c1 + 1) * cell), int(y0 + (r1 + 1) * cell),
+        ])
+        if covered / total >= min_cov:
+            break
+    return rects
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python Scanline Renderer (fallback if Pillow is unavailable)
+# ---------------------------------------------------------------------------
+
 def fill_polygon(
     width: int,
     height: int,
     polygon: list[tuple[float, float]],
 ) -> dict[int, list[tuple[int, int]]]:
-    """Scanline-fill a polygon, returning per-row ``(x_start, x_end)`` spans.
-
-    Pure Python on purpose: the integration ships no compiled dependencies.
-    Returning spans instead of a full RGBA buffer keeps memory flat, since a
-    room can easily have a hundred vertices on a large floor plan.
-
-    ``polygon`` must already be in rendered-image pixel space, with Y growing
-    downward (see ``BotslabMapInfo.robot_to_pixel``).
-    """
+    """Scanline-fill a polygon, returning per-row ``(x_start, x_end)`` spans."""
     if len(polygon) < 3:
         return {}
 
@@ -86,7 +200,6 @@ def fill_polygon(
         for i in range(n):
             x1, y1 = polygon[i]
             x2, y2 = polygon[(i + 1) % n]
-            # Half-open comparison avoids double-counting shared vertices.
             if (y1 <= scan < y2) or (y2 <= scan < y1):
                 t = (scan - y1) / (y2 - y1)
                 crossings.append(x1 + t * (x2 - x1))
@@ -107,12 +220,7 @@ def render_map_png(
     pixels: bytes,
     room_polygons: list[tuple[list[tuple[float, float]], tuple[int, int, int]]] | None = None,
 ) -> bytes:
-    """Render 2D grid pixels into PNG bytes with dark theme styling.
-
-    ``room_polygons`` is a list of ``(polygon_in_pixel_space, (r, g, b))``
-    painted over the grid. Polygons are supplied in rendered-image space so
-    the caller owns the robot-to-pixel transform.
-    """
+    """Render 2D grid pixels into PNG bytes with dark theme styling (pure Python)."""
     overlay: dict[int, dict[int, tuple[int, int, int]]] = {}
     for polygon, color in room_polygons or []:
         for y, spans in fill_polygon(width, height, polygon).items():
@@ -124,7 +232,7 @@ def render_map_png(
     raw_rows = bytearray()
     for y in range(height):
         raw_rows.append(0)  # Filter type: None
-        row_y = height - 1 - y  # Flip Y coordinates for Cartesian display
+        row_y = height - 1 - y
         row_overlay = overlay.get(y, {})
         base = row_y * width
         for x in range(width):
@@ -134,7 +242,7 @@ def render_map_png(
             val = pixels[base + x]
             if val == 0:  # Wall / Obstacle
                 raw_rows.extend((235, 235, 240, 255))
-            elif val == 127:  # Cleaned / Traversed floor space
+            elif val == 127:  # Floor
                 raw_rows.extend((50, 85, 130, 255))
             else:  # Unexplored background
                 raw_rows.extend((18, 20, 26, 255))
@@ -156,7 +264,157 @@ def render_map_png(
     return header + ihdr + idat + iend
 
 
-def decode_and_render_map(map_json: dict) -> bytes | None:
+# ---------------------------------------------------------------------------
+# Pillow High-Resolution Crop & Overlay Renderer
+# ---------------------------------------------------------------------------
+
+def _heading_rad(angle_raw: float) -> float:
+    """Convert device angle (degrees CCW) to screen radians (Y down)."""
+    return -math.radians(angle_raw)
+
+
+def render_map_advanced(
+    width: int,
+    height: int,
+    pixels: bytes,
+    resolution: float,
+    x_min: float,
+    y_min: float,
+    rooms: list[Any] | None = None,
+    no_go_zones: list[dict[str, Any]] | None = None,
+    dock_pos: tuple[float, float] | None = None,
+    robot_pose: list[float] | tuple[float, ...] | None = None,
+    cleaning_path: list[list[int]] | None = None,
+    scale: int = 4,
+    margin_cells: int = 4,
+) -> tuple[bytes, tuple[int, int, int, int, int]]:
+    """Render high-resolution map with Pillow.
+
+    Returns:
+      ``(png_bytes, (cmin, cmax, rmin, rmax, scale))``
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        # Fallback to pure-Python render
+        fallback_bytes = render_map_png(width, height, pixels)
+        return fallback_bytes, (0, width - 1, 0, height - 1, 1)
+
+    # 1. Base occupancy grid image (flip Y for Cartesian world coordinates)
+    lflip = Image.frombytes("L", (width, height), pixels).transpose(Image.FLIP_TOP_BOTTOM)
+
+    # 2. Determine non-empty content bounding box (127=floor, 0=wall, 255=unknown)
+    # Mask content where value is floor (127) or obstacle (0)
+    alpha = lflip.point(lambda v: 255 if v in (0, 127) else 0)
+    bbox = alpha.getbbox()
+    if bbox is None:
+        bbox = (0, 0, width, height)
+
+    left, upper, right, lower = bbox
+    left = max(0, left - margin_cells)
+    upper = max(0, upper - margin_cells)
+    right = min(width, right + margin_cells)
+    lower = min(height, lower + margin_cells)
+
+    # Grid bounding box in cell coordinates (bottom-origin)
+    cmin = left
+    cmax = max(left, right - 1)
+    rmin = max(0, height - lower)
+    rmax = max(rmin, height - 1 - upper)
+
+    # 3. Colorize base image
+    # Lookup table for RGB
+    lut_r = bytearray(256)
+    lut_g = bytearray(256)
+    lut_b = bytearray(256)
+
+    # Set background default
+    for i in range(256):
+        lut_r[i], lut_g[i], lut_b[i] = C_UNKNOWN
+
+    # Floor (127)
+    lut_r[127], lut_g[127], lut_b[127] = C_FLOOR
+    # Wall (0)
+    lut_r[0], lut_g[0], lut_b[0] = C_WALL
+
+    rgb = Image.merge("RGB", (
+        lflip.point(bytes(lut_r)),
+        lflip.point(bytes(lut_g)),
+        lflip.point(bytes(lut_b)),
+    ))
+
+    # Crop and scale
+    crop = rgb.crop((left, upper, right, lower))
+    crop_w = max(1, (right - left) * scale)
+    crop_h = max(1, (lower - upper) * scale)
+    base_img = crop.resize((crop_w, crop_h), Image.NEAREST).convert("RGBA")
+    draw = ImageDraw.Draw(base_img, "RGBA")
+
+    # Helper coordinate transform: world (mm) -> cropped pixel (x, y)
+    def w2p(wx_mm: float, wy_mm: float) -> tuple[float, float]:
+        cx = (wx_mm / 1000.0 - x_min) / resolution
+        cy = (wy_mm / 1000.0 - y_min) / resolution
+        return ((cx - cmin) * scale, (rmax - cy) * scale)
+
+    # 4. Draw Room Polygons & Labels
+    for idx, r in enumerate(rooms or []):
+        v = getattr(r, "outline", None) or r.get("vertexs") or []
+        if len(v) < 3:
+            continue
+        poly = [w2p(pt[0], pt[1]) for pt in v]
+        col = ROOM_PALETTE[idx % len(ROOM_PALETTE)]
+        draw.polygon(poly, fill=(col[0], col[1], col[2], 110))
+        draw.line(poly + [poly[0]], fill=(col[0], col[1], col[2], 255), width=max(1, scale // 3))
+        # Draw room name
+        name = getattr(r, "name", "") or r.get("name", "")
+        if name:
+            cx = sum(p[0] for p in poly) / len(poly)
+            cy = sum(p[1] for p in poly) / len(poly)
+            draw.text((cx, cy), str(name), fill=(30, 36, 50, 255), anchor="mm")
+
+    # 5. Draw No-Go Zones
+    for zone in no_go_zones or []:
+        v = zone.get("vertexs") or []
+        if len(v) >= 3:
+            poly = [w2p(pt[0], pt[1]) for pt in v]
+            draw.polygon(poly, fill=C_NOGO_FILL)
+            draw.line(poly + [poly[0]], fill=C_NOGO_LINE, width=max(1, scale // 3))
+
+    # 6. Draw Charging Dock Station
+    if dock_pos and len(dock_pos) >= 2:
+        dx, dy = w2p(dock_pos[0], dock_pos[1])
+        s = max(6, scale * 2)
+        draw.rectangle([dx - s, dy - s * 0.7, dx + s, dy + s * 0.7],
+                       fill=C_DOCK, outline=(255, 255, 255, 255), width=2)
+        draw.polygon([(dx - s, dy - s * 0.7), (dx, dy - s * 1.4), (dx + s, dy - s * 0.7)],
+                     fill=C_DOCK, outline=(255, 255, 255, 255))
+
+    # 7. Draw Live Cleaning Trajectory / Path
+    if cleaning_path and len(cleaning_path) >= 2:
+        path_pts = [w2p(p[0], p[1]) for p in cleaning_path if len(p) >= 2]
+        if len(path_pts) >= 2:
+            draw.line(path_pts, fill=C_PATH, width=max(2, scale // 2), joint="curve")
+
+    # 8. Draw Live Robot Position & Directional Arrow
+    if robot_pose and len(robot_pose) >= 2:
+        rx, ry = float(robot_pose[0]), float(robot_pose[1])
+        ang = float(robot_pose[2]) if len(robot_pose) >= 3 else 0.0
+        rcx, rcy = w2p(rx, ry)
+        r = max(7, int(scale * 2.2))
+        hr = _heading_rad(ang)
+        tip = (rcx + math.cos(hr) * r * 1.8, rcy + math.sin(hr) * r * 1.8)
+        base_l = (rcx + math.cos(hr + 2.5) * r, rcy + math.sin(hr + 2.5) * r)
+        base_r = (rcx + math.cos(hr - 2.5) * r, rcy + math.sin(hr - 2.5) * r)
+        draw.polygon([tip, base_l, base_r], fill=(255, 255, 255, 230))
+        draw.ellipse([rcx - r, rcy - r, rcx + r, rcy + r],
+                     fill=C_ROBOT + (255,), outline=(255, 255, 255, 255), width=max(2, scale // 3))
+
+    buf = io.BytesIO()
+    base_img.save(buf, format="PNG")
+    return buf.getvalue(), (cmin, cmax, rmin, rmax, scale)
+
+
+def decode_and_render_map(map_json: dict[str, Any]) -> bytes | None:
     """Decode Botslab map JSON and return PNG bytes."""
     try:
         w = map_json.get("width")
@@ -168,6 +426,14 @@ def decode_and_render_map(map_json: dict) -> bytes | None:
         raw = decompress_lz4_block(compressed, w * h)
         if len(raw) != w * h:
             return None
-        return render_map_png(w, h, raw)
+        res, _ = render_map_advanced(
+            width=w,
+            height=h,
+            pixels=raw,
+            resolution=float(map_json.get("resolution") or 0.05),
+            x_min=float(map_json.get("x_min") or 0.0),
+            y_min=float(map_json.get("y_min") or 0.0),
+        )
+        return res
     except Exception:
         return None

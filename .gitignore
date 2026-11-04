@@ -54,6 +54,11 @@ temp/
 *.png
 !assets/*.png
 
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
 # IDE & OS
 .vscode/
 .idea/

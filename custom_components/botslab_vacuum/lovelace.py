@@ -167,6 +167,18 @@ map_modes:
         x: "[[point_x]]"
         y: "[[point_y]]"
         entity_id: "[[entity_id]]"
+
+  # Forbidden / no-go zones.
+  - name: No-Go Zones
+    icon: mdi:cancel
+    selection_type: MANUAL_RECTANGLE
+    max_selections: 10
+    service_call_schema:
+      service: botslab_vacuum.set_no_go_zones
+      service_data:
+        zones: "[[selection]]"
+        mode: add
+        entity_id: "[[entity_id]]"
 """
 
 

@@ -182,6 +182,83 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"email": self._reauth_entry.data[CONF_EMAIL]},
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle reconfiguration of the integration."""
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        assert entry is not None
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            email = user_input[CONF_EMAIL].strip().lower()
+            password = user_input[CONF_PASSWORD]
+            region = user_input.get(CONF_REGION, DEFAULT_REGION)
+            m2 = entry.data.get(CONF_M2) or uuid.uuid4().hex
+
+            session = async_get_clientsession(self.hass)
+            try:
+                tokens = await async_login(session, region, email, password, m2)
+                api = BotslabVacuumApi(
+                    session=session,
+                    region=region,
+                    m2=m2,
+                    q=tokens["q"],
+                    t=tokens["t"],
+                )
+                await api.app_login()
+                devices = await api.get_devices()
+
+                if not devices:
+                    errors["base"] = "no_devices_found"
+                else:
+                    await self.async_set_unique_id(f"botslab_{tokens['qid']}")
+                    self._abort_if_unique_id_mismatch()
+
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        data={
+                            **entry.data,
+                            CONF_EMAIL: email,
+                            CONF_PASSWORD: password,
+                            CONF_REGION: region,
+                            CONF_M2: m2,
+                            CONF_Q: tokens["q"],
+                            CONF_T: tokens["t"],
+                        },
+                    )
+            except BotslabAuthError:
+                errors["base"] = "invalid_auth"
+            except BotslabApiError:
+                errors["base"] = "cannot_connect"
+            except data_entry_flow.AbortFlow:
+                raise
+            except Exception as err:
+                _LOGGER.exception("Unexpected error during reconfiguration: %s", err)
+                errors["base"] = "unknown"
+
+        region_options = [
+            {"value": k, "label": v["name"]} for k, v in REGIONS.items()
+        ]
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_EMAIL, default=entry.data.get(CONF_EMAIL, "")): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.EMAIL)
+                ),
+                vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
+                vol.Required(
+                    CONF_REGION, default=entry.data.get(CONF_REGION, DEFAULT_REGION)
+                ): SelectSelector(SelectSelectorConfig(options=region_options)),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=schema,
+            errors=errors,
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
