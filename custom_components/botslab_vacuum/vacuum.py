@@ -11,7 +11,7 @@ from homeassistant.components.vacuum import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -25,7 +25,6 @@ from .const import (
 )
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
-from .exceptions import BotslabCommandError, BotslabDeviceOfflineError
 from .models import BotslabVacuumDevice
 
 _LOGGER = logging.getLogger(__name__)

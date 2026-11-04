@@ -86,7 +86,6 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
         translation_key="sensor_dirtiness",
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
         icon="mdi:radar",
         value_fn=lambda dev: dev.consumables.sensor_clean_pct,
     ),
@@ -115,7 +114,6 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
         # state class: Home Assistant would try to build long-term statistics
         # from a total it cannot express.
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
         icon="mdi:counter",
         value_fn=lambda dev: dev.tasks_total_count,
     ),
@@ -124,7 +122,6 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
         translation_key="clean_id",
         icon="mdi:identifier",
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
         value_fn=lambda dev: dev.clean_id,
     ),
     BotslabSensorEntityDescription(

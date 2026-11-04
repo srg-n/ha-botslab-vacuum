@@ -18,7 +18,7 @@ ALL_SERVICES = [
     "refresh_rooms",
     "reset_consumable",
     "set_mop_mode",
-    "set_water_level",
+    "set_water_flow",
     "sync_map",
     "set_no_go_zones",
     "set_schedule",

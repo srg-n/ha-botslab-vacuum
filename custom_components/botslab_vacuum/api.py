@@ -34,7 +34,6 @@ from .const import (
 from .map_util import (
     decompress_lz4_block,
     render_map_advanced,
-    render_map_png,
     room_cover_rects,
 )
 from .models import BotslabMapInfo, BotslabRoom
