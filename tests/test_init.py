@@ -35,7 +35,7 @@ async def test_setup_registers_all_platforms(hass: HomeAssistant) -> None:
 
     # Loading succeeded, which only happens if all platforms resolve.
     assert entry.state is ConfigEntryState.LOADED
-    assert len(PLATFORMS) == 7
+    assert len(PLATFORMS) == 8
 
 
 async def test_entities_created_for_every_platform(hass: HomeAssistant) -> None:
@@ -50,6 +50,7 @@ async def test_entities_created_for_every_platform(hass: HomeAssistant) -> None:
 
     assert "vacuum" in platforms, "no vacuum entity"
     assert "sensor" in platforms, "no sensor entities"
+    assert "binary_sensor" in platforms, "no binary_sensor entity"
     assert "button" in platforms, "no button entities"
     assert "switch" in platforms, "no switch entities"
     assert "select" in platforms, "no select entities"

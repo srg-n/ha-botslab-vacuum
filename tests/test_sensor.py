@@ -112,6 +112,28 @@ async def test_consumables_reported(hass: HomeAssistant) -> None:
         assert state.state == value
 
 
+async def test_problem_binary_sensor(hass: HomeAssistant) -> None:
+    """Problem binary sensor reports normal when healthy and error when faulted."""
+    await _setup(hass)
+    problem = state_for(hass, "binary_sensor", "problem")
+    assert problem is not None
+    assert problem.state == "off"
+    assert problem.attributes.get("error_code") == 0
+
+    # Simulate an error code update on the device
+    entry = next(iter(hass.config_entries.async_entries(DOMAIN)))
+    coordinator = entry.runtime_data.coordinator
+    dev = coordinator.data[TEST_SN]
+    dev.error_code = 5  # Main brush stuck
+    coordinator.async_set_updated_data({TEST_SN: dev})
+
+    problem = state_for(hass, "binary_sensor", "problem")
+    assert problem is not None
+    assert problem.state == "on"
+    assert problem.attributes.get("error_code") == 5
+    assert problem.attributes.get("error_type") == "Main roller brush tangled or stuck"
+
+
 async def test_entities_have_unique_ids(hass: HomeAssistant) -> None:
     """Every entity is uniquely identified."""
     await _setup(hass)

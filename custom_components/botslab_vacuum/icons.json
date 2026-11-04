@@ -47,6 +47,11 @@
         "default": "mdi:calendar-clock"
       }
     },
+    "binary_sensor": {
+      "problem": {
+        "default": "mdi:alert-circle"
+      }
+    },
     "switch": {
       "auto_boost": {
         "default": "mdi:fan-plus"

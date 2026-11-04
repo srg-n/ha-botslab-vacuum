@@ -13,13 +13,12 @@ Production-ready Home Assistant integration for **Botslab** and **Qihoo 360** ro
 
 ## 📱 Supported Devices
 
-| Model | Tested Status | Notes |
+| Model | Status | Notes |
 |---|---|---|
-| **Botslab S8** | ✅ **Verified & Tested** | Full controls, room cleaning, telemetry, sensors |
-| **Botslab S8 Plus** | ❓ **Untested / Unknown** | Same cloud API generation — tests & pull requests welcome! |
-| **Botslab S8 / S8 Plus** | ✅ **Supported & Verified** | Full support: room cleaning, real-time map, schedules, water flow |
-| **Botslab S7 / S9 / S10** | ✅ **Supported** | Compatible via International or China backend |
-| **Qihoo 360 (S5, S6, S7, S9, X90)** | ✅ **Supported** | Supported via China Mainland (360 Smart Life) region option |
+| **Botslab S8** | ✅ **Supported & Verified** | Confirmed working on hardware. Full controls, room cleaning, telemetry, map |
+| **Botslab S8 Plus** | ⚠️ **Unverified / Untested** | Same cloud API architecture — feedback and testing welcome |
+| **Botslab S7 / S9 / S10** | ⚠️ **Unverified / Untested** | Same cloud API architecture via International or China backend |
+| **Qihoo 360 (S5, S6, S7, S9, X90)** | ⚠️ **Experimental Support (Unverified / Untested)** | Protocol implementation via China Mainland (360 Smart Life) region |
 
 > 💡 **Supported Ecosystems:**
 > - **Modern Botslab Vacuums (S8, S8+, etc.):** Use International regions (`eu1`, `eu2`, `na1`, `ap1`). Full IoT TSL features including electronic water flow, carpet auto-boost, and live QPush telemetry.

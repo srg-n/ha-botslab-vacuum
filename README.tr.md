@@ -13,13 +13,12 @@
 
 ## 📱 Desteklenen Cihazlar
 
-| Model | Test Durumu | Notlar |
+| Model | Durum | Notlar |
 |---|---|---|
-| **Botslab S8** | ✅ **Doğrulandı ve Test Edildi** | Tam kontroller, oda temizliği, sensörler, canlı durum |
-| **Botslab S8 Plus** | ❓ **Test Edilmedi / Bilinmiyor** | Aynı bulut API mimarisi — testler ve pull request'ler beklenir! |
-| **Botslab S8 / S8 Plus** | ✅ **Destekleniyor & Doğrulandı** | Tam destek: oda temizliği, canlı harita, rutinler, su debisi |
-| **Botslab S7 / S9 / S10** | ✅ **Destekleniyor** | Uluslararası veya Çin sunucusu üzerinden uyumlu |
-| **Qihoo 360 (S5, S6, S7, S9, X90)** | ✅ **Destekleniyor** | Çin (360 Smart Life) bölge seçeneği ile desteklenir |
+| **Botslab S8** | ✅ **Destekleniyor & Doğrulandı** | Fiziksel cihazda bizzat test edildi. Tam kontroller, oda temizliği, harita |
+| **Botslab S8 Plus** | ⚠️ **Doğrulanmadı / Test Edilmedi** | Aynı bulut API mimarisi — geri bildirim ve testler beklenir |
+| **Botslab S7 / S9 / S10** | ⚠️ **Doğrulanmadı / Test Edilmedi** | Uluslararası veya Çin sunucusu üzerinden uyumlu mimari |
+| **Qihoo 360 (S5, S6, S7, S9, X90)** | ⚠️ **Deneysel Destek (Doğrulanmadı / Test Edilmedi)** | Çin (360 Smart Life) bölge seçeneği ile protokol desteği |
 
 > 💡 **Desteklenen Ekosistemler:**
 > - **Modern Botslab Süpürgeler (S8, S8+ vb.):** Uluslararası bölgeleri (`eu1`, `eu2`, `na1`, `ap1`) kullanır. Elektronik su tankı debisi, halı güç artırma ve anlık QPush telemetrisi dahil tüm IoT TSL özelliklerini destekler.

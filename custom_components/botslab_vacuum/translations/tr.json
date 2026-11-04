@@ -69,6 +69,9 @@
       "sensor_dirtiness": { "name": "Sensör Temizliği" },
       "schedules": { "name": "Temizlik Rutinleri" }
     },
+    "binary_sensor": {
+      "problem": { "name": "Sorun" }
+    },
     "button": {
       "locate": { "name": "Robotu Bul" },
       "refresh_rooms": { "name": "Odaları Güncelle" },

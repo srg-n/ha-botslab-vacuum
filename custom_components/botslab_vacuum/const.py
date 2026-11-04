@@ -10,6 +10,7 @@ MANUFACTURER: Final = "Botslab / 360"
 PLATFORMS: Final = [
     Platform.VACUUM,
     Platform.SENSOR,
+    Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.SWITCH,
     Platform.SELECT,
@@ -96,6 +97,25 @@ INFO_360_RESET_CONSUMABLE: Final = "21016"
 
 AUTH_EXPIRED_ERRNOS_360: Final = (102, 103, 401, 403, -2, 10001, 10002)
 BATTERY_KEYS_360: Final = ("elecReal", "elec", "battery", "batteryLevel", "power")
+
+# Human-readable robot hardware error code descriptions
+ERROR_CODE_DESCRIPTIONS: Final[dict[int, str]] = {
+    0: "Normal",
+    1: "Radar / LiDAR obstructed or trapped",
+    2: "Collision bumper stuck",
+    3: "Wheels off the ground / suspended",
+    4: "Cliff drop sensor dirty or obstructed",
+    5: "Main roller brush tangled or stuck",
+    6: "Side brush tangled or stuck",
+    7: "Drive wheel stuck",
+    8: "Dustbin missing or removed",
+    9: "Filter blocked or dirty",
+    10: "Battery critically low",
+    11: "Charging abnormal or dock contacts dirty",
+    12: "Robot trapped or stuck",
+    13: "Water tank empty",
+    14: "Mop bracket / pad missing",
+}
 
 # --- REST Endpoints ---
 EP_APP_LOGIN: Final = "/v1/app/login"
