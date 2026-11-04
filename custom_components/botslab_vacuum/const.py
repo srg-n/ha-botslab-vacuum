@@ -26,6 +26,8 @@ USER_AGENT: Final = "Botslab/2.28.5 (Android)"
 
 # --- QUC login (Email & Password headless auth) ---
 QUC_METHOD: Final = "UserIntf.login"
+QUC_METHOD_GET_CAPTCHA: Final = "UserIntf.getCaptcha"
+ERRNO_QUC_CAPTCHA: Final = 5010
 QUC_FROM: Final = "mpl_cloudsmartoem_and"
 QUC_MSIGKEY: Final = "73e5dba4"
 QUC_RSA_PUBKEY_B64: Final = (

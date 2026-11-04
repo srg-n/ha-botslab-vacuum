@@ -25,11 +25,19 @@
           "password": "Şifre",
           "region": "Sunucu Bölgesi"
         }
+      },
+      "captcha": {
+        "title": "Güvenlik Doğrulaması",
+        "description": "{captcha_img}\n\nLütfen giriş işlemini tamamlamak için yukarıdaki resimde gösterilen karakterleri girin.",
+        "data": {
+          "captcha_code": "Güvenlik Kodu"
+        }
       }
     },
     "error": {
       "cannot_connect": "Botslab bulut sunucularına bağlanılamadı.",
       "invalid_auth": "Geçersiz e-posta veya şifre. Lütfen bilgilerinizi kontrol edin.",
+      "invalid_captcha": "Geçersiz güvenlik kodu. Lütfen yeni resimdeki karakterleri girin.",
       "no_devices_found": "Bu hesap altında robot süpürge bulunamadı.",
       "unknown": "Beklenmeyen bir hata oluştu."
     },
@@ -121,6 +129,9 @@
   "exceptions": {
     "invalid_auth": {
       "message": "Kimlik doğrulama başarısız oldu. Lütfen giriş bilgilerinizi kontrol edin."
+    },
+    "captcha_required": {
+      "message": "Güvenlik doğrulaması gerekiyor. Lütfen güvenlik kodunu girin."
     },
     "cannot_connect": {
       "message": "Botslab bulut sunucularına bağlanılamadı."

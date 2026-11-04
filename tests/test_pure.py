@@ -539,3 +539,121 @@ def test_legacy_360_working_status_mapping():
     assert working_status_to_state("error") == STATUS_ERROR
 
 
+def test_quc_captcha_exception():
+    """Verify BotslabCaptchaRequired exception attributes."""
+    from custom_components.botslab_vacuum.exceptions import BotslabAuthError, BotslabCaptchaRequired
+
+    exc = BotslabCaptchaRequired("Need captcha", sc="token123", captcha_type="graph")
+    assert isinstance(exc, BotslabAuthError)
+    assert exc.sc == "token123"
+    assert exc.captcha_type == "graph"
+    assert str(exc) == "Need captcha"
+
+
+def test_build_login_params_with_captcha():
+    """Verify captcha parameters are added to login request payload and hashed into signature."""
+    from custom_components.botslab_vacuum.quc_login import build_login_params
+
+    # Without captcha
+    params_no_cap = build_login_params("user@example.com", "pass", "m2_id")
+    assert "sc" not in params_no_cap
+    assert "uc" not in params_no_cap
+    assert "captchaType" not in params_no_cap
+
+    # With captcha (international)
+    params_cap = build_login_params(
+        "user@example.com",
+        "pass",
+        "m2_id",
+        captcha_sc="challenge_token_xyz",
+        captcha_code="ABCD",
+    )
+    assert params_cap["sc"] == "challenge_token_xyz"
+    assert params_cap["uc"] == "ABCD"
+    assert params_cap["captchaType"] == "graph"
+    assert params_cap["sig"] != params_no_cap["sig"]
+
+    # With captcha (China legacy)
+    params_cn_cap = build_login_params(
+        "user@example.com",
+        "pass",
+        "m2_id",
+        is_china=True,
+        captcha_sc="challenge_token_cn",
+        captcha_code="1234",
+    )
+    assert params_cn_cap["sc"] == "challenge_token_cn"
+    assert params_cn_cap["uc"] == "1234"
+    assert params_cn_cap["captchaType"] == "graph"
+
+
+@pytest.mark.asyncio
+async def test_botslab_captcha_view():
+    """Verify BotslabCaptchaView serves images with appropriate content type."""
+    from custom_components.botslab_vacuum.config_flow import BotslabCaptchaView
+    from unittest.mock import MagicMock
+
+    view = BotslabCaptchaView()
+    req = MagicMock()
+
+    # Flow not found
+    resp_404 = await view.get(req, "non_existent_flow")
+    assert resp_404.status == 404
+
+    # PNG captcha
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
+    view.captchas["flow_png"] = png_bytes
+    resp_png = await view.get(req, "flow_png")
+    assert resp_png.status == 200
+    assert resp_png.body == png_bytes
+    assert resp_png.content_type == "image/png"
+    assert "no-cache" in resp_png.headers.get("Cache-Control", "")
+
+    # JPEG captcha
+    jpeg_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 20
+    view.captchas["flow_jpeg"] = jpeg_bytes
+    resp_jpeg = await view.get(req, "flow_jpeg")
+    assert resp_jpeg.status == 200
+    assert resp_jpeg.body == jpeg_bytes
+    assert resp_jpeg.content_type == "image/jpeg"
+    assert "no-cache" in resp_jpeg.headers.get("Cache-Control", "")
+
+
+@pytest.mark.asyncio
+async def test_async_login_raises_captcha_required():
+    """Verify async_login raises BotslabCaptchaRequired when errno 5010 is returned."""
+    from custom_components.botslab_vacuum.exceptions import BotslabCaptchaRequired
+    from custom_components.botslab_vacuum.quc_login import async_login
+    from unittest.mock import AsyncMock, MagicMock
+
+    session = MagicMock()
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"errno": 5010, "errmsg": "Please enter verification code"})
+    session.post.return_value.__aenter__.return_value = mock_resp
+
+    with pytest.raises(BotslabCaptchaRequired) as exc_info:
+        await async_login(session, "eu1", "test@example.com", "pass", "m2_fake")
+    assert "Captcha required (code 5010)" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_async_get_captcha():
+    """Verify async_get_captcha fetches image bytes and parses URL-encoded sc token."""
+    from custom_components.botslab_vacuum.quc_login import async_get_captcha
+    from unittest.mock import AsyncMock, MagicMock
+
+    session = MagicMock()
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.read = AsyncMock(return_value=b"fake_captcha_png_bytes")
+    mock_resp.headers = {"sc": "sc_token_123%2Fxyz"}
+    session.post.return_value.__aenter__.return_value = mock_resp
+
+    image_bytes, sc = await async_get_captcha(session, "eu1", "m2_fake")
+    assert image_bytes == b"fake_captcha_png_bytes"
+    assert sc == "sc_token_123/xyz"
+
+
+
+

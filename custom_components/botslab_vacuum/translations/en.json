@@ -25,11 +25,19 @@
           "password": "Password",
           "region": "Server Region"
         }
+      },
+      "captcha": {
+        "title": "Security Verification",
+        "description": "{captcha_img}\n\nPlease enter the verification characters shown in the image above to complete your login.",
+        "data": {
+          "captcha_code": "Security Code"
+        }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to Botslab cloud servers.",
       "invalid_auth": "Invalid email or password. Please verify your credentials.",
+      "invalid_captcha": "Invalid verification code. Please enter the characters from the new image.",
       "no_devices_found": "No robot vacuums found under this account.",
       "unknown": "An unexpected error occurred."
     },
@@ -121,6 +129,9 @@
   "exceptions": {
     "invalid_auth": {
       "message": "Authentication failed. Please verify your credentials."
+    },
+    "captcha_required": {
+      "message": "Security verification required. Please complete the captcha."
     },
     "cannot_connect": {
       "message": "Failed to connect to Botslab cloud servers."

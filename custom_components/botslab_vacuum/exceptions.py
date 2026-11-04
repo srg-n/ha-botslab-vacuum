@@ -18,6 +18,22 @@ class BotslabAuthError(BotslabError):
     translation_key = "invalid_auth"
 
 
+class BotslabCaptchaRequired(BotslabAuthError):
+    """Exception raised when QUC login requires solving a graphic captcha."""
+
+    translation_key = "captcha_required"
+
+    def __init__(
+        self,
+        message: str = "Graphic captcha required",
+        sc: str = "",
+        captcha_type: str = "graph",
+    ) -> None:
+        super().__init__(message)
+        self.sc = sc
+        self.captcha_type = captcha_type
+
+
 class BotslabApiError(BotslabError):
     """Exception raised when communication with Botslab API fails."""
 
