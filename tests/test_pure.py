@@ -372,3 +372,54 @@ def test_map_info_calibration():
     for pt in cal:
         assert "vacuum" in pt
         assert "map" in pt
+
+
+def test_china_region_constants():
+    """Verify China legacy 360 region configuration and endpoints."""
+    from custom_components.botslab_vacuum.const import (
+        EP_360_CMD_SEND,
+        EP_360_DEV_LIST,
+        EP_360_LOGIN,
+        LEGACY_360_MINT_UA,
+        LEGACY_360_USER_AGENT,
+        QUC_APP_CHINA,
+        QUC_FROM_CHINA,
+        QUC_MSIGKEY_CHINA,
+        REGIONS,
+    )
+
+    assert "cn" in REGIONS
+    cn = REGIONS["cn"]
+    assert cn["api"] == "q.smart.360.cn"
+    assert cn["login"] == "passport.360.cn"
+    assert cn["legacy"] is True
+    assert QUC_FROM_CHINA == "mpl_smarthome_and"
+    assert QUC_APP_CHINA == "360Robot"
+    assert QUC_MSIGKEY_CHINA == "i7v2m5x6q"
+    assert EP_360_LOGIN == "/common/user/login"
+    assert EP_360_DEV_LIST == "/common/dev/GetList"
+    assert EP_360_CMD_SEND == "/clean/cmd/send"
+    assert "iPhone" in LEGACY_360_USER_AGENT
+    assert "qhsa" in LEGACY_360_MINT_UA
+
+
+def test_build_login_params_china():
+    """Verify QUC login parameters for China backend."""
+    from custom_components.botslab_vacuum.const import (
+        QUC_APP_CHINA,
+        QUC_FROM,
+        QUC_FROM_CHINA,
+    )
+    from custom_components.botslab_vacuum.quc_login import build_login_params
+
+    # International
+    p_intl = build_login_params("user@example.com", "hunter2", "m2", is_china=False)
+    assert p_intl["from"] == QUC_FROM
+    assert p_intl["app"] == "Botslab"
+
+    # China
+    p_cn = build_login_params("user@example.com", "hunter2", "m2", is_china=True)
+    assert p_cn["from"] == QUC_FROM_CHINA
+    assert p_cn["app"] == QUC_APP_CHINA
+    assert p_cn["sig"] != p_intl["sig"]
+

@@ -61,8 +61,25 @@ REGIONS: Final[dict[str, dict[str, str]]] = {
         "login": "ap1-sapp-login.botslab.com",
         "iot": "ap1-iot-deviceapi.botslab.com",
     },
+    "cn": {
+        "name": "China Mainland (360 Smart Life - Experimental)",
+        "api": "q.smart.360.cn",
+        "login": "passport.360.cn",
+        "iot": "iot.360.cn",
+        "legacy": True,
+    },
 }
 DEFAULT_REGION: Final = "eu1"
+
+# --- Legacy Qihoo 360 Endpoints & Settings ---
+QUC_FROM_CHINA: Final = "mpl_smarthome_and"
+QUC_APP_CHINA: Final = "360Robot"
+QUC_MSIGKEY_CHINA: Final = "i7v2m5x6q"
+EP_360_LOGIN: Final = "/common/user/login"
+EP_360_DEV_LIST: Final = "/common/dev/GetList"
+EP_360_CMD_SEND: Final = "/clean/cmd/send"
+LEGACY_360_USER_AGENT: Final = "QihooSuperApp_NoPods/11.1.0 (iPhone; iOS 15.6; Scale/3.00)"
+LEGACY_360_MINT_UA: Final = "qhsa-iphone-11.1.0"
 
 # --- REST Endpoints ---
 EP_APP_LOGIN: Final = "/v1/app/login"
