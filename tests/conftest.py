@@ -102,7 +102,7 @@ MAP_PNG = sample_map_png()
 def device_properties() -> dict:
     return {
         "BatteryLevel": 88,
-        "WorkingStatus": "5",
+        "WorkingStatus": "7",
         "SuctionPowLevel": 2,
         "PadWetness": 1,
         "MopModeSwitching": 0,
@@ -215,6 +215,7 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
         "start_clean": AsyncMock(),
         "pause_clean": AsyncMock(),
         "stop_clean": AsyncMock(),
+        "resume_clean": AsyncMock(),
         "return_to_dock": AsyncMock(),
         "set_fan_speed": AsyncMock(),
         "clean_rooms": AsyncMock(),
@@ -228,6 +229,20 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
         "set_volume_level": AsyncMock(),
         "reset_consumable": AsyncMock(),
         "start_map_sync": AsyncMock(),
+        "stop_map_sync": AsyncMock(),
+        "set_no_go_zones": AsyncMock(),
+        "set_desired_property": AsyncMock(return_value={"code": 0, "data": {}}),
+        "get_desired_property": AsyncMock(return_value={}),
+        "get_clean_track": AsyncMock(return_value={}),
+        "get_clean_track_all": AsyncMock(return_value=[]),
+        "fetch_rooms": AsyncMock(
+            return_value=api_module.BotslabVacuumApi._parse_rooms(document)
+        ),
+        "get_latest_clean_record": AsyncMock(return_value=None),
+        "invoke_sync": AsyncMock(return_value={"code": 0, "data": {}}),
+        "invoke_async": AsyncMock(return_value={"code": 0, "data": {"request_id": "test_req"}}),
+        "wait_async_reply": AsyncMock(return_value=True),
+        "send_legacy_360_cmd": AsyncMock(return_value=True),
     }
 
     for name, impl in replacements.items():

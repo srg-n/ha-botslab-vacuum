@@ -1113,6 +1113,71 @@ def test_negative_error_code_not_treated_as_fault():
     assert resolve_status(True, "charge", 1) == STATUS_ERROR
 
 
+def test_coordinator_optimistic_state_hold():
+    """Verify optimistic state hold logic prevents stale cloud telemetry from overriding user actions."""
+    from custom_components.botslab_vacuum.api import working_status_to_state
+    from custom_components.botslab_vacuum.const import (
+        DEFAULT_POLL_INTERVAL_ACTIVE,
+        DEFAULT_POLL_INTERVAL_IDLE,
+        STATUS_CLEANING,
+        STATUS_DOCKED,
+        STATUS_ERROR,
+    )
+
+    assert DEFAULT_POLL_INTERVAL_ACTIVE == 15
+    assert DEFAULT_POLL_INTERVAL_IDLE == 30
+
+    optimistic_status = {}
+    current_time = 100.0
+
+    def apply_update(raw_status: int | str, err_code: int = 0) -> str:
+        status = working_status_to_state(raw_status)
+        if err_code > 0 or str(raw_status).strip().lower() in ("9", "introuble"):
+            status = STATUS_ERROR
+
+        opt = optimistic_status.get("SN1")
+        if opt:
+            opt_status, expires_at = opt
+            if status == STATUS_ERROR or current_time >= expires_at:
+                optimistic_status.pop("SN1", None)
+            elif status == opt_status:
+                optimistic_status.pop("SN1", None)
+            else:
+                status = opt_status
+        return status
+
+    # Initial state on dock (WorkingStatus: 7)
+    assert apply_update(7) == STATUS_DOCKED
+
+    # User commands room cleaning -> set optimistic status
+    optimistic_status["SN1"] = (STATUS_CLEANING, current_time + 25.0)
+
+    # Cloud poll at T=2s still returns WorkingStatus: 7 (docked). Optimistic hold preserves CLEANING!
+    current_time += 2.0
+    assert apply_update(7) == STATUS_CLEANING
+    assert "SN1" in optimistic_status
+
+    # Cloud poll at T=10s returns WorkingStatus: 2 (CleanInAreas). Cloud caught up -> lock cleared!
+    current_time += 8.0
+    assert apply_update(2) == STATUS_CLEANING
+    assert "SN1" not in optimistic_status
+
+    # Normal polling continues with real cloud status
+    assert apply_update(2) == STATUS_CLEANING
+
+    # Test genuine robot error immediately breaks optimistic lock
+    optimistic_status["SN1"] = (STATUS_CLEANING, current_time + 25.0)
+    assert apply_update(9) == STATUS_ERROR
+    assert "SN1" not in optimistic_status
+
+    # Test lock expiry after duration passes
+    optimistic_status["SN1"] = (STATUS_CLEANING, current_time + 10.0)
+    current_time += 15.0  # Expired
+    assert apply_update(7) == STATUS_DOCKED
+    assert "SN1" not in optimistic_status
+
+
+
 
 
 

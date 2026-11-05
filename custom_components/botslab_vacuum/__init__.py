@@ -67,6 +67,7 @@ from .const import (
     SERVICE_SET_SCHEDULE,
     SERVICE_SET_WATER_LEVEL,
     SERVICE_SYNC_MAP,
+    STATUS_CLEANING,
 )
 from .coordinator import BotslabRuntimeData, BotslabVacuumCoordinator
 from .qpush import BotslabChinaQPush, BotslabQPush
@@ -495,6 +496,8 @@ def _register_services(hass: HomeAssistant) -> None:
                 speed,
                 water,
             )
+            coordinator.set_optimistic_status(dev.device_name, STATUS_CLEANING)
+            coordinator.schedule_followup_refreshes()
             await coordinator.api.clean_rooms(
                 sn=dev.device_name,
                 product_key=dev.product_key,
@@ -535,6 +538,8 @@ def _register_services(hass: HomeAssistant) -> None:
                 speed,
                 water,
             )
+            coordinator.set_optimistic_status(dev.device_name, STATUS_CLEANING)
+            coordinator.schedule_followup_refreshes()
             await coordinator.api.clean_zone(
                 sn=dev.device_name,
                 product_key=dev.product_key,
@@ -583,6 +588,8 @@ def _register_services(hass: HomeAssistant) -> None:
                 x,
                 y,
             )
+            coordinator.set_optimistic_status(dev.device_name, STATUS_CLEANING)
+            coordinator.schedule_followup_refreshes()
             await coordinator.api.goto_target(dev.device_name, dev.product_key, x, y)
             await coordinator.async_request_refresh()
 

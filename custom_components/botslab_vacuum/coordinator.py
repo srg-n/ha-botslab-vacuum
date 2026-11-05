@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 import json
 import logging
+import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -33,6 +34,7 @@ from .const import (
     FAN_SPEEDS_360_TO_HA,
     INT_TO_MOP_MODE,
     MODE_TO_FAN_SPEED,
+    STATUS_CLEANING,
     STATUS_ERROR,
 )
 from .models import BotslabConsumableStatus, BotslabMapInfo, BotslabRoom, BotslabVacuumDevice
@@ -130,6 +132,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self._rooms_cache: dict[str, list[BotslabRoom]] = {}
         self._map_cache: dict[str, bytes] = {}
         self._last_active_state: bool | None = None
+        self._optimistic_status: dict[str, tuple[str, float]] = {}
 
     async def ensure_valid_session(self) -> None:
         """Ensure API has a valid session id and push alias, re-authenticating if necessary."""
@@ -235,17 +238,23 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 props = {}
 
             # Status and activity
-            raw_status = (
-                props.get("WorkingStatus")
-                or props.get("TEST_WorkingStatus")
-                or props.get("working_status")
-                or props.get("mode")
-                or props.get("workMode")
-                or props.get("runStatus")
-                or props.get("cleanMode")
-                or (props.get("status") if not self.api.is_legacy_360 else None)
-                or "0"
-            )
+            raw_status = None
+            for skey in (
+                "WorkingStatus",
+                "TEST_WorkingStatus",
+                "working_status",
+                "mode",
+                "workMode",
+                "runStatus",
+                "cleanMode",
+            ):
+                if skey in props and props[skey] is not None:
+                    raw_status = props[skey]
+                    break
+            if raw_status is None and not self.api.is_legacy_360 and "status" in props:
+                raw_status = props["status"]
+            if raw_status is None:
+                raw_status = "0"
             status = working_status_to_state(raw_status)
 
             # Battery (check standard BatteryLevel first, then 360 keys)
@@ -305,6 +314,24 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 if err_code > 0 or str(raw_status).strip().lower() in ("9", "introuble"):
                     status = STATUS_ERROR
             active_error_code = err_code if err_code > 0 else 0
+
+            # Optimistic state hold: prevent temporary cloud lag from overwriting user action
+            opt = self._optimistic_status.get(sn)
+            if opt:
+                opt_status, expires_at = opt
+                now = time.monotonic()
+                if status == STATUS_ERROR or now >= expires_at:
+                    self._optimistic_status.pop(sn, None)
+                elif status == opt_status:
+                    self._optimistic_status.pop(sn, None)
+                else:
+                    _LOGGER.debug(
+                        "Preserving optimistic status '%s' for %s (cloud reports '%s')",
+                        opt_status,
+                        sn,
+                        status,
+                    )
+                    status = opt_status
 
             # Parse robot pose [x, y, angle]
             robot_pose: list[float] | None = None
@@ -488,6 +515,27 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         # When a push event arrives (status change, map update, etc.), immediately refresh coordinator
         await self.async_request_refresh()
 
+    def set_optimistic_status(self, sn: str, status: str, duration: float = 25.0) -> None:
+        """Override reported status temporarily while cloud catches up with device."""
+        self._optimistic_status[sn] = (status, time.monotonic() + duration)
+        dev = self.data.get(sn) if self.data else None
+        if dev:
+            dev.status = status
+            self.async_set_updated_data(self.data)
+        if status in ACTIVE_STATUSES:
+            self.update_interval = timedelta(seconds=self.poll_interval_active)
+
+    async def async_delayed_refresh(self, delay_seconds: float) -> None:
+        """Schedule a coordinator refresh after a short delay."""
+        await asyncio.sleep(delay_seconds)
+        await self.async_request_refresh()
+
+    def schedule_followup_refreshes(self) -> None:
+        """Schedule rapid follow-up refreshes to capture state transitions."""
+        self.update_interval = timedelta(seconds=self.poll_interval_active)
+        for delay in (4, 10, 18):
+            self.hass.async_create_task(self.async_delayed_refresh(delay))
+
     @property
     def routines(self) -> list[dict[str, Any]]:
         """Return list of saved cleaning routines from config entry options."""
@@ -511,6 +559,8 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             return
         sn = first_dev.device_name
         pk = first_dev.product_key
+        self.set_optimistic_status(sn, STATUS_CLEANING)
+        self.schedule_followup_refreshes()
         if room_ids:
             await self.api.clean_rooms(
                 sn=sn,
