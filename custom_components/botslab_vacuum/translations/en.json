@@ -5,7 +5,7 @@
         "title": "Botslab Account Login",
         "description": "Log in with your Botslab cloud account. The integration will automatically discover all robot vacuums associated with your account.",
         "data": {
-          "email": "Email Address",
+          "email": "Email Address or Username",
           "password": "Password",
           "region": "Server Region"
         }
@@ -21,7 +21,7 @@
         "title": "Reconfigure Botslab Account",
         "description": "Update the connection settings for your Botslab cloud account.",
         "data": {
-          "email": "Email Address",
+          "email": "Email Address or Username",
           "password": "Password",
           "region": "Server Region"
         }

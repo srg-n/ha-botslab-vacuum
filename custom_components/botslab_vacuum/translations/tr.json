@@ -5,7 +5,7 @@
         "title": "Botslab Hesap Girişi",
         "description": "Botslab bulut hesabınızla giriş yapın. Entegrasyon hesabınıza bağlı tüm robot süpürgeleri otomatik olarak bulacaktır.",
         "data": {
-          "email": "E-posta Adresi",
+          "email": "E-posta veya Kullanıcı Adı",
           "password": "Şifre",
           "region": "Sunucu Bölgesi"
         }
@@ -21,7 +21,7 @@
         "title": "Botslab Hesabını Yeniden Yapılandır",
         "description": "Botslab bulut hesabınızın bağlantı ayarlarını güncelleyin.",
         "data": {
-          "email": "E-posta Adresi",
+          "email": "E-posta veya Kullanıcı Adı",
           "password": "Şifre",
           "region": "Sunucu Bölgesi"
         }

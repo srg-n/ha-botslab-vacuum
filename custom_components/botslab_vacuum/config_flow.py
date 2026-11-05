@@ -101,7 +101,8 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            email = user_input[CONF_EMAIL].strip().lower()
+            email_raw = user_input[CONF_EMAIL].strip()
+            email = email_raw.lower() if "@" in email_raw else email_raw
             password = user_input[CONF_PASSWORD]
             region = user_input.get(CONF_REGION, DEFAULT_REGION)
             m2 = uuid.uuid4().hex
@@ -161,7 +162,8 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 except Exception as err:
                     _LOGGER.exception("Failed to fetch captcha challenge: %s", err)
                     errors["base"] = "cannot_connect"
-            except BotslabAuthError:
+            except BotslabAuthError as err:
+                _LOGGER.warning("Authentication failed for %s (region: %s): %s", email, region, err)
                 errors["base"] = "invalid_auth"
             except BotslabApiError:
                 errors["base"] = "cannot_connect"
@@ -182,7 +184,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required(CONF_EMAIL): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.EMAIL)
+                    TextSelectorConfig(type=TextSelectorType.TEXT)
                 ),
                 vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
                 vol.Required(CONF_REGION, default=DEFAULT_REGION): SelectSelector(
@@ -252,7 +254,8 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 except Exception as err:
                     _LOGGER.exception("Failed to fetch captcha challenge: %s", err)
                     errors["base"] = "cannot_connect"
-            except BotslabAuthError:
+            except BotslabAuthError as err:
+                _LOGGER.warning("Authentication failed for %s (region: %s): %s", email, region, err)
                 errors["base"] = "invalid_auth"
             except Exception:
                 errors["base"] = "cannot_connect"
@@ -335,7 +338,8 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 except Exception as err:
                     _LOGGER.exception("Failed to fetch captcha challenge: %s", err)
                     errors["base"] = "cannot_connect"
-            except BotslabAuthError:
+            except BotslabAuthError as err:
+                _LOGGER.warning("Authentication failed for %s (region: %s): %s", email, region, err)
                 errors["base"] = "invalid_auth"
             except BotslabApiError:
                 errors["base"] = "cannot_connect"
@@ -352,7 +356,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required(CONF_EMAIL, default=entry.data.get(CONF_EMAIL, "")): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.EMAIL)
+                    TextSelectorConfig(type=TextSelectorType.TEXT)
                 ),
                 vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
                 vol.Required(
@@ -490,7 +494,8 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 except Exception as err:
                     _LOGGER.exception("Failed to refresh captcha: %s", err)
                     errors["base"] = "cannot_connect"
-            except BotslabAuthError:
+            except BotslabAuthError as err:
+                _LOGGER.warning("Authentication failed for %s (region: %s): %s", email, region, err)
                 errors["base"] = "invalid_auth"
             except BotslabApiError:
                 errors["base"] = "cannot_connect"

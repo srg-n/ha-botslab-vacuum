@@ -8,7 +8,7 @@ import aiohttp
 
 from .const import (
     EP_QUC_REQUEST,
-    ERRNO_QUC_CAPTCHA,
+    ERRNO_QUC_CAPTCHA_SET,
     QUC_APP_CHINA,
     QUC_FROM,
     QUC_FROM_CHINA,
@@ -164,30 +164,47 @@ async def async_login(
         raise BotslabApiError(f"Network error during login: {err}") from err
 
     errno = data.get("errno", -1)
-    if errno == ERRNO_QUC_CAPTCHA:
+    errmsg_outer = str(data.get("errmsg") or "")
+    _LOGGER.debug("QUC login raw envelope: errno=%s, errmsg=%s", errno, errmsg_outer)
+
+    if (
+        errno in ERRNO_QUC_CAPTCHA_SET
+        or "captcha" in errmsg_outer.lower()
+        or "验证码" in errmsg_outer
+        or "安全验证" in errmsg_outer
+    ):
         raise BotslabCaptchaRequired(
-            f"Captcha required (code {errno}): {data.get('errmsg', 'Security verification required')}"
+            f"Captcha required (code {errno}): {errmsg_outer or 'Security verification required'}"
         )
     if errno != 0:
-        errmsg = data.get("errmsg", "Unknown error")
-        raise BotslabAuthError(f"Login failed (code {errno}): {errmsg}")
+        raise BotslabAuthError(f"Login failed (code {errno}): {errmsg_outer or 'Unknown error'}")
 
     ret_b64 = data.get("ret")
     if not ret_b64:
         raise BotslabAuthError("Missing 'ret' payload in QUC response")
 
     ret = decrypt_response(ret_b64, a117)
+    _LOGGER.debug("QUC decrypted response ret: %s", ret)
     ret_errno = ret.get("errno", 0)
-    if ret_errno == ERRNO_QUC_CAPTCHA:
-        errdetail = ret.get("errdetail") or {}
-        ctype = str(errdetail.get("captchaType") or "graph")
+    errdetail = ret.get("errdetail") or {}
+    ctype = str(errdetail.get("captchaType") or "graph")
+    ret_errmsg = str(ret.get("errmsg") or "")
+    sc_token = str(errdetail.get("sc") or "")
+
+    if (
+        ret_errno in ERRNO_QUC_CAPTCHA_SET
+        or errdetail.get("captchaType")
+        or "captcha" in ret_errmsg.lower()
+        or "验证码" in ret_errmsg
+        or "安全验证" in ret_errmsg
+    ):
         raise BotslabCaptchaRequired(
-            f"Captcha required (code {ret_errno}): {ret.get('errmsg', 'Security verification required')}",
+            f"Captcha required (code {ret_errno}): {ret_errmsg or 'Security verification required'}",
+            sc=sc_token,
             captcha_type=ctype,
         )
     if ret_errno != 0:
-        ret_msg = ret.get("errmsg", "Login rejected")
-        raise BotslabAuthError(f"QUC auth rejected (code {ret_errno}): {ret_msg}")
+        raise BotslabAuthError(f"QUC auth rejected (code {ret_errno}): {ret_errmsg or 'Login rejected'}")
 
     user = ret.get("user") or ret.get("user_info") or ret
     q = user.get("q")

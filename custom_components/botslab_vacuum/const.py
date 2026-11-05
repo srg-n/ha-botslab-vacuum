@@ -28,6 +28,7 @@ USER_AGENT: Final = "Botslab/2.28.5 (Android)"
 QUC_METHOD: Final = "UserIntf.login"
 QUC_METHOD_GET_CAPTCHA: Final = "UserIntf.getCaptcha"
 ERRNO_QUC_CAPTCHA: Final = 5010
+ERRNO_QUC_CAPTCHA_SET: Final = (5010, 5011, 5012, 5001, 5002, 5003)
 QUC_FROM: Final = "mpl_cloudsmartoem_and"
 QUC_MSIGKEY: Final = "73e5dba4"
 QUC_RSA_PUBKEY_B64: Final = (
