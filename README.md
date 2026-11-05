@@ -16,9 +16,10 @@ Production-ready Home Assistant integration for **Botslab** and **Qihoo 360** ro
 | Model | Status | Notes |
 |---|---|---|
 | **Botslab S8** | ✅ **Supported & Verified** | Confirmed working on hardware. Full controls, room cleaning, telemetry, map |
-| **Botslab S8 Plus** | ⚠️ **Unverified / Untested** | Same cloud API architecture — feedback and testing welcome |
-| **Botslab S7 / S9 / S10** | ⚠️ **Unverified / Untested** | Same cloud API architecture via International or China backend |
-| **Qihoo 360 (S5, S6, S7, S9, X90)** | ⚠️ **Experimental Support (Unverified / Untested)** | Protocol implementation via China Mainland (360 Smart Life) region |
+| **Qihoo 360 S6** | ✅ **Supported & Verified** | Community tested and verified via China Mainland backend ([Issue #1](https://github.com/srg-n/ha-botslab-vacuum/issues/1)). Full vacuum controls, telemetry, live map, consumables |
+| **Botslab S8 Plus** | ⚠️ **Untested (Expected to work)** | Same TSL cloud API architecture — feedback and testing welcome |
+| **Botslab S7 / S9 / S10** | ⚠️ **Untested (Expected to work)** | Same cloud API architecture via International or China backend |
+| **Qihoo 360 (S5, S7, S9, X90)** | ⚠️ **Experimental Support** | Protocol implementation via China Mainland (360 Smart Life) region |
 
 > 💡 **Which Server Region Should You Choose? (Golden Rule)**
 > The choice depends **strictly on the mobile app your vacuum is registered in**, NOT where you physically live:
@@ -54,6 +55,9 @@ Production-ready Home Assistant integration for **Botslab** and **Qihoo 360** ro
   - Multi-room, suction-customizable scheduled cleaning routines
   - Persisted in Home Assistant storage (survives restarts)
   - Dedicated schedule sensor and custom Lovelace routines management card
+- ⚡ **Dynamic State Transition Watcher:**
+  - Fast-polling verification loop (1.5s interval) catches cloud status changes immediately upon user commands
+  - Zero UI lag when starting, pausing, or docking without relying on fake optimistic states
 - 📊 **Consumables & Maintenance Sensors:**
   - HEPA Filter remaining lifetime (hours)
   - Main Brush remaining lifetime (hours)

@@ -2,6 +2,8 @@
 
 This document describes the internal architecture, dataflow, synchronization models, map rendering pipeline, and frontend delivery mechanisms of the **Botslab Vacuum** Home Assistant custom component.
 
+> ℹ️ **Verified Hardware:** Primary architecture validated on the **Botslab S8**. Legacy Qihoo architecture validated on the **360 S6** ([Issue #1](https://github.com/srg-n/ha-botslab-vacuum/issues/1)).
+
 ---
 
 ## 1. System Overview & Component Diagram
@@ -76,9 +78,14 @@ The integration avoids slow updates while minimizing unnecessary API polling thr
 ### 2.2. Adaptive Polling Channel (`BotslabDataUpdateCoordinator`)
 - Acts as a fallback and state reconciliation loop.
 - **Adaptive intervals:**
-  - **15–30 seconds** when robot is docked / idle / sleeping.
-  - **3–5 seconds** when robot is actively cleaning (`dev_is_active`), fetching updated cleaning tracks and map progress.
+  - **120 seconds** when robot is docked / idle / sleeping.
+  - **30 seconds** when robot is actively cleaning (`dev_is_active`), fetching updated cleaning tracks and map progress.
 - Backs off gracefully if network errors occur.
+
+### 2.3. Dynamic State Transition Watcher (`watch_state_transition`)
+- Eliminates command latency when starting, pausing, or docking the vacuum.
+- When an action is sent, rather than displaying an unverified (fake) optimistic state, the coordinator initiates a rapid verification loop polling every **1.5 seconds** (up to 8 attempts / ~12 seconds) until the robot's real status transition is published to the cloud.
+- Once the real status changes (e.g. `docked` ➔ `cleaning`), the loop self-terminates immediately and active polling takes over.
 
 ---
 

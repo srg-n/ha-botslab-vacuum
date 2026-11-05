@@ -16,10 +16,12 @@ The vacuum cleaner communicates exclusively outbound with the vendor cloud backe
 | **eu2 (Europe 2)** | `eu2-sapp-api.botslab.com` | `eu2-sapp-login.botslab.com` | `eu2-iot-deviceapi.botslab.com` |
 | **na1 (North America)** | `na1-sapp-api.botslab.com` | `na1-sapp-login.botslab.com` | `na1-iot-deviceapi.botslab.com` |
 | **ap1 (Asia Pacific)** | `ap1-sapp-api.botslab.com` | `ap1-sapp-login.botslab.com` | `ap1-iot-deviceapi.botslab.com` |
+| **cn (China Mainland / Qihoo 360)** | `q.smart.360.cn` | `passport.360.cn` | `q.smart.360.cn` |
 
 Additional backend hosts:
 - **Alibaba Cloud OSS:** `*.oss-<region>.aliyuncs.com` (map packages, floor plans, area uploads).
-- **Qihoo QPUSH Gateway:** `dp.push.dc.360.cn` (resolves to IP e.g. `8.211.52.133`, TCP port 80).
+- **Qihoo QPUSH Gateway (Botslab Global):** `dp.push.dc.360.cn` (resolves to IP e.g. `8.211.52.133`, TCP port 80/443).
+- **Qihoo Push Gateway (Legacy 360 China):** `47.254.151.104:443` (TCP stream with AES encrypted 10000/20000/20001 packets; community verified on 360 S6 in [Issue #1](https://github.com/srg-n/ha-botslab-vacuum/issues/1)).
 
 ---
 

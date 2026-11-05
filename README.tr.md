@@ -16,9 +16,10 @@
 | Model | Durum | Notlar |
 |---|---|---|
 | **Botslab S8** | ✅ **Destekleniyor & Doğrulandı** | Fiziksel cihazda bizzat test edildi. Tam kontroller, oda temizliği, harita |
-| **Botslab S8 Plus** | ⚠️ **Doğrulanmadı / Test Edilmedi** | Aynı bulut API mimarisi — geri bildirim ve testler beklenir |
-| **Botslab S7 / S9 / S10** | ⚠️ **Doğrulanmadı / Test Edilmedi** | Uluslararası veya Çin sunucusu üzerinden uyumlu mimari |
-| **Qihoo 360 (S5, S6, S7, S9, X90)** | ⚠️ **Deneysel Destek (Doğrulanmadı / Test Edilmedi)** | Çin (360 Smart Life) bölge seçeneği ile protokol desteği |
+| **Qihoo 360 S6** | ✅ **Destekleniyor & Doğrulandı** | Çin (360 Smart Life) sunucusu üzerinden fiziksel cihazda topluluk tarafından bizzat test edilip doğrulandı ([Issue #1](https://github.com/srg-n/ha-botslab-vacuum/issues/1)). Tam kontroller, anlık durum, canlı harita |
+| **Botslab S8 Plus** | ⚠️ **Test Edilmedi (Çalışması Beklenir)** | Aynı bulut API mimarisi — geri bildirim ve testler beklenir |
+| **Botslab S7 / S9 / S10** | ⚠️ **Test Edilmedi (Çalışması Beklenir)** | Uluslararası veya Çin sunucusu üzerinden uyumlu mimari |
+| **Qihoo 360 (S5, S7, S9, X90)** | ⚠️ **Deneysel Destek** | Çin (360 Smart Life) bölge seçeneği ile protokol desteği |
 
 > 💡 **Hangi Sunucu Bölgesini (Server Region) Seçmelisiniz? (Altın Kural)**
 > Seçiminiz, evinizin fiziksel konumuna göre DEĞİL, **süpürgenizin kayıtlı olduğu mobil uygulamaya göre** belirlenir:
@@ -54,6 +55,9 @@
   - İstenen günlerde, saatlerde, seçili odalarda ve farklı emiş güçlerinde otomatik temizlik rutinleri
   - Home Assistant dahili hafızasında saklanır (yeniden başlatmalardan etkilenmez)
   - Özel zamanlama sensörü ve Türkçe/İngilizce otomatik dil destekli kontrol kartı
+- ⚡ **Dinamik Durum Geçiş Takipçisi (State Transition Watcher):**
+  - Komut verildiğinde yapay (iyimser) durumlar uydurmak yerine bulutu 1.5 saniyelik seri aralıklarla kontrol eden döngü
+  - Temizlik başladığında veya bittiğinde arayüzde sıfır gecikmeyle anında gerçek durumu yansıtma
 - 📊 **Sarf Malzemesi & Bakım Sensörleri:**
   - HEPA Filtre kalan ömrü (saat)
   - Ana Fırça kalan ömrü (saat)

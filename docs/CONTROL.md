@@ -1,6 +1,6 @@
 # Botslab / Qihoo 360 TSL Control Reference
 
-This document catalogs the **Thing Specification Language (TSL)** services, properties, and status mappings supported by Botslab and Qihoo 360 robot vacuum cleaners (validated on the **Botslab S8**).
+This document catalogs the **Thing Specification Language (TSL)** services, properties, and status mappings supported by Botslab and Qihoo 360 robot vacuum cleaners (validated on the **Botslab S8** and **Qihoo 360 S6** via [Issue #1](https://github.com/srg-n/ha-botslab-vacuum/issues/1)).
 
 ---
 
