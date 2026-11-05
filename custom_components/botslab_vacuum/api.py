@@ -1131,12 +1131,12 @@ class BotslabVacuumApi:
         except Exception as err:
             raise BotslabApiError(f"invoke_async {action} failed: {err}") from err
 
-    async def wait_async_reply(self, request_id: str, timeout: int = 8) -> bool:
-        """Wait for asynchronous command confirmation."""
-        ts, nonce, sig = self._sign()
+    async def wait_async_reply(self, request_id: str, timeout: int = 12) -> bool:
+        """Wait for asynchronous command confirmation. Re-signs on every poll iteration."""
         url = f"{self.base_url}/v1/iot/device/invoke_service_reply"
         start_t = time.time()
         while time.time() - start_t < timeout:
+            ts, nonce, sig = self._sign()
             q = self._base_query(ts, nonce, sig)
             q["request_id"] = request_id
             try:
@@ -1147,10 +1147,25 @@ class BotslabVacuumApi:
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp:
                     data = await resp.json(content_type=None)
-                    if data.get("code") == 0:
+                    code = data.get("code")
+                    if code == 0:
+                        res_str = data.get("data", {}).get("result", "")
+                        if isinstance(res_str, str) and res_str:
+                            try:
+                                res_obj = json.loads(res_str)
+                                if res_obj.get("ErrorNO", 0) != 0:
+                                    _LOGGER.warning("Async reply ErrorNO=%s: %s", res_obj.get("ErrorNO"), res_str)
+                                    return False
+                            except (ValueError, TypeError):
+                                pass
                         return True
-            except Exception:
-                pass
+                    if code == 202016:
+                        # Device async command not reply now, please wait
+                        pass
+                    else:
+                        _LOGGER.debug("wait_async_reply status code=%s: %s", code, data.get("msg"))
+            except Exception as err:
+                _LOGGER.debug("wait_async_reply request error: %s", err)
             await asyncio.sleep(1)
         return False
 
@@ -1248,7 +1263,12 @@ class BotslabVacuumApi:
         raw_oss = props.get("MapPkgOssInfo")
         oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
         map_id = int(oss_info.get("MapID", 28239))
-        clean_id = f"{sn}-{int(time.time())}"
+        clean_id = (
+            oss_info.get("CleanID")
+            or map_json.get("cleanId")
+            or props.get("CleanID")
+            or f"{sn}-{int(time.time())}"
+        )
 
         sa = map_json.get("smartArea") or {}
         room_list = copy.deepcopy(sa.get("value", []))
@@ -1259,10 +1279,12 @@ class BotslabVacuumApi:
         str_room_ids: set[str] = set()
         for r in room_ids:
             s = str(r).strip()
-            if s:
+            if s and s not in str_room_ids:
                 str_room_ids.add(s)
                 try:
-                    int_room_ids.append(int(s))
+                    rid = int(s)
+                    if rid not in int_room_ids:
+                        int_room_ids.append(rid)
                 except (ValueError, TypeError):
                     pass
 
@@ -1351,7 +1373,7 @@ class BotslabVacuumApi:
             "activeIds": int_room_ids,
             "areaCleanActiveId": None,
             "autoOrder": False,
-            "cleanTimes": repeat_times,
+            "cleanTimes": 1,
             "isAttrOn": 1,
         }
 
@@ -1377,8 +1399,12 @@ class BotslabVacuumApi:
             )
             req_id = res.get("data", {}).get("request_id")
             if req_id:
-                reply_ok = await self.wait_async_reply(req_id, timeout=5)
+                reply_ok = await self.wait_async_reply(req_id, timeout=12)
                 _LOGGER.debug("StartCleanInAreas reply for %s: ok=%s", sn, reply_ok)
+                if not reply_ok:
+                    raise BotslabCommandError(
+                        f"StartCleanInAreas not confirmed by robot {sn} (timeout or rejected)"
+                    )
             _LOGGER.info("Room cleaning started successfully on %s for rooms %s", sn, int_room_ids)
         except Exception as err:
             _LOGGER.warning(

@@ -301,7 +301,7 @@ def _parse_room_ids(raw: Any) -> list[str]:
                 s = str(item).strip().strip("'\"")
                 if s:
                     result.append(s)
-        return result
+        return list(dict.fromkeys(result))
     return [str(raw).strip()]
 
 
@@ -473,6 +473,7 @@ def _register_services(hass: HomeAssistant) -> None:
                     if rid and rid not in target_ids:
                         target_ids.append(rid)
 
+            target_ids = list(dict.fromkeys(target_ids))
             if not target_ids:
                 continue
 
