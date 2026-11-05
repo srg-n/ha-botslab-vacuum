@@ -19,6 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 from .const import DOMAIN
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
+from .i18n import translate
 from .lovelace import MAINTENANCE_ROWS, build_full_dashboard_snippet
 from .models import BotslabVacuumDevice
 
@@ -84,7 +85,7 @@ async def _async_generate_map_card(
     is_legacy = getattr(coordinator.api, "is_legacy_360", False) is True
     room_count = len([r for r in device.rooms if len(r.outline) >= 3])
 
-    is_tr = (getattr(hass.config, "language", "en") or "en").startswith("tr")
+    lang = getattr(hass.config, "language", "en") or "en"
 
     # A card without both of these cannot work for modern robots, and they are absent when the
     # map is disabled and the camera entity was never created. For legacy 360, vacuum entity is sufficient.
@@ -92,12 +93,8 @@ async def _async_generate_map_card(
         if "vacuum" not in entity_ids:
             persistent_notification.async_create(
                 hass,
-                message=(
-                    f"{device.device_title} için kayıtlı bir vakum (vacuum) varlığı bulunamadı."
-                    if is_tr
-                    else f"No vacuum entity is registered for {device.device_title}."
-                ),
-                title="Botslab Kontrol Paneli" if is_tr else "Botslab dashboard card",
+                message=translate("err_no_vacuum", lang, title=device.device_title),
+                title=translate("legacy_card_title", lang, title=device.device_title),
                 notification_id=f"botslab_map_card_error_{device.device_name}",
             )
             return
@@ -106,23 +103,18 @@ async def _async_generate_map_card(
         if missing:
             persistent_notification.async_create(
                 hass,
-                message=(
-                    f"{device.device_title} için gerekli ({', '.join(missing)}) varlıkları bulunamadı. "
-                    "Robotun yüklü olduğundan ve entegrasyon ayarlarında **Canlı haritayı etkinleştir** seçeneğinin açık olduğundan emin olun."
-                    if is_tr
-                    else (
-                        f"No {', '.join(missing)} entity is registered for "
-                        f"{device.device_title}, so the card could not be generated. "
-                        "Check that the robot is loaded and that **Enable live map** is on "
-                        "in the integration options."
-                    )
+                message=translate(
+                    "err_missing_entities",
+                    lang,
+                    title=device.device_title,
+                    entities=", ".join(missing),
                 ),
-                title="Botslab Harita Kartı" if is_tr else "Botslab map card",
+                title=translate("map_card_title", lang, title=device.device_title),
                 notification_id=f"botslab_map_card_error_{device.device_name}",
             )
             return
 
-    snippet = build_full_dashboard_snippet(device, entity_ids, is_legacy=is_legacy, is_tr=is_tr)
+    snippet = build_full_dashboard_snippet(device, entity_ids, is_legacy=is_legacy, lang=lang)
 
     try:
         path = Path(hass.config.path(MAP_CARD_FILENAME))
@@ -131,63 +123,32 @@ async def _async_generate_map_card(
         _LOGGER.warning("Could not write %s: %s", MAP_CARD_FILENAME, err)
         path = None
 
-    if is_tr:
-        title = f"Botslab Harita Kartı - {device.device_title}"
-        if is_legacy:
-            message = (
-                f"Kontrol paneli kartı **{device.device_title}** (Legacy 360 / S6) için oluşturuldu.\n\n"
-                f"Kayıt konumu: `{MAP_CARD_FILENAME}` (Home Assistant yapılandırma klasörü).\n\n"
-                "📋 **Hemen Kullanın**: Dosya yöneticisine gerek olmadan, aşağıdaki kodu kopyalayıp panonuzda **+ Kart Ekle ➔ Manuel** (en altta) alanına yapıştırın:\n\n"
-                f"```yaml\n{snippet}\n```"
-            )
-        elif not room_count:
-            hint = (
-                "Harita desteği eklenti ayarlarında kapalı olabilir. Ayarlardan **Canlı haritayı etkinleştir** seçeneğini açıp tekrar deneyin.\n\n"
-                if not coordinator.enable_map
-                else "Robot henüz buluta kat planını yüklememiş olabilir. Önce robota **Sync Map** yapıp tekrar deneyin.\n\n"
-            )
-            message = (
-                f"Henüz oda geometrisi bulunamadı. {hint}"
-                "📋 Yine de temel kontrol ve bakım kartını kullanmak için aşağıdaki kodu panonuza yapıştırabilirsiniz:\n\n"
-                f"```yaml\n{snippet}\n```"
-            )
-        else:
-            message = (
-                f"Harita kartı **{device.device_title}** ({room_count} oda) için başarıyla oluşturuldu.\n\n"
-                f"Kayıt konumu: `{MAP_CARD_FILENAME}` (Home Assistant yapılandırma klasörü).\n\n"
-                "📋 **Hemen Kullanın**: Dosya yöneticisine gerek olmadan, aşağıdaki kodu kopyalayıp panonuzda **+ Kart Ekle ➔ Manuel** (en altta) alanına yapıştırın:\n\n"
-                f"```yaml\n{snippet}\n```"
-            )
+    if is_legacy:
+        title = translate("legacy_card_title", lang, title=device.device_title)
+        message = translate(
+            "legacy_card_msg",
+            lang,
+            title=device.device_title,
+            filename=MAP_CARD_FILENAME,
+            snippet=snippet,
+        )
+    elif not room_count:
+        title = translate("map_card_title", lang, title=device.device_title)
+        hint = translate(
+            "map_disabled_hint" if not coordinator.enable_map else "map_sync_hint",
+            lang,
+        )
+        message = translate("map_card_no_rooms", lang, hint=hint, snippet=snippet)
     else:
-        title = f"Botslab Map Card - {device.device_title}"
-        if is_legacy:
-            message = (
-                f"Dashboard card configuration generated for **{device.device_title}** (Legacy 360 / S6).\n\n"
-                f"Saved to: `{MAP_CARD_FILENAME}` in your Home Assistant configuration directory.\n\n"
-                "📋 **Direct Setup**: No file manager needed! Copy the YAML snippet below and paste it into **Edit Dashboard ➔ + Add Card ➔ Manual** (at the bottom):\n\n"
-                f"```yaml\n{snippet}\n```"
-            )
-        elif not room_count:
-            hint = (
-                "Map support is currently disabled in the integration options. "
-                "Enable **Enable live map** for this robot, then press this button again.\n\n"
-                if not coordinator.enable_map
-                else "Robot may not have synced its floor plan to the cloud yet. "
-                "Press **Sync Map** on the robot first, then press this button again.\n\n"
-            )
-            message = (
-                f"No room geometry available yet. {hint}"
-                "📋 You can still use the control and maintenance card below by pasting it into your dashboard:\n\n"
-                f"```yaml\n{snippet}\n```"
-            )
-        else:
-            message = (
-                f"Map card configuration generated for **{device.device_title}** ({room_count} rooms).\n\n"
-                f"Saved to: `{MAP_CARD_FILENAME}` in your Home Assistant configuration directory.\n\n"
-                "📋 **Direct Setup**: No file manager needed! Copy the YAML snippet below and paste it into **Edit Dashboard ➔ + Add Card ➔ Manual** (at the bottom):\n\n"
-                f"```yaml\n{snippet}\n```\n\n"
-                "Requires the bundled *xiaomi-vacuum-map-card* frontend card."
-            )
+        title = translate("map_card_title", lang, title=device.device_title)
+        message = translate(
+            "map_card_success",
+            lang,
+            title=device.device_title,
+            room_count=room_count,
+            filename=MAP_CARD_FILENAME,
+            snippet=snippet,
+        )
 
     persistent_notification.async_create(
         hass,

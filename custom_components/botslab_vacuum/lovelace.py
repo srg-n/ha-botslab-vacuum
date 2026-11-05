@@ -16,6 +16,7 @@ from collections.abc import Mapping
 import json
 from typing import Any
 
+from .i18n import translate
 from .models import BotslabVacuumDevice
 
 # Minimum vertices for a polygon to be drawable.
@@ -225,28 +226,28 @@ def build_maintenance_card(
 
 
 def build_legacy_dashboard_card(
-    device: BotslabVacuumDevice, entity_ids: Mapping[str, str], is_tr: bool = False
+    device: BotslabVacuumDevice, entity_ids: Mapping[str, str], lang: str = "en"
 ) -> str:
     """Return a native Home Assistant dashboard configuration for legacy 360 models (S6, etc.)."""
     vacuum_id = entity_ids.get("vacuum", "vacuum.botslab_vacuum")
     camera_id = entity_ids.get("camera")
     battery_id = entity_ids.get("battery")
 
-    battery_label = "Pil Seviyesi" if is_tr else "Battery Level"
-    vacuum_label = "Robot Durumu" if is_tr else "Vacuum Status"
-    camera_title = "Temizlik Haritası" if is_tr else "Cleaning Map"
-    maint_title = "Sarf Malzemeleri ve Ayarlar" if is_tr else "Maintenance & Settings"
-    btn_start = "Başlat" if is_tr else "Start"
-    btn_pause = "Duraklat" if is_tr else "Pause"
-    btn_dock = "Şarja Dön" if is_tr else "Return to Dock"
-    btn_stop = "Durdur" if is_tr else "Stop"
+    battery_label = translate("battery_level", lang)
+    vacuum_label = translate("vacuum_status", lang)
+    camera_title = translate("camera_title", lang)
+    maint_title = translate("maintenance_title", lang)
 
-    battery_line = f"\n      - entity: {battery_id}\n        name: {_yaml_str(battery_label)}" if battery_id else ""
+    battery_line = (
+        f"\n      - entity: {battery_id}\n        name: {_yaml_str(battery_label)}"
+        if battery_id
+        else ""
+    )
 
     camera_block = ""
     if camera_id:
         camera_block = f"""
-  # {"Son Temizlik Haritası" if is_tr else "Last Clean Map"}
+  # {camera_title}
   - type: picture-entity
     title: {_yaml_str(camera_title)}
     entity: {camera_id}
@@ -270,17 +271,9 @@ def build_legacy_dashboard_card(
         maintenance_lines.append(f"        name: {_yaml_str(label)}")
     maintenance_block = "\n".join(maintenance_lines)
 
-    header_comment = f"""# ==============================================================================
-# 360 Legacy Vacuum ({device.device_title}) - {"Kontrol Paneli Yapılandırması" if is_tr else "Dashboard Card Configuration"}
-#
-# ⚠️ {"KURULUM TALİMATI" if is_tr else "INSTALLATION INSTRUCTION"}:
-# {"Bu kod TEK BİR KART yapılandırmasıdır. Panonun tamamının 'Ham Yapılandırma Düzenleyicisi' içine yapıştırmayın." if is_tr else "This snippet is a SINGLE CARD configuration. Do NOT paste into dashboard Raw Configuration Editor."}
-# {"Panolar -> Düzenle -> + Kart Ekle -> Manuel (en altta) alanına yapıştırın." if is_tr else "Dashboard -> Edit -> + Add Card -> Manual (at the bottom)."}
-# ==============================================================================
-"""
+    header_comment = translate("card_header_comment", lang, title=device.device_title)
 
-    return f"""{header_comment}
-type: vertical-stack
+    return f"""{header_comment}type: vertical-stack
 title: {_yaml_str(device.device_title)}
 cards:
   - type: entities
@@ -292,7 +285,7 @@ cards:
   - type: horizontal-stack
     cards:
       - type: button
-        name: {_yaml_str(btn_start)}
+        name: {_yaml_str(translate("btn_start", lang))}
         icon: mdi:play
         tap_action:
           action: call-service
@@ -300,7 +293,7 @@ cards:
           target:
             entity_id: {vacuum_id}
       - type: button
-        name: {_yaml_str(btn_pause)}
+        name: {_yaml_str(translate("btn_pause", lang))}
         icon: mdi:pause
         tap_action:
           action: call-service
@@ -308,7 +301,7 @@ cards:
           target:
             entity_id: {vacuum_id}
       - type: button
-        name: {_yaml_str(btn_dock)}
+        name: {_yaml_str(translate("btn_dock", lang))}
         icon: mdi:home-map-marker
         tap_action:
           action: call-service
@@ -316,7 +309,7 @@ cards:
           target:
             entity_id: {vacuum_id}
       - type: button
-        name: {_yaml_str(btn_stop)}
+        name: {_yaml_str(translate("btn_stop", lang))}
         icon: mdi:stop
         tap_action:
           action: call-service
@@ -332,11 +325,11 @@ def build_full_dashboard_snippet(
     device: BotslabVacuumDevice,
     entity_ids: Mapping[str, str],
     is_legacy: bool = False,
-    is_tr: bool = False,
+    lang: str = "en",
 ) -> str:
     """Return complete dashboard snippet, tailored for modern or legacy 360 robots."""
     if is_legacy:
-        return build_legacy_dashboard_card(device, entity_ids, is_tr=is_tr)
+        return build_legacy_dashboard_card(device, entity_ids, lang=lang)
     return (
         f"{build_map_card(device, entity_ids)}\n---\n"
         f"{build_maintenance_card(device, entity_ids)}\n"
