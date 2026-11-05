@@ -193,14 +193,33 @@ Gerekli Lovelace kartları entegrasyonla birlikte gelir ve başlatma sırasında
 
 Harici olarak HACS üzerinden kart aramanıza veya kaynak eklemenize gerek yoktur.
 
-### Eviniz için harita kartı üretme
+### 🗺️ Eviniz İçin Harita Kartı Üretme ve Panoya Ekleme Rehberi
 
-Oda konturları evinize özeldir ve Botslab uygulamasında oda adı/şekli değiştiğinde değişir. Elle yazmak yerine:
+Oda konturları ve poligon sınırları evinize özeldir; Botslab uygulamasında oda böldüğünüzde veya adını değiştirdiğinizde güncellenir. Bu koordinatları elle tek tek çıkarmak yerine entegrasyon tek tıkla üretir:
 
-1. Robot haritayı yüklesin diye Home Assistant'ta **Haritayı Senkronize Et** butonuna basın.
-2. **Harita Kartı Yapılandırması Üret** butonuna basın.
+1. Robot en son haritayı sunucuya göndersin diye Home Assistant'ta **Haritayı Senkronize Et** (`Sync Map`) butonuna basın.
+2. Ardından **Harita Kartı Yapılandırması Üret** (`Generate Map Card Config`) butonuna basın.
+3. Entegrasyon, evinizin tüm oda sınırlarını ve kalibrasyonunu içeren hazır kart kodunu Home Assistant ana dizinindeki **`/config/botslab_map_card.yaml`** dosyasına yazar ve sol menüdeki **Bildirimler (Notifications)** alanına bir bilgi mesajı bırakır.
 
-Entegrasyon, robotun kendi haritasından tüm oda konturlarını doldurarak hazır bir kartı Home Assistant config dizinindeki `botslab_map_card.yaml` dosyasına yazar. Dashboard'unuza **Manual** kartı ekleyip içeriğini yapıştırmanız yeterli.
+#### 📌 Dosyayı Panonuza (Dashboard) Ekleme Adımları:
+
+1. **Dosya İçeriğini Kopyalayın:**  
+   Home Assistant içindeki **File Editor** (veya Studio Code Server / Samba) eklentisiyle `/config/botslab_map_card.yaml` dosyasını açıp içindeki tüm metni kopyalayın (`Ctrl+A`, `Ctrl+C`).
+2. **Panonuzu Açın:**  
+   Home Assistant sol menüsünden süpürgenizi eklemek istediğiniz **Panoya (Dashboard)** gidin.
+3. **Düzenleme Moduna Geçin:**  
+   Sağ üst köşedeki **üç nokta (⋮)** simgesine tıklayıp **Panoyu Düzenle** (Edit Dashboard) deyin.
+4. **Manuel Kart Ekleyin:**  
+   Sağ alttaki mavi **+ Kart Ekle** (+ Add Card) butonuna basın. Açılan kart listesinin en aşağısına inerek **Manuel (Manual)** kart türünü seçin.
+5. **Kodu Yapıştırın ve Kaydedin:**  
+   Kutudaki mevcut örnek kodu silin, kopyaladığınız YAML kodunu yapıştırın ve **Kaydet** butonuna basın.
+
+> [!WARNING]
+> **Önemli Hata Uyarısı:**  
+> Kopyaladığınız kod **tek bir karta** aittir. Bu kodu panonun en üstündeki **"Ham Yapılandırma Düzenleyicisi" (Raw configuration editor)** içine **YAPIŞTIRMAYIN**. Aksi halde Home Assistant panonun tamamını bozup `At path: views -- Expected an array value` hatası verecektir. Her zaman **+ Kart Ekle ➔ Manuel** adımını kullanın.
+
+> [!TIP]
+> Botslab uygulamasından odaları yeniden bölerseniz veya haritanız değişirse; sadece yukarıdaki iki butona tekrar basıp üretilen yeni YAML'ı kart düzenleyicisine yapıştırmanız yeterlidir.
 
 ### Zamanlanmış Rutinler Kart Örneği
 

@@ -209,14 +209,33 @@ The integration automatically serves and registers the required Lovelace cards u
 
 No manual HACS frontend installation or resource configuration is required.
 
-### Generating a map card for your floor plan
+### 🗺️ Generating a Map Card and Adding It to Your Dashboard
 
-Room outlines are specific to your home and change whenever rooms are renamed or edited in the Botslab app. Rather than hand-writing them:
+Room outlines and polygon boundaries are specific to your home and change whenever rooms are split, merged, or renamed in the Botslab app. Rather than calculating coordinates manually, the integration generates a ready-to-paste card in one click:
 
-1. Press the **Sync Live Map** button in Home Assistant so the robot uploads its floor plan.
+1. Press the **Sync Live Map** button in Home Assistant so the robot uploads its latest floor plan.
 2. Press **Generate Map Card Config**.
+3. The integration writes a complete, pre-configured card with all room outlines to **`/config/botslab_map_card.yaml`** in your Home Assistant config directory, and posts a notification in your Home Assistant sidebar.
 
-The integration then writes a complete, ready-to-paste card to `botslab_map_card.yaml` in your Home Assistant config directory, with every room outline filled in from the robot's own map. Add a **Manual** card in your dashboard and paste it.
+#### 📌 Step-by-Step Dashboard Setup:
+
+1. **Copy the File Contents:**  
+   Open `/config/botslab_map_card.yaml` using the **File Editor** (or Studio Code Server / Samba) add-on and copy all text (`Ctrl+A`, `Ctrl+C`).
+2. **Open Your Dashboard:**  
+   Navigate to the dashboard where you want to place the vacuum map card.
+3. **Enter Edit Mode:**  
+   Click the **three dots (⋮)** in the top right corner and choose **Edit Dashboard**.
+4. **Add a Manual Card:**  
+   Click the **+ Add Card** button at the bottom right. Scroll all the way down and select the **Manual** card type.
+5. **Paste and Save:**  
+   Delete the sample code in the editor, paste the copied YAML configuration, and click **Save**.
+
+> [!WARNING]
+> **Avoid Raw Editor Error:**  
+> This YAML is a **single-card configuration**. Do **NOT** paste it into the dashboard's top-level **"Raw configuration editor"**, as doing so will corrupt your dashboard structure and produce `At path: views -- Expected an array value`. Always use **+ Add Card ➔ Manual**.
+
+> [!TIP]
+> If you ever repartition or rename rooms in the Botslab mobile app, simply press the two buttons again and replace your manual card's YAML with the freshly generated `/config/botslab_map_card.yaml`.
 
 ### Scheduled Routines Card Example
 
