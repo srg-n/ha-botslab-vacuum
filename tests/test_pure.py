@@ -920,6 +920,65 @@ async def test_legacy_360_clean_zone():
     assert api_z._legacy_cached_status["SN123"] == "cleaning"
 
 
+@pytest.mark.asyncio
+async def test_legacy_360_get_properties_defaults_to_docked():
+    """Verify that legacy 360 defaults to docked rather than falsely reporting cleaning."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi, working_status_to_state
+    from custom_components.botslab_vacuum.const import STATUS_DOCKED
+
+    api = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    # Simulate device from GetList having status: 1 (meaning bound/registered)
+    api._legacy_device_cache["SN123"] = {"sn": "SN123", "status": 1, "battery": 100}
+    api.send_legacy_360_cmd = AsyncMock(return_value={"errno": 0, "data": {}})
+    api.get_latest_clean_record = AsyncMock(return_value=None)
+
+    props, _ = await api._legacy_360_get_properties("SN123")
+    assert props["WorkingStatus"] == STATUS_DOCKED
+    assert working_status_to_state(props["WorkingStatus"]) == STATUS_DOCKED
+    assert api._legacy_cached_status["SN123"] == STATUS_DOCKED
+
+
+@pytest.mark.asyncio
+async def test_legacy_360_get_properties_with_live_push():
+    """Verify that live push telemetry (mode, elecReal, etc.) is used by _legacy_360_get_properties."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi, working_status_to_state
+    from custom_components.botslab_vacuum.const import STATUS_DOCKED
+
+    api = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    api._legacy_live_status["SN123"] = {
+        "mode": "charge",
+        "elecReal": 96,
+        "cleanTime": 0,
+        "cleanArea": 0,
+        "allTime": 42000,
+        "allArea": 950,
+        "errorState": [],
+        "workNoisy": "auto",
+    }
+    api.send_legacy_360_cmd = AsyncMock(return_value={"errno": 0, "data": {}})
+    api.get_latest_clean_record = AsyncMock(return_value=None)
+
+    props, _ = await api._legacy_360_get_properties("SN123")
+    assert props["WorkingStatus"] == "charge"
+    assert working_status_to_state(props["WorkingStatus"]) == STATUS_DOCKED
+    assert props["BatteryLevel"] == 96
+    assert props["TotalCleaningTime"] == 42000
+    assert props["TotalCleaningArea"] == 950
+    assert api._legacy_cached_status["SN123"] == STATUS_DOCKED
+
+
+def test_decode_china_push():
+    """Verify decode_china_push handles None and basic shapes safely."""
+    from custom_components.botslab_vacuum.qpush import decode_china_push
+
+    assert decode_china_push("", "key") is None
+    assert decode_china_push('{"data": ""}', "") is None
+    assert decode_china_push("malformed", "key") is None
+
+
+
 
 
 

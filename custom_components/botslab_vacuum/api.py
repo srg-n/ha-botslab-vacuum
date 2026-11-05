@@ -139,6 +139,7 @@ class BotslabVacuumApi:
         self.push_alias: str = ""
         self.qid: str | None = qid or derive_qid(q)
         self._legacy_cached_status: dict[str, str] = {}
+        self._legacy_live_status: dict[str, dict[str, Any]] = {}
 
         reg_info = REGIONS.get(region, REGIONS["eu1"])
         self.base_url = f"https://{reg_info['api']}"
@@ -452,31 +453,66 @@ class BotslabVacuumApi:
     ) -> tuple[dict[str, Any], dict[str, str]]:
         """Fetch and synthesize telemetry for legacy 360 robot."""
         raw_dev = self._legacy_device_cache.get(sn, {})
+        live = self._legacy_live_status.get(sn, {})
+
+        # Priority for status:
+        # 1. Live push status from robot (live["mode"])
+        # 2. Cached status from recent user action (e.g. cleaning/paused/returning)
+        # 3. Default to docked (stationary on base) - NEVER STATUS_CLEANING!
+        current_status = live.get("mode") or self._legacy_cached_status.get(sn, STATUS_DOCKED)
+
         props: dict[str, Any] = {
-            "WorkingStatus": raw_dev.get("status", 1),
-            "BatteryLevel": raw_dev.get("battery", 100),
-            "SuctionPowLevel": raw_dev.get("fan_speed", 2),
-            "TotalCleaningArea": raw_dev.get("total_area", 0.0),
-            "TotalCleaningTime": raw_dev.get("total_time", 0),
+            "WorkingStatus": current_status,
+            "BatteryLevel": live.get("elecReal") if live.get("elecReal") is not None else raw_dev.get("battery", 100),
+            "SuctionPowLevel": live.get("workNoisy") or raw_dev.get("fan_speed", 2),
+            "TotalCleaningArea": live.get("allArea") if live.get("allArea") is not None else raw_dev.get("total_area", 0.0),
+            "TotalCleaningTime": live.get("allTime") if live.get("allTime") is not None else raw_dev.get("total_time", 0),
             "TasksTotalCount": raw_dev.get("tasks_count", 0),
-            "ErrorCode": raw_dev.get("error_code", 0),
+            "ErrorCode": 0,
         }
 
-        # Check raw device for battery keys
-        for bkey in BATTERY_KEYS_360:
-            if bkey in raw_dev and raw_dev[bkey] is not None:
-                props["BatteryLevel"] = raw_dev[bkey]
-                break
+        # Check raw device for battery keys if not provided by live push
+        if "BatteryLevel" not in props or props["BatteryLevel"] is None:
+            for bkey in BATTERY_KEYS_360:
+                if bkey in raw_dev and raw_dev[bkey] is not None:
+                    props["BatteryLevel"] = raw_dev[bkey]
+                    break
 
-        # Check raw device for fan speed
-        if "workNoisy" in raw_dev:
+        # Fan speed
+        if "workNoisy" in live:
+            props["workNoisy"] = live["workNoisy"]
+        elif "workNoisy" in raw_dev:
             props["workNoisy"] = raw_dev["workNoisy"]
 
-        # Check raw device for volume
-        if "vol" in raw_dev and isinstance(raw_dev["vol"], (int, float)):
+        # Volume
+        if "vol" in live and isinstance(live["vol"], (int, float)):
+            props["VolumeLevel"] = int(live["vol"]) * 10
+        elif "vol" in raw_dev and isinstance(raw_dev["vol"], (int, float)):
             props["VolumeLevel"] = int(raw_dev["vol"]) * 10
 
-        # Trigger status poll on legacy 360 cloud (infoType 20001)
+        # Live cleaning time & area
+        clean_time = live.get("cleanTime") if live.get("cleanTime") is not None else live.get("clean_time")
+        if clean_time is not None:
+            props["TEST_CleaningTime"] = clean_time
+        clean_area = live.get("cleanArea") if live.get("cleanArea") is not None else live.get("clean_area")
+        if clean_area is not None:
+            props["CleaningArea"] = clean_area
+
+        # Live error state
+        error_state = live.get("errorState")
+        if isinstance(error_state, list) and error_state:
+            props["ErrorCode"] = error_state[-1]
+        elif isinstance(error_state, (int, float)):
+            props["ErrorCode"] = int(error_state)
+        elif "error_code" in raw_dev:
+            props["ErrorCode"] = raw_dev["error_code"]
+
+        # Mop status
+        if "mopStatus" in live and live["mopStatus"] is not None:
+            props["mopStatus"] = live["mopStatus"]
+            props["MopStatus"] = live["mopStatus"]
+
+        # Trigger status poll on legacy 360 cloud (pokes device to emit fresh push frame)
         try:
             res = await self.send_legacy_360_cmd(sn, INFO_360_STATUS, "")
             cmd_data = res.get("data")
@@ -490,7 +526,7 @@ class BotslabVacuumApi:
                     if bkey in cmd_data and cmd_data[bkey] is not None:
                         props["BatteryLevel"] = cmd_data[bkey]
                         break
-                for skey in ("mode", "workMode", "runStatus", "cleanMode", "status"):
+                for skey in ("mode", "workMode", "runStatus", "cleanMode"):
                     if skey in cmd_data and cmd_data[skey] is not None:
                         props["WorkingStatus"] = cmd_data[skey]
                         props[skey] = cmd_data[skey]
@@ -500,26 +536,23 @@ class BotslabVacuumApi:
                 if "vol" in cmd_data and isinstance(cmd_data["vol"], (int, float)):
                     props["VolumeLevel"] = int(cmd_data["vol"]) * 10
 
-                # Live cleaning time & area: support both camelCase (placix/360 protocol) and snake_case
-                clean_time = cmd_data.get("cleanTime") if cmd_data.get("cleanTime") is not None else cmd_data.get("clean_time")
-                if clean_time is not None:
-                    props["TEST_CleaningTime"] = clean_time
-                clean_area = cmd_data.get("cleanArea") if cmd_data.get("cleanArea") is not None else cmd_data.get("clean_area")
-                if clean_area is not None:
-                    props["CleaningArea"] = clean_area
+                c_time = cmd_data.get("cleanTime") if cmd_data.get("cleanTime") is not None else cmd_data.get("clean_time")
+                if c_time is not None:
+                    props["TEST_CleaningTime"] = c_time
+                c_area = cmd_data.get("cleanArea") if cmd_data.get("cleanArea") is not None else cmd_data.get("clean_area")
+                if c_area is not None:
+                    props["CleaningArea"] = c_area
                 if "allTime" in cmd_data and cmd_data["allTime"] is not None:
                     props["TotalCleaningTime"] = cmd_data["allTime"]
                 if "allArea" in cmd_data and cmd_data["allArea"] is not None:
                     props["TotalCleaningArea"] = cmd_data["allArea"]
 
-                # Extract live robot error state (matching placix: errorState list)
-                error_state = cmd_data.get("errorState")
-                if isinstance(error_state, list) and error_state:
-                    props["ErrorCode"] = error_state[-1]
-                elif isinstance(error_state, (int, float)):
-                    props["ErrorCode"] = int(error_state)
+                err_st = cmd_data.get("errorState")
+                if isinstance(err_st, list) and err_st:
+                    props["ErrorCode"] = err_st[-1]
+                elif isinstance(err_st, (int, float)):
+                    props["ErrorCode"] = int(err_st)
 
-                # Mop status / water box state
                 if "mopStatus" in cmd_data and cmd_data["mopStatus"] is not None:
                     props["mopStatus"] = cmd_data["mopStatus"]
                     props["MopStatus"] = cmd_data["mopStatus"]
@@ -548,21 +581,22 @@ class BotslabVacuumApi:
         st = working_status_to_state(props["WorkingStatus"])
         self._legacy_cached_status[sn] = st
 
-        # Read latest clean record for area, time and map info
+        # Read latest clean record for area, time and map info (using setdefault so it doesn't overwrite live telemetry)
         try:
             record = await self.get_latest_clean_record(sn)
             if record:
                 if "cleanTime" in record or "clean_time" in record:
-                    props["TEST_CleaningTime"] = record.get("cleanTime") or record.get("clean_time")
+                    props.setdefault("TEST_CleaningTime", record.get("cleanTime") or record.get("clean_time"))
                 if "cleanArea" in record or "clean_area" in record:
-                    props["CleaningArea"] = record.get("cleanArea") or record.get("clean_area")
+                    props.setdefault("CleaningArea", record.get("cleanArea") or record.get("clean_area"))
                 if "totalArea" in record:
-                    props["TotalCleaningArea"] = record.get("totalArea")
+                    props.setdefault("TotalCleaningArea", record.get("totalArea"))
                 if "totalTime" in record:
-                    props["TotalCleaningTime"] = record.get("totalTime")
+                    props.setdefault("TotalCleaningTime", record.get("totalTime"))
         except BotslabAuthError:
             raise
         except Exception as err:
+            _LOGGER.debug("Legacy 360 latest clean record fetch failed: %s", err)
             _LOGGER.debug("Legacy 360 clean record poll error: %s", err)
 
         return props, {}

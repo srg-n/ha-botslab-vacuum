@@ -69,7 +69,7 @@ from .const import (
     SERVICE_SYNC_MAP,
 )
 from .coordinator import BotslabRuntimeData, BotslabVacuumCoordinator
-from .qpush import BotslabQPush
+from .qpush import BotslabChinaQPush, BotslabQPush
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -207,11 +207,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initial data load
     await coordinator.async_config_entry_first_refresh()
 
-    # Launch QPush real-time socket listener in background for international accounts.
-    # Legacy 360 China accounts poll via REST and do not use the international QPush gateway.
-    qpush: BotslabQPush | None = None
+    # Launch real-time push socket listener in background
+    qpush: BotslabQPush | BotslabChinaQPush | None = None
     qpush_task = None
-    if not api.is_legacy_360:
+    if api.is_legacy_360:
+        qpush = BotslabChinaQPush(
+            get_sid=lambda: api.sid,
+            get_push_key=lambda: api.push_key,
+            on_push=lambda payload: hass.async_create_task(coordinator.async_on_push(payload)),
+            ensure_session=coordinator.ensure_valid_session,
+        )
+        qpush_task = hass.async_create_background_task(
+            qpush.run(), name=f"china_qpush_{entry.entry_id}"
+        )
+    else:
         qpush = BotslabQPush(
             session=session,
             device_id=m2,

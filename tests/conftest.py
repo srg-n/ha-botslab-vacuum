@@ -247,6 +247,7 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
     # The listener runs forever in production; tests only care that it starts
     # and stops, so the socket itself is replaced.
     patch.object(qpush_module.BotslabQPush, "run", AsyncMock(return_value=None)).start()
+    patch.object(qpush_module.BotslabChinaQPush, "run", AsyncMock(return_value=None)).start()
 
 
 @pytest.fixture(autouse=True)

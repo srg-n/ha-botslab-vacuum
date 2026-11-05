@@ -35,7 +35,7 @@ from .const import (
     MODE_TO_FAN_SPEED,
 )
 from .models import BotslabConsumableStatus, BotslabMapInfo, BotslabRoom, BotslabVacuumDevice
-from .qpush import BotslabQPush
+from .qpush import BotslabChinaQPush, BotslabQPush
 from .quc_login import BotslabAuthError, async_login
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ class BotslabRuntimeData:
 
     api: BotslabVacuumApi
     coordinator: BotslabVacuumCoordinator
-    qpush: BotslabQPush | None = None
+    qpush: BotslabQPush | BotslabChinaQPush | None = None
     qpush_task: asyncio.Task[None] | None = None
 
 
@@ -242,7 +242,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 or props.get("workMode")
                 or props.get("runStatus")
                 or props.get("cleanMode")
-                or props.get("status")
+                or (props.get("status") if not self.api.is_legacy_360 else None)
                 or "0"
             )
             status = working_status_to_state(raw_status)
@@ -464,6 +464,11 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
     async def async_on_push(self, payload: dict[str, Any]) -> None:
         """Handle incoming real-time push event from QPush TCP socket."""
         _LOGGER.debug("QPush real-time event received: %s", payload)
+        if payload.get("is_legacy_360") and "sn" in payload and "status" in payload:
+            sn = str(payload["sn"])
+            status_data = payload["status"]
+            self.api._legacy_live_status[sn] = status_data
+            _LOGGER.debug("Legacy 360 push status stored for %s: %s", sn, status_data)
         # When a push event arrives (status change, map update, etc.), immediately refresh coordinator
         await self.async_request_refresh()
 
