@@ -82,7 +82,7 @@ def build_login_params(
         "needDeviceCheck": need_device_check,
         "oaid": "",
         "app": app_name,
-        "trace_id": f"src_and_1217_{now_ms}",
+        "trace_id": f"src_and_1916_{now_ms}",
         "ui_ver": ui_ver,
         "method": QUC_METHOD,
         "res_mode": "1",
@@ -213,6 +213,9 @@ async def async_login(
 
     if not q or not t:
         raise BotslabAuthError("Response succeeded but missing q/t session tokens")
+
+    q = urllib.parse.unquote(str(q))
+    t = urllib.parse.unquote(str(t))
 
     _LOGGER.info("QUC login successful for %s (qid: %s)", email, qid)
     return {"q": q, "t": t, "qid": qid}

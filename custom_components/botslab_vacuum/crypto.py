@@ -284,7 +284,7 @@ def compute_sig(params: dict[str, str], msigkey: str) -> str:
 def encrypt_params(params: dict[str, str], a117: str) -> str:
     """DES-encrypt urlencoded params and return base64 string."""
     key = des_key_from_material(a117)
-    plaintext = urllib.parse.urlencode(params).encode("utf-8")
+    plaintext = urllib.parse.urlencode(params, quote_via=urllib.parse.quote).encode("utf-8")
     enc = des_cbc_encrypt(plaintext, key, key)
     return base64.b64encode(enc).decode("utf-8")
 

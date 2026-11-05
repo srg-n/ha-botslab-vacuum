@@ -52,6 +52,16 @@ _LOGGER = logging.getLogger(__name__)
 _PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 
 
+def _clean_identifier(raw: str) -> str:
+    """Clean username or email input, stripping whitespace and lowercasing emails."""
+    s = raw.strip()
+    if "@" in s:
+        return s.lower()
+    if all(c in "0123456789+- " for c in s):
+        return s.replace(" ", "").replace("-", "")
+    return s
+
+
 class BotslabCaptchaView(HomeAssistantView):
     """View to serve captcha images locally for active config flows."""
 
@@ -101,8 +111,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            email_raw = user_input[CONF_EMAIL].strip()
-            email = email_raw.lower() if "@" in email_raw else email_raw
+            email = _clean_identifier(user_input[CONF_EMAIL])
             password = user_input[CONF_PASSWORD]
             region = user_input.get(CONF_REGION, DEFAULT_REGION)
             m2 = uuid.uuid4().hex
@@ -277,7 +286,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            email = user_input[CONF_EMAIL].strip().lower()
+            email = _clean_identifier(user_input[CONF_EMAIL])
             password = user_input[CONF_PASSWORD]
             region = user_input.get(CONF_REGION, DEFAULT_REGION)
             m2 = entry.data.get(CONF_M2) or uuid.uuid4().hex
