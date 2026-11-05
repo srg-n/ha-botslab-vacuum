@@ -1,6 +1,7 @@
 {
   "domain": "botslab_vacuum",
   "name": "Botslab Vacuum Robot",
+  "after_dependencies": ["frontend"],
   "codeowners": ["@srg-n"],
   "config_flow": true,
   "dependencies": ["http"],
@@ -8,7 +9,6 @@
   "integration_type": "hub",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/srg-n/ha-botslab-vacuum/issues",
-  "quality_scale": "platinum",
   "requirements": [],
   "version": "1.0.0"
 }

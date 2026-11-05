@@ -126,8 +126,12 @@ async def _register_frontend(hass: HomeAssistant) -> None:
     except Exception:  # noqa: BLE001
         ver = "0"
     if not await _register_resources(hass, base, ver):
-        for c in _CARDS:
-            add_extra_js_url(hass, f"{base}/{c}?v={ver}")
+        if "frontend" in hass.config.components:
+            for c in _CARDS:
+                try:
+                    add_extra_js_url(hass, f"{base}/{c}?v={ver}")
+                except Exception:  # noqa: BLE001
+                    pass
     _LOGGER.debug("Botslab bundled frontend cards registered")
 
 
