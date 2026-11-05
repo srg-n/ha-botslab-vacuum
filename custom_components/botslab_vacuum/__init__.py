@@ -267,89 +267,210 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+def _parse_room_ids(raw: Any) -> list[str]:
+    """Normalize various room ID inputs (int, str, JSON list, dict list) into list of str IDs."""
+    if raw is None:
+        return []
+    if isinstance(raw, (int, float)):
+        return [str(int(raw))]
+    if isinstance(raw, str):
+        trimmed = raw.strip()
+        if not trimmed:
+            return []
+        if trimmed.startswith("[") and trimmed.endswith("]"):
+            try:
+                parsed = json.loads(trimmed)
+                return _parse_room_ids(parsed)
+            except Exception:
+                pass
+        return [
+            part.strip().strip("'\"")
+            for part in trimmed.replace("[", "").replace("]", "").split(",")
+            if part.strip().strip("'\"")
+        ]
+    if isinstance(raw, (list, tuple, set)):
+        result: list[str] = []
+        for item in raw:
+            if isinstance(item, dict):
+                rid = item.get("id") if item.get("id") is not None else item.get("room_id")
+                if rid is not None:
+                    result.append(str(rid).strip())
+            elif isinstance(item, (list, tuple)):
+                result.extend(_parse_room_ids(item))
+            elif item is not None:
+                s = str(item).strip().strip("'\"")
+                if s:
+                    result.append(s)
+        return result
+    return [str(raw).strip()]
+
+
+def _parse_zones(raw: Any) -> list[list[float]]:
+    """Normalize zone inputs (nested list, flat 4-tuple, JSON string, dict) into list of [x1, y1, x2, y2]."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        trimmed = raw.strip()
+        if not trimmed:
+            return []
+        try:
+            parsed = json.loads(trimmed)
+            return _parse_zones(parsed)
+        except Exception:
+            return []
+    if isinstance(raw, (list, tuple)):
+        if not raw:
+            return []
+        if len(raw) == 4 and all(isinstance(c, (int, float)) for c in raw):
+            return [[float(c) for c in raw]]
+        zones: list[list[float]] = []
+        for item in raw:
+            if isinstance(item, (list, tuple)) and len(item) >= 4:
+                try:
+                    zones.append([float(item[0]), float(item[1]), float(item[2]), float(item[3])])
+                except (ValueError, TypeError):
+                    pass
+            elif isinstance(item, dict):
+                x1 = item.get("x1", item.get("x_min", item.get("p1_x")))
+                y1 = item.get("y1", item.get("y_min", item.get("p1_y")))
+                x2 = item.get("x2", item.get("x_max", item.get("p2_x")))
+                y2 = item.get("y2", item.get("y_max", item.get("p2_y")))
+                if None not in (x1, y1, x2, y2):
+                    try:
+                        zones.append([float(x1), float(y1), float(x2), float(y2)])
+                    except (ValueError, TypeError):
+                        pass
+        return zones
+    return []
+
+
 def _register_services(hass: HomeAssistant) -> None:
     """Register custom vacuum services in Home Assistant."""
     if hass.services.has_service(DOMAIN, SERVICE_CLEAN_ROOMS):
         return
 
     def _targets(call: ServiceCall) -> list[tuple[BotslabVacuumCoordinator, Any]]:
-        """Resolve a service call to the devices it should affect.
+        """Resolve a service call to the devices it should affect."""
+        raw_entity_ids = (
+            call.data.get(ATTR_ENTITY_ID)
+            or call.data.get("entity_ids")
+            or call.data.get("entity")
+            or []
+        )
+        if isinstance(raw_entity_ids, str):
+            entity_ids = [e.strip() for e in raw_entity_ids.split(",") if e.strip()]
+        elif isinstance(raw_entity_ids, (list, tuple, set)):
+            entity_ids = [str(e).strip() for e in raw_entity_ids if e]
+        else:
+            entity_ids = []
 
-        ``entity_id`` carries real Home Assistant entity ids, which is what
-        dashboard map cards and the UI send. They cannot be compared against a
-        device serial directly: Home Assistant derives an entity id from the
-        entity and device names, so ``vacuum.<serial>_vacuum`` does not exist.
-        Each id is walked back through the entity and device registries to the
-        serial the coordinator stores its data under.
+        all_vacuums: list[tuple[BotslabVacuumCoordinator, Any]] = []
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
+            if runtime and runtime.coordinator and runtime.coordinator.data:
+                for dev in runtime.coordinator.data.values():
+                    all_vacuums.append((runtime.coordinator, dev))
 
-        A call without a target is only accepted from the UI, where Home
-        Assistant fills in the selected entity; scripted calls must name a
-        target explicitly so a command never fans out to every robot on every
-        account by accident.
-        """
-        entity_ids = call.data.get(ATTR_ENTITY_ID) or []
         if not entity_ids:
-            _LOGGER.warning(
-                "%s was called without a target entity, so it was ignored. "
-                "Pass entity_id to choose which robot should run the command.",
+            if len(all_vacuums) == 1:
+                _LOGGER.info(
+                    "No entity_id passed for %s, defaulting to sole vacuum %s",
+                    call.service,
+                    all_vacuums[0][1].device_title,
+                )
+                return all_vacuums
+            _LOGGER.error(
+                "%s called without a target entity_id and %d vacuums are loaded. "
+                "Specify entity_id to choose which robot to command.",
                 call.service,
+                len(all_vacuums),
             )
-            return []
+            raise ServiceValidationError(
+                f"{call.service} requires an entity_id parameter when multiple robots exist"
+            )
 
         entities = er.async_get(hass)
         devices = dr.async_get(hass)
 
         selected: list[tuple[BotslabVacuumCoordinator, Any]] = []
         unknown: list[str] = []
-        for entity_id in entity_ids:
-            registry_entry = entities.async_get(entity_id)
-            device_entry = (
-                devices.async_get(registry_entry.device_id)
-                if registry_entry and registry_entry.device_id
-                else None
-            )
-            serial = next(
-                (
-                    identifier
-                    for domain, identifier in (device_entry.identifiers if device_entry else ())
-                    if domain == DOMAIN
-                ),
-                None,
-            )
-            entry = (
-                hass.config_entries.async_get_entry(registry_entry.config_entry_id)
-                if registry_entry
-                else None
-            )
-            runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
-            device = runtime.coordinator.data.get(serial) if runtime and serial else None
 
-            if runtime is None or device is None:
+        for entity_id in entity_ids:
+            matched = False
+            registry_entry = entities.async_get(entity_id)
+            if registry_entry and registry_entry.device_id:
+                device_entry = devices.async_get(registry_entry.device_id)
+                serial = next(
+                    (
+                        identifier
+                        for domain, identifier in (device_entry.identifiers if device_entry else ())
+                        if domain == DOMAIN
+                    ),
+                    None,
+                )
+                entry = hass.config_entries.async_get_entry(registry_entry.config_entry_id)
+                runtime = getattr(entry, "runtime_data", None)
+                device = runtime.coordinator.data.get(serial) if runtime and serial else None
+                if runtime and device:
+                    selected.append((runtime.coordinator, device))
+                    matched = True
+
+            if not matched:
+                low_id = entity_id.lower()
+                for coord, dev in all_vacuums:
+                    sn = dev.device_name.lower()
+                    title = dev.device_title.lower()
+                    if (
+                        entity_id == dev.device_name
+                        or low_id == sn
+                        or low_id == title
+                        or low_id.endswith(sn)
+                        or sn in low_id
+                    ):
+                        selected.append((coord, dev))
+                        matched = True
+                        break
+
+            if not matched:
                 unknown.append(entity_id)
-                continue
-            selected.append((runtime.coordinator, device))
 
         if unknown:
-            _LOGGER.warning(
-                "%s called for unknown or offline entity id(s): %s",
+            _LOGGER.error(
+                "%s failed: could not resolve target entity/device: %s",
                 call.service,
                 ", ".join(unknown),
             )
+            raise ServiceValidationError(
+                f"Unknown or offline target entity for {call.service}: {', '.join(unknown)}"
+            )
+
         return selected
 
     async def handle_clean_rooms(call: ServiceCall) -> None:
-        room_ids = call.data.get(ATTR_ROOM_IDS)
+        raw_rooms = (
+            call.data.get(ATTR_ROOM_IDS)
+            or call.data.get("room_id")
+            or call.data.get("rooms")
+            or call.data.get("selection")
+        )
         room_names = call.data.get(ATTR_ROOM_NAMES)
-        repeat = call.data.get(ATTR_REPEAT_TIMES, 1)
+        repeat = call.data.get(ATTR_REPEAT_TIMES) or call.data.get("repeats") or 1
+        try:
+            repeat = int(repeat)
+        except (ValueError, TypeError):
+            repeat = 1
         speed = call.data.get(ATTR_FAN_SPEED)
         water = call.data.get(ATTR_WATER_LEVEL)
 
+        room_ids = _parse_room_ids(raw_rooms)
         wanted_names = [n.strip().lower() for n in (room_names or []) if n and n.strip()]
+
         if not room_ids and not wanted_names:
             raise ServiceValidationError("clean_rooms called without room IDs or room names")
 
-        for coordinator, dev in _targets(call):
-            target_ids = list(room_ids or [])
+        targets = _targets(call)
+        for coordinator, dev in targets:
+            target_ids = list(room_ids)
             if wanted_names:
                 name_map = {r.name.lower(): r.room_id for r in dev.rooms}
                 missing = [n for n in wanted_names if n not in name_map]
@@ -365,6 +486,15 @@ def _register_services(hass: HomeAssistant) -> None:
             if not target_ids:
                 continue
 
+            _LOGGER.info(
+                "handle_clean_rooms dispatching to %s (%s): rooms=%s, repeats=%d, speed=%s, water=%s",
+                dev.device_title,
+                dev.device_name,
+                target_ids,
+                repeat,
+                speed,
+                water,
+            )
             await coordinator.api.clean_rooms(
                 sn=dev.device_name,
                 product_key=dev.product_key,
@@ -376,15 +506,35 @@ def _register_services(hass: HomeAssistant) -> None:
             await coordinator.async_request_refresh()
 
     async def handle_clean_zone(call: ServiceCall) -> None:
-        zones = call.data.get(ATTR_ZONES, [])
-        repeat = call.data.get(ATTR_REPEAT_TIMES, 1)
+        raw_zones = (
+            call.data.get(ATTR_ZONES)
+            or call.data.get("zone")
+            or call.data.get("selection")
+            or []
+        )
+        zones = _parse_zones(raw_zones)
+        repeat = call.data.get(ATTR_REPEAT_TIMES) or call.data.get("repeats") or 1
+        try:
+            repeat = int(repeat)
+        except (ValueError, TypeError):
+            repeat = 1
         speed = call.data.get(ATTR_FAN_SPEED)
         water = call.data.get(ATTR_WATER_LEVEL)
 
         if not zones:
-            raise ServiceValidationError("clean_zone called without zones")
+            raise ServiceValidationError(f"clean_zone called without valid zones: {raw_zones}")
 
-        for coordinator, dev in _targets(call):
+        targets = _targets(call)
+        for coordinator, dev in targets:
+            _LOGGER.info(
+                "handle_clean_zone dispatching to %s (%s): zones=%s, repeats=%d, speed=%s, water=%s",
+                dev.device_title,
+                dev.device_name,
+                zones,
+                repeat,
+                speed,
+                water,
+            )
             await coordinator.api.clean_zone(
                 sn=dev.device_name,
                 product_key=dev.product_key,
@@ -416,9 +566,23 @@ def _register_services(hass: HomeAssistant) -> None:
             await coordinator.api.start_map_sync(dev.device_name, dev.product_key, 60)
 
     async def handle_goto_location(call: ServiceCall) -> None:
-        x = int(call.data[ATTR_X])
-        y = int(call.data[ATTR_Y])
-        for coordinator, dev in _targets(call):
+        raw_x = call.data.get(ATTR_X) or call.data.get("point_x") or 0
+        raw_y = call.data.get(ATTR_Y) or call.data.get("point_y") or 0
+        try:
+            x = int(round(float(raw_x)))
+            y = int(round(float(raw_y)))
+        except (ValueError, TypeError):
+            raise ServiceValidationError(f"Invalid x/y coordinates: x={raw_x}, y={raw_y}")
+
+        targets = _targets(call)
+        for coordinator, dev in targets:
+            _LOGGER.info(
+                "handle_goto_location dispatching to %s (%s): (%d, %d)",
+                dev.device_title,
+                dev.device_name,
+                x,
+                y,
+            )
             await coordinator.api.goto_target(dev.device_name, dev.product_key, x, y)
             await coordinator.async_request_refresh()
 
@@ -536,12 +700,13 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
-                vol.Optional(ATTR_ROOM_IDS): vol.All(cv.ensure_list, [cv.string]),
+                vol.Optional(ATTR_ROOM_IDS): cv.ensure_list,
                 vol.Optional(ATTR_ROOM_NAMES): vol.All(cv.ensure_list, [cv.string]),
-                vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+                vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.Coerce(int),
                 vol.Optional(ATTR_FAN_SPEED): cv.string,
                 vol.Optional(ATTR_WATER_LEVEL): cv.string,
-            }
+            },
+            extra=vol.ALLOW_EXTRA,
         ),
     )
 
@@ -552,17 +717,12 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
-                vol.Required(ATTR_ZONES): vol.All(
-                    cv.ensure_list,
-                    # Each zone is an (x1, y1, x2, y2) rectangle. Coercing the
-                    # whole list to float would reject every valid zone, so the
-                    # coercion belongs on the individual coordinates.
-                    [vol.ExactSequence((vol.Coerce(float),) * 4)],
-                ),
-                vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+                vol.Optional(ATTR_ZONES): cv.ensure_list,
+                vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.Coerce(int),
                 vol.Optional(ATTR_FAN_SPEED): cv.string,
                 vol.Optional(ATTR_WATER_LEVEL): cv.string,
-            }
+            },
+            extra=vol.ALLOW_EXTRA,
         ),
     )
 
@@ -605,9 +765,10 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
-                vol.Required(ATTR_X): vol.Coerce(int),
-                vol.Required(ATTR_Y): vol.Coerce(int),
-            }
+                vol.Optional(ATTR_X): vol.Coerce(float),
+                vol.Optional(ATTR_Y): vol.Coerce(float),
+            },
+            extra=vol.ALLOW_EXTRA,
         ),
     )
 

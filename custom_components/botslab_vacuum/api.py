@@ -1252,13 +1252,98 @@ class BotslabVacuumApi:
 
         sa = map_json.get("smartArea") or {}
         room_list = copy.deepcopy(sa.get("value", []))
-        int_room_ids = [int(r) for r in room_ids if str(r).isdigit()]
+        if not room_list:
+            room_list = copy.deepcopy(map_json.get("value", []))
+
+        int_room_ids: list[int] = []
+        str_room_ids: set[str] = set()
+        for r in room_ids:
+            s = str(r).strip()
+            if s:
+                str_room_ids.add(s)
+                try:
+                    int_room_ids.append(int(s))
+                except (ValueError, TypeError):
+                    pass
+
+        if not int_room_ids and not str_room_ids:
+            raise BotslabApiError(f"No valid room IDs found in input: {room_ids}")
+
+        _LOGGER.info(
+            "Starting clean_rooms on %s (map_id=%s, target_rooms=%s, repeats=%d, speed=%s, water=%s)",
+            sn,
+            map_id,
+            int_room_ids,
+            repeat_times,
+            fan_speed,
+            water_level,
+        )
 
         for r in room_list:
-            if r.get("id") in int_room_ids:
+            rid = r.get("id")
+            if rid in int_room_ids or str(rid) in str_room_ids:
                 r["cleanTimes"] = repeat_times
                 if water_level and water_level in WATER_LEVEL_TO_INT:
                     r["waterPump"] = WATER_LEVEL_TO_INT[water_level]
+
+        # 1. Invoke SetCleanPolicyList first (as required by Botslab / 360 protocol)
+        policy = {
+            "value": [
+                {
+                    "workNoisy": "auto",
+                    "active": False,
+                    "unlock": False,
+                    "period": [],
+                    "smartAreaIds": int_room_ids,
+                    "cleanWater": None,
+                    "index": None,
+                    "cleanWorkType": None,
+                    "cleanTimeType": None,
+                    "cleanTimeTypeCustomStr": None,
+                    "strWorkMode": None,
+                    "strSweepType": None,
+                    "cleaningPreference": None,
+                    "hour": None,
+                    "minute": None,
+                    "endHour": None,
+                    "endMinute": None,
+                    "isMorning": None,
+                    "isNotDisturb": None,
+                    "isTomorrow": None,
+                    "isSelectCleanTime": None,
+                    "cleanMode": 0,
+                    "priority": 1,
+                    "orderClean": True,
+                    "endTime": 28800,
+                    "mapId": map_id,
+                    "cleanAreas": [],
+                    "activeIdAttr": None,
+                    "cleanTimes": repeat_times,
+                    "startTime": 79200,
+                    "alternateStartTime": 79200,
+                    "isAttrOn": None,
+                    "msgID": None,
+                }
+            ],
+            "timeZone": 3.0,
+            "appendMode": False,
+        }
+
+        try:
+            _LOGGER.debug("Sending SetCleanPolicyList for %s: %s", sn, int_room_ids)
+            res_pol = await self.invoke_async(
+                sn,
+                product_key,
+                "SetCleanPolicyList",
+                {"CleanPolicyList": json.dumps(policy, separators=(",", ":"))},
+            )
+            req_id_pol = res_pol.get("data", {}).get("request_id")
+            if req_id_pol:
+                await self.wait_async_reply(req_id_pol, timeout=5)
+        except Exception as pol_err:
+            _LOGGER.warning("SetCleanPolicyList error for %s: %s", sn, pol_err)
+
+        await asyncio.sleep(1)
 
         sweep_payload = {
             "mapId": map_id,
@@ -1279,6 +1364,7 @@ class BotslabVacuumApi:
             if not uploaded_url:
                 raise BotslabApiError("Cannot clean rooms: OSS upload failed")
 
+            _LOGGER.debug("Sending StartCleanInAreas for %s with map %s, url: %s", sn, map_id, uploaded_url)
             res = await self.invoke_async(
                 sn,
                 product_key,
@@ -1291,7 +1377,9 @@ class BotslabVacuumApi:
             )
             req_id = res.get("data", {}).get("request_id")
             if req_id:
-                await self.wait_async_reply(req_id, timeout=5)
+                reply_ok = await self.wait_async_reply(req_id, timeout=5)
+                _LOGGER.debug("StartCleanInAreas reply for %s: ok=%s", sn, reply_ok)
+            _LOGGER.info("Room cleaning started successfully on %s for rooms %s", sn, int_room_ids)
         except Exception as err:
             _LOGGER.warning(
                 "Native StartCleanInAreas failed for %s (%s). Attempting room_cover_rects fallback...",
@@ -1299,8 +1387,9 @@ class BotslabVacuumApi:
                 err,
             )
             fallback_zones: list[list[float]] = []
-            for r in sa.get("value", []):
-                if r.get("id") in int_room_ids and r.get("vertexs"):
+            for r in room_list:
+                rid = r.get("id")
+                if (rid in int_room_ids or str(rid) in str_room_ids) and r.get("vertexs"):
                     rects = room_cover_rects(r["vertexs"], cell=100, max_rects=6)
                     for rect in rects:
                         fallback_zones.append([float(c) for c in rect])
