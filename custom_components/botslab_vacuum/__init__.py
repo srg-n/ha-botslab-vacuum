@@ -153,6 +153,9 @@ async def _run_due_routines(
             _LOGGER.warning("Botslab routine run failed: %s", err)
 
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Botslab Vacuum domain.
 
