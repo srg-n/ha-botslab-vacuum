@@ -124,36 +124,27 @@ async def _async_generate_map_card(
         message = (
             f"Kontrol paneli kartı **{device.device_title}** (Legacy 360 / S6) için oluşturuldu.\n\n"
             f"Kayıt konumu: `{MAP_CARD_FILENAME}` (Home Assistant yapılandırma klasörü).\n\n"
-            "ℹ️ **Model Bilgisi**: Bu model eski 360 bulut protokolü (q.smart.360.cn) kullandığından, "
-            "oda ayrıştırma yerine doğrudan standart kontrol butonları, son harita ve bakım paneli hazırlanmıştır.\n\n"
-            "⚠️ **Kurulum / Installation**:\n"
-            "Panoyu Düzenle ➔ **+ Kart Ekle** ➔ **Manuel** (en altta) alanına yapıştırın. "
-            "(Tüm panonun 'Ham Yapılandırma Düzenleyicisi' içine yapıştırmayın)."
+            "📋 **Kullanım**: Dosya yöneticisine gerek olmadan, aşağıdaki kodu kopyalayıp panonuzda **+ Kart Ekle ➔ Manuel** (en altta) alanına yapıştırın:\n\n"
+            f"```yaml\n{snippet}\n```"
         )
     else:
         if not room_count:
             hint = (
-                "Map support is currently disabled in the integration options. "
-                "Enable **Enable live map** for this robot, then press this "
-                "button again.\n\n"
+                "Harita desteği eklenti ayarlarında kapalı olabilir. Ayarlardan **Canlı haritayı etkinleştir** seçeneğini açıp tekrar deneyin.\n\n"
                 if not coordinator.enable_map
-                else "Press **Sync Map** on the robot first so it uploads its "
-                "floor plan to the cloud, then press this button again.\n\n"
+                else "Robot henüz buluta kat planını yüklememiş olabilir. Önce robota **Sync Map** yapıp tekrar deneyin.\n\n"
             )
             message = (
-                f"No room geometry available yet. {hint}"
-                f"Config file: {path if path else '(could not be written)'}"
+                f"Henüz oda geometrisi bulunamadı. {hint}"
+                "📋 Yine de temel kontrol ve bakım kartını kullanmak için aşağıdaki kodu panonuza yapıştırabilirsiniz:\n\n"
+                f"```yaml\n{snippet}\n```"
             )
         else:
             message = (
-                f"Map card generated for **{device.device_title}** "
-                f"({room_count} rooms).\n\n"
-                f"Saved to `{MAP_CARD_FILENAME}` in your Home Assistant config directory.\n\n"
-                "⚠️ **Kurulum / Installation**:\n"
-                "Panoyu Düzenle ➔ **+ Kart Ekle** ➔ **Manuel** (en altta) alanına yapıştırın. "
-                "(Tüm panonun 'Ham Yapılandırma Düzenleyicisi' içine yapıştırmayın).\n\n"
-                "Paste into **+ Add Card ➔ Manual** in your dashboard (do not paste into dashboard raw configuration editor).\n\n"
-                "Requires the *xiaomi-vacuum-map-card* frontend card."
+                f"Harita kartı **{device.device_title}** ({room_count} oda) için başarıyla oluşturuldu.\n\n"
+                f"Kayıt konumu: `{MAP_CARD_FILENAME}` (Home Assistant yapılandırma klasörü).\n\n"
+                "📋 **Hemen Kullanın**: Dosya yöneticisine gerek olmadan, aşağıdaki kodu kopyalayıp panonuzda **+ Kart Ekle ➔ Manuel** (en altta) alanına yapıştırın:\n\n"
+                f"```yaml\n{snippet}\n```"
             )
 
     persistent_notification.async_create(
