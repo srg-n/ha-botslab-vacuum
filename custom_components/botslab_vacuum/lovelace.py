@@ -224,10 +224,116 @@ def build_maintenance_card(
     return "\n".join(lines)
 
 
-def build_full_dashboard_snippet(
+def build_legacy_dashboard_card(
     device: BotslabVacuumDevice, entity_ids: Mapping[str, str]
 ) -> str:
-    """Return both cards with a document separator between them."""
+    """Return a native Home Assistant dashboard configuration for legacy 360 models (S6, etc.)."""
+    vacuum_id = entity_ids.get("vacuum", "vacuum.botslab_vacuum")
+    camera_id = entity_ids.get("camera")
+    battery_id = entity_ids.get("battery")
+
+    battery_line = f"\n      - entity: {battery_id}\n        name: {_yaml_str('Pil Seviyesi')}" if battery_id else ""
+
+    camera_block = ""
+    if camera_id:
+        camera_block = f"""
+  # Son Temizlik Haritası (Last Clean Map)
+  - type: picture-entity
+    title: {_yaml_str('Temizlik Haritası')}
+    entity: {camera_id}
+    camera_image: {camera_id}
+    show_state: false
+    show_name: false
+"""
+
+    maintenance_lines = [
+        "  # Sarf Malzemeleri ve Ayarlar (Maintenance)",
+        "  - type: entities",
+        f"    title: {_yaml_str('Sarf Malzemeleri ve Ayarlar')}",
+        "    show_header_toggle: false",
+        "    entities:",
+    ]
+    for key, _platform, _unique_suffix, label in MAINTENANCE_ROWS:
+        entity_id = entity_ids.get(key)
+        if not entity_id:
+            continue
+        maintenance_lines.append(f"      - entity: {entity_id}")
+        maintenance_lines.append(f"        name: {_yaml_str(label)}")
+    maintenance_block = "\n".join(maintenance_lines)
+
+    return f"""# ==============================================================================
+# 360 Legacy Vacuum ({device.device_title}) - Kontrol Paneli Yapılandırması
+#
+# ⚠️ ÖNEMLİ KURULUM TALİMATI (IMPORTANT INSTALLATION INSTRUCTION):
+# Bu kod TEK BİR KART yapılandırmasıdır. Panonun tamamının "Ham Yapılandırma
+# Düzenleyicisi" içine YAPIŞTIRMAYIN.
+# Panolar -> Düzenle -> + Kart Ekle -> Manuel (en altta) alanına yapıştırın.
+#
+# ℹ️ MODEL BİLGİSİ (LEGACY 360):
+# Robotunuz eski nesil Qihoo 360 protokolü (q.smart.360.cn) ile çalışmaktadır.
+# Bu modellerde bulut tabanlı oda ayrıştırma (OSS) bulunmadığından, harici HACS
+# kartı gerektirmeyen standart, kararlı ve hızlı Home Assistant kontrol paneli
+# hazırlanmıştır.
+# ==============================================================================
+
+type: vertical-stack
+title: {_yaml_str(device.device_title)}
+cards:
+  # Robot Durumu ve Pil
+  - type: entities
+    show_header_toggle: false
+    entities:
+      - entity: {vacuum_id}
+        name: {_yaml_str('Robot Durumu')}{battery_line}
+
+  # Temel Kontrol Butonları
+  - type: horizontal-stack
+    cards:
+      - type: button
+        name: Başlat
+        icon: mdi:play
+        tap_action:
+          action: call-service
+          service: vacuum.start
+          target:
+            entity_id: {vacuum_id}
+      - type: button
+        name: Duraklat
+        icon: mdi:pause
+        tap_action:
+          action: call-service
+          service: vacuum.pause
+          target:
+            entity_id: {vacuum_id}
+      - type: button
+        name: Şarja Dön
+        icon: mdi:home-map-marker
+        tap_action:
+          action: call-service
+          service: vacuum.return_to_base
+          target:
+            entity_id: {vacuum_id}
+      - type: button
+        name: Durdur
+        icon: mdi:stop
+        tap_action:
+          action: call-service
+          service: vacuum.stop
+          target:
+            entity_id: {vacuum_id}
+{camera_block}
+{maintenance_block}
+"""
+
+
+def build_full_dashboard_snippet(
+    device: BotslabVacuumDevice,
+    entity_ids: Mapping[str, str],
+    is_legacy: bool = False,
+) -> str:
+    """Return complete dashboard snippet, tailored for modern or legacy 360 robots."""
+    if is_legacy:
+        return build_legacy_dashboard_card(device, entity_ids)
     return (
         f"{build_map_card(device, entity_ids)}\n---\n"
         f"{build_maintenance_card(device, entity_ids)}\n"

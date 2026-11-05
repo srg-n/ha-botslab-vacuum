@@ -32,6 +32,7 @@ MAP_CARD_FILENAME = "botslab_map_card.yaml"
 CARD_ENTITIES: tuple[tuple[str, str, str], ...] = (
     ("vacuum", "vacuum", "vacuum"),
     ("camera", "camera", "map_camera"),
+    ("battery", "sensor", "battery"),
     *((key, platform, suffix) for key, platform, suffix, _ in MAINTENANCE_ROWS),
 )
 
@@ -80,25 +81,36 @@ async def _async_generate_map_card(
 
     device = coordinator.data.get(device.device_name) if coordinator.data else device
     entity_ids = _resolve_card_entity_ids(hass, device)
+    is_legacy = bool(coordinator.api.is_legacy_360)
 
-    # A card without both of these cannot work, and they are absent when the
-    # map is disabled and the camera entity was never created.
-    missing = [name for name in ("vacuum", "camera") if name not in entity_ids]
-    if missing:
-        persistent_notification.async_create(
-            hass,
-            message=(
-                f"No {', '.join(missing)} entity is registered for "
-                f"{device.device_title}, so the card could not be generated. "
-                "Check that the robot is loaded and that **Enable live map** is on "
-                "in the integration options."
-            ),
-            title="Botslab map card",
-            notification_id=f"botslab_map_card_error_{device.device_name}",
-        )
-        return
+    # A card without both of these cannot work for modern robots, and they are absent when the
+    # map is disabled and the camera entity was never created. For legacy 360, vacuum entity is sufficient.
+    if is_legacy:
+        if "vacuum" not in entity_ids:
+            persistent_notification.async_create(
+                hass,
+                message=f"No vacuum entity is registered for {device.device_title}.",
+                title="Botslab dashboard card",
+                notification_id=f"botslab_map_card_error_{device.device_name}",
+            )
+            return
+    else:
+        missing = [name for name in ("vacuum", "camera") if name not in entity_ids]
+        if missing:
+            persistent_notification.async_create(
+                hass,
+                message=(
+                    f"No {', '.join(missing)} entity is registered for "
+                    f"{device.device_title}, so the card could not be generated. "
+                    "Check that the robot is loaded and that **Enable live map** is on "
+                    "in the integration options."
+                ),
+                title="Botslab map card",
+                notification_id=f"botslab_map_card_error_{device.device_name}",
+            )
+            return
 
-    snippet = build_full_dashboard_snippet(device, entity_ids)
+    snippet = build_full_dashboard_snippet(device, entity_ids, is_legacy=is_legacy)
 
     try:
         path = Path(hass.config.path(MAP_CARD_FILENAME))
@@ -107,31 +119,42 @@ async def _async_generate_map_card(
         _LOGGER.warning("Could not write %s: %s", MAP_CARD_FILENAME, err)
         path = None
 
-    room_count = len([r for r in device.rooms if len(r.outline) >= 3])
-    if not room_count:
-        hint = (
-            "Map support is currently disabled in the integration options. "
-            "Enable **Enable live map** for this robot, then press this "
-            "button again.\n\n"
-            if not coordinator.enable_map
-            else "Press **Sync Map** on the robot first so it uploads its "
-            "floor plan to the cloud, then press this button again.\n\n"
-        )
+    if is_legacy:
         message = (
-            f"No room geometry available yet. {hint}"
-            f"Config file: {path if path else '(could not be written)'}"
-        )
-    else:
-        message = (
-            f"Map card generated for **{device.device_title}** "
-            f"({room_count} rooms).\n\n"
-            f"Saved to `{MAP_CARD_FILENAME}` in your Home Assistant config directory.\n\n"
+            f"Kontrol paneli kartı **{device.device_title}** (Legacy 360 / S6) için oluşturuldu.\n\n"
+            f"Kayıt konumu: `{MAP_CARD_FILENAME}` (Home Assistant yapılandırma klasörü).\n\n"
+            "ℹ️ **Model Bilgisi**: Bu model eski 360 bulut protokolü (q.smart.360.cn) kullandığından, "
+            "oda ayrıştırma yerine doğrudan standart kontrol butonları, son harita ve bakım paneli hazırlanmıştır.\n\n"
             "⚠️ **Kurulum / Installation**:\n"
             "Panoyu Düzenle ➔ **+ Kart Ekle** ➔ **Manuel** (en altta) alanına yapıştırın. "
-            "(Tüm panonun 'Ham Yapılandırma Düzenleyicisi' içine yapıştırmayın).\n\n"
-            "Paste into **+ Add Card ➔ Manual** in your dashboard (do not paste into dashboard raw configuration editor).\n\n"
-            "Requires the *xiaomi-vacuum-map-card* frontend card."
+            "(Tüm panonun 'Ham Yapılandırma Düzenleyicisi' içine yapıştırmayın)."
         )
+    else:
+        room_count = len([r for r in device.rooms if len(r.outline) >= 3])
+        if not room_count:
+            hint = (
+                "Map support is currently disabled in the integration options. "
+                "Enable **Enable live map** for this robot, then press this "
+                "button again.\n\n"
+                if not coordinator.enable_map
+                else "Press **Sync Map** on the robot first so it uploads its "
+                "floor plan to the cloud, then press this button again.\n\n"
+            )
+            message = (
+                f"No room geometry available yet. {hint}"
+                f"Config file: {path if path else '(could not be written)'}"
+            )
+        else:
+            message = (
+                f"Map card generated for **{device.device_title}** "
+                f"({room_count} rooms).\n\n"
+                f"Saved to `{MAP_CARD_FILENAME}` in your Home Assistant config directory.\n\n"
+                "⚠️ **Kurulum / Installation**:\n"
+                "Panoyu Düzenle ➔ **+ Kart Ekle** ➔ **Manuel** (en altta) alanına yapıştırın. "
+                "(Tüm panonun 'Ham Yapılandırma Düzenleyicisi' içine yapıştırmayın).\n\n"
+                "Paste into **+ Add Card ➔ Manual** in your dashboard (do not paste into dashboard raw configuration editor).\n\n"
+                "Requires the *xiaomi-vacuum-map-card* frontend card."
+            )
 
     persistent_notification.async_create(
         hass,
