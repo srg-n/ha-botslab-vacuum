@@ -112,11 +112,11 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             "side_brush_life_pct": dev.consumables.side_brush_life_pct,
             "sensor_life_pct": dev.consumables.sensor_clean_pct,
             # Aliases used by third-party dashboard cards (xiaomi-vacuum-map-card
-            # and friends) which expect Roborock-style consumable keys.
-            "filter_left": dev.consumables.filter_life_pct,
-            "main_brush_left": dev.consumables.main_brush_life_pct,
-            "side_brush_left": dev.consumables.side_brush_life_pct,
-            "sensor_dirty_left": dev.consumables.sensor_clean_pct,
+            # and friends) which expect Roborock-style consumable keys (in hours).
+            "filter_left": dev.consumables.filter_left_hours,
+            "main_brush_left": dev.consumables.main_brush_left_hours,
+            "side_brush_left": dev.consumables.side_brush_left_hours,
+            "sensor_dirty_left": dev.consumables.sensor_left_hours,
             "cleaning_count": dev.tasks_total_count,
             "cleaning_time": dev.cleaning_time_minutes,
             "cleaning_area": dev.cleaned_area_sqm,

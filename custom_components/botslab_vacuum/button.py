@@ -125,9 +125,11 @@ async def _async_generate_map_card(
         message = (
             f"Map card generated for **{device.device_title}** "
             f"({room_count} rooms).\n\n"
-            f"Saved to `{MAP_CARD_FILENAME}` in your Home Assistant config "
-            "directory. Open your dashboard editor, add a **Manual** card and "
-            "paste the contents.\n\n"
+            f"Saved to `{MAP_CARD_FILENAME}` in your Home Assistant config directory.\n\n"
+            "⚠️ **Kurulum / Installation**:\n"
+            "Panoyu Düzenle ➔ **+ Kart Ekle** ➔ **Manuel** (en altta) alanına yapıştırın. "
+            "(Tüm panonun 'Ham Yapılandırma Düzenleyicisi' içine yapıştırmayın).\n\n"
+            "Paste into **+ Add Card ➔ Manual** in your dashboard (do not paste into dashboard raw configuration editor).\n\n"
             "Requires the *xiaomi-vacuum-map-card* frontend card."
         )
 

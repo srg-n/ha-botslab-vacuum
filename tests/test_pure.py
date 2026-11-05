@@ -258,7 +258,7 @@ def test_generated_card_handles_empty_rooms():
 
 
 def test_awkward_room_names_survive():
-    """Names with quotes and newlines are quoted safely."""
+    """Room selection is generated with valid id and outline."""
     import yaml
 
     device = _device(0)
@@ -273,7 +273,8 @@ def test_awkward_room_names_survive():
     selections = next(
         m for m in config["map_modes"] if m["selection_type"] == "ROOM"
     )["predefined_selections"]
-    assert selections[0]["label"]["text"] == 'Mutfak: "sol" #1\n2'
+    assert selections[0]["id"] == "0"
+    assert len(selections[0]["outline"]) == 3
 
 
 def test_snippet_has_two_documents():
@@ -697,6 +698,66 @@ async def test_generate_map_card_persistent_notification_signature():
                 mock_pn.assert_called_once()
                 args, kwargs = mock_pn.call_args
                 assert args[0] is hass  # First positional argument MUST be hass!
+
+
+def test_parse_consumable_lifetime():
+    """Verify raw seconds from robot are correctly converted to hours and percentages."""
+    from custom_components.botslab_vacuum.coordinator import (
+        FILTER_MAX_HOURS,
+        MAIN_BRUSH_MAX_HOURS,
+        SENSOR_MAX_HOURS,
+        SIDE_BRUSH_MAX_HOURS,
+        _parse_consumable_lifetime,
+    )
+
+    # 469736 seconds for filter (150 h max)
+    pct, hrs = _parse_consumable_lifetime(469736, FILTER_MAX_HOURS)
+    assert hrs == 130.5
+    assert pct == 87
+
+    # 651935 seconds for main brush (300 h max)
+    pct, hrs = _parse_consumable_lifetime(651935, MAIN_BRUSH_MAX_HOURS)
+    assert hrs == 181.1
+    assert pct == 60
+
+    # 90718 seconds for sensors (30 h max)
+    pct, hrs = _parse_consumable_lifetime(90718, SENSOR_MAX_HOURS)
+    assert hrs == 25.2
+    assert pct == 84
+
+    # 500000 seconds for side brush (200 h max)
+    pct, hrs = _parse_consumable_lifetime(500000, SIDE_BRUSH_MAX_HOURS)
+    assert hrs == 138.9
+    assert pct == 69
+
+    # Fresh 100% replacement
+    pct, hrs = _parse_consumable_lifetime(100, FILTER_MAX_HOURS)
+    assert pct == 100
+    assert hrs == 150.0
+
+    # 0% expired
+    pct, hrs = _parse_consumable_lifetime(0, FILTER_MAX_HOURS)
+    assert pct == 0
+    assert hrs == 0.0
+
+
+def test_map_card_service_call_schema():
+    """Verify generated map card includes both service and action, service_data and data."""
+    import yaml
+    from custom_components.botslab_vacuum.lovelace import build_map_card
+
+    card_yaml = build_map_card(_device(2), _ids())
+    config = yaml.safe_load(card_yaml)
+
+    for mode in config["map_modes"]:
+        schema = mode["service_call_schema"]
+        assert "service" in schema
+        assert "action" in schema
+        assert schema["service"] == schema["action"]
+        assert "service_data" in schema
+        assert "data" in schema
+        assert schema["service_data"] == schema["data"]
+
 
 
 

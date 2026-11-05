@@ -60,9 +60,11 @@ def _drawable_rooms(device: BotslabVacuumDevice) -> list[Any]:
 def build_predefined_selections(device: BotslabVacuumDevice, indent: str = "      ") -> str:
     """Render the ``predefined_selections`` block for a robot's rooms.
 
-    Outline and label coordinates are robot-space millimetres. Dashboard map
-    cards only use them to draw the room shape; the vacuum is always addressed
-    by room id, so these values never leave the dashboard.
+    Outline coordinates are robot-space millimetres. Dashboard map cards use
+    them to draw the clickable room outline; the vacuum is always addressed
+    by room id. Room labels and icons are already drawn dynamically on the
+    camera map image, so omitting separate label/icon blocks keeps full compatibility
+    with xiaomi-vacuum-map-card schema validators.
     """
     rooms = _drawable_rooms(device)
     if not rooms:
@@ -70,17 +72,7 @@ def build_predefined_selections(device: BotslabVacuumDevice, indent: str = "    
 
     lines: list[str] = []
     for room in rooms:
-        cx, cy = room.centroid
         lines.append(f"{indent}- id: {_yaml_str(room.room_id)}")
-        lines.append(f"{indent}  label:")
-        lines.append(f"{indent}    text: {_yaml_str(room.name)}")
-        lines.append(f"{indent}    x: {cx}")
-        lines.append(f"{indent}    y: {cy}")
-        lines.append(f"{indent}    offset_y: 35")
-        lines.append(f"{indent}  icon:")
-        lines.append(f"{indent}    name: {_yaml_str('mdi:floor-plan')}")
-        lines.append(f"{indent}    x: {cx}")
-        lines.append(f"{indent}    y: {cy}")
         lines.append(f"{indent}  outline:")
         for point in room.outline:
             lines.append(f"{indent}    - {_flow_list(list(point))}")
@@ -105,16 +97,23 @@ def build_map_card(device: BotslabVacuumDevice, entity_ids: Mapping[str, str]) -
     selections = build_predefined_selections(device)
     predefined_block = f"\n{selections}" if selections else ""
 
-    return f"""# Botslab Vacuum map card - generated configuration
+    return f"""# ==============================================================================
+# Botslab Vacuum Map Card - Kart Yapılandırması (Card Configuration)
 #
-# Generated from the robot's own map, so room outlines and labels match your
-# floor plan. Rooms change whenever you edit them in the Botslab app: press
-# "Sync Map" then "Generate Map Card Config" to refresh this file.
+# ⚠️ ÖNEMLİ KURULUM TALİMATI (IMPORTANT INSTALLATION INSTRUCTION):
+# Bu kod TEK BİR KART yapılandırmasıdır. Panonun tamamının "Ham Yapılandırma
+# Düzenleyicisi" (Raw configuration editor) içine YAPIŞTIRMAYIN! Aksi takdirde
+# "At path: views -- Expected an array value" hatası alırsınız.
 #
-# 1. Home Assistant -> Settings -> Dashboards -> edit -> paste this YAML.
-# 2. Requires the "xiaomi-vacuum-map-card" frontend card to be installed.
+# DOĞRU KURULUM ADIMLARI (STEPS TO ADD):
+# 1. Home Assistant -> Panolar (Dashboards) -> Düzenle (Edit Dashboard)
+# 2. Sağ alttaki "+ Kart Ekle" (+ Add Card) butonuna basın
+# 3. Listenin en altına inip "Manuel" (Manual) kart türünü seçin
+# 4. Mevcut kutudaki örnek kodları silip bu dosyadaki tüm içeriği yapıştırın ve Kaydet'e basın.
+# (Gereksinim: HACS üzerinden 'xiaomi-vacuum-map-card' kartı kurulu olmalıdır).
 #
-# Rooms included: {room_count}
+# Tanımlı Oda Sayısı: {room_count}
+# ==============================================================================
 
 type: custom:xiaomi-vacuum-map-card
 title: Botslab Map
@@ -134,7 +133,12 @@ map_modes:
     max_repeats: 3
     service_call_schema:
       service: botslab_vacuum.clean_rooms
+      action: botslab_vacuum.clean_rooms
       service_data:
+        room_ids: "[[selection]]"
+        repeat_times: "[[repeats]]"
+        entity_id: "[[entity_id]]"
+      data:
         room_ids: "[[selection]]"
         repeat_times: "[[repeats]]"
         entity_id: "[[entity_id]]"
@@ -149,7 +153,12 @@ map_modes:
     max_repeats: 3
     service_call_schema:
       service: botslab_vacuum.clean_zone
+      action: botslab_vacuum.clean_zone
       service_data:
+        zones: "[[selection]]"
+        repeat_times: "[[repeats]]"
+        entity_id: "[[entity_id]]"
+      data:
         zones: "[[selection]]"
         repeat_times: "[[repeats]]"
         entity_id: "[[entity_id]]"
@@ -163,7 +172,12 @@ map_modes:
     max_repeats: 1
     service_call_schema:
       service: botslab_vacuum.goto_location
+      action: botslab_vacuum.goto_location
       service_data:
+        x: "[[point_x]]"
+        y: "[[point_y]]"
+        entity_id: "[[entity_id]]"
+      data:
         x: "[[point_x]]"
         y: "[[point_y]]"
         entity_id: "[[entity_id]]"
@@ -175,7 +189,12 @@ map_modes:
     max_selections: 10
     service_call_schema:
       service: botslab_vacuum.set_no_go_zones
+      action: botslab_vacuum.set_no_go_zones
       service_data:
+        zones: "[[selection]]"
+        mode: add
+        entity_id: "[[entity_id]]"
+      data:
         zones: "[[selection]]"
         mode: add
         entity_id: "[[entity_id]]"

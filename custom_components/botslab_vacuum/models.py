@@ -50,6 +50,10 @@ class BotslabConsumableStatus:
     main_brush_life_pct: int = 100
     side_brush_life_pct: int = 100
     sensor_clean_pct: int = 100
+    filter_left_hours: float = 150.0
+    main_brush_left_hours: float = 300.0
+    side_brush_left_hours: float = 200.0
+    sensor_left_hours: float = 30.0
     filter_used_hours: float = 0.0
     main_brush_used_hours: float = 0.0
     side_brush_used_hours: float = 0.0

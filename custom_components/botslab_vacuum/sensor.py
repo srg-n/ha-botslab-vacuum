@@ -184,6 +184,22 @@ class BotslabSensor(BotslabVacuumEntity, SensorEntity):
             return None
         return self.entity_description.value_fn(self.device)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return extra state attributes for consumables."""
+        if not self.device:
+            return None
+        c = self.device.consumables
+        if self.entity_description.key == "filter_life":
+            return {"remaining_hours": c.filter_left_hours, "used_hours": c.filter_used_hours}
+        if self.entity_description.key == "main_brush_life":
+            return {"remaining_hours": c.main_brush_left_hours, "used_hours": c.main_brush_used_hours}
+        if self.entity_description.key == "side_brush_life":
+            return {"remaining_hours": c.side_brush_left_hours, "used_hours": c.side_brush_used_hours}
+        if self.entity_description.key == "sensor_dirtiness":
+            return {"remaining_hours": c.sensor_left_hours, "used_hours": c.sensor_used_hours}
+        return None
+
 
 class BotslabSchedulesSensor(BotslabVacuumEntity, SensorEntity):
     """Exposes HA-driven cleaning routines for dashboard cards."""

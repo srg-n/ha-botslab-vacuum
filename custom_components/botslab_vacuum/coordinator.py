@@ -40,6 +40,42 @@ from .quc_login import BotslabAuthError, async_login
 
 _LOGGER = logging.getLogger(__name__)
 
+# Standard total lifespans in hours for vacuum robot consumables
+FILTER_MAX_HOURS = 150.0
+MAIN_BRUSH_MAX_HOURS = 300.0
+SIDE_BRUSH_MAX_HOURS = 200.0
+SENSOR_MAX_HOURS = 30.0
+
+
+def _parse_consumable_lifetime(raw_val: Any, max_hours: float) -> tuple[int, float]:
+    """Parse raw consumable value from robot into (life_pct, remaining_hours).
+
+    Botslab / 360 robots report remaining consumable lifetime in seconds (e.g. 469736).
+    If raw_val is in seconds (> 100):
+      remaining_hours = round(raw_seconds / 3600.0, 1)
+      life_pct = clamp(round((raw_seconds / (max_hours * 3600.0)) * 100), 0, 100)
+    If raw_val is already a percentage (<= 100):
+      life_pct = clamp(round(raw_val), 0, 100)
+      remaining_hours = round((life_pct / 100.0) * max_hours, 1)
+    """
+    try:
+        val = float(raw_val)
+    except (ValueError, TypeError):
+        return 100, max_hours
+
+    if val < 0:
+        return 0, 0.0
+
+    if val > 100:
+        remaining_hours = round(val / 3600.0, 1)
+        total_seconds = max_hours * 3600.0
+        life_pct = int(max(0, min(100, round((val / total_seconds) * 100))))
+        return life_pct, remaining_hours
+
+    life_pct = int(max(0, min(100, round(val))))
+    remaining_hours = round((life_pct / 100.0) * max_hours, 1)
+    return life_pct, remaining_hours
+
 
 @dataclass(slots=True)
 class BotslabRuntimeData:
@@ -265,11 +301,29 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             clean_id = str(oss_dict.get("CleanID", ""))
 
             # Consumables
+            raw_filter = props.get("FilterLifeTime", props.get("filter_life", 100))
+            raw_main = props.get("RollBrushLifeTime", props.get("main_brush_life", 100))
+            raw_side = props.get("EdgeBrushLifeTime", props.get("side_brush_life", 100))
+            raw_sensor = props.get("SensorLifeTime", props.get("sensor_life", 100))
+
+            f_pct, f_hrs = _parse_consumable_lifetime(raw_filter, FILTER_MAX_HOURS)
+            m_pct, m_hrs = _parse_consumable_lifetime(raw_main, MAIN_BRUSH_MAX_HOURS)
+            s_pct, s_hrs = _parse_consumable_lifetime(raw_side, SIDE_BRUSH_MAX_HOURS)
+            sens_pct, sens_hrs = _parse_consumable_lifetime(raw_sensor, SENSOR_MAX_HOURS)
+
             consumables = BotslabConsumableStatus(
-                filter_life_pct=int(props.get("FilterLifeTime", props.get("filter_life", 100)) or 100),
-                main_brush_life_pct=int(props.get("RollBrushLifeTime", props.get("main_brush_life", 100)) or 100),
-                side_brush_life_pct=int(props.get("EdgeBrushLifeTime", props.get("side_brush_life", 100)) or 100),
-                sensor_clean_pct=int(props.get("SensorLifeTime", props.get("sensor_life", 100)) or 100),
+                filter_life_pct=f_pct,
+                main_brush_life_pct=m_pct,
+                side_brush_life_pct=s_pct,
+                sensor_clean_pct=sens_pct,
+                filter_left_hours=f_hrs,
+                main_brush_left_hours=m_hrs,
+                side_brush_left_hours=s_hrs,
+                sensor_left_hours=sens_hrs,
+                filter_used_hours=round(max(0.0, FILTER_MAX_HOURS - f_hrs), 1),
+                main_brush_used_hours=round(max(0.0, MAIN_BRUSH_MAX_HOURS - m_hrs), 1),
+                side_brush_used_hours=round(max(0.0, SIDE_BRUSH_MAX_HOURS - s_hrs), 1),
+                sensor_used_hours=round(max(0.0, SENSOR_MAX_HOURS - sens_hrs), 1),
             )
 
             # Live Map Image with Smart Adaptive Fetching & Live Overlays
