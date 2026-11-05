@@ -799,6 +799,8 @@ async def test_legacy_360_set_mop_mode():
     from custom_components.botslab_vacuum.const import INFO_360_SETTINGS
 
     api = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    # Bind original unpatched method
+    api.set_mop_mode = BotslabVacuumApi._raw_set_mop_mode.__get__(api, BotslabVacuumApi)
     api.send_legacy_360_cmd = AsyncMock(return_value={"errno": 0})
 
     # Mop only -> value: 2
@@ -869,6 +871,8 @@ async def test_legacy_360_clean_rooms():
     from custom_components.botslab_vacuum.api import BotslabVacuumApi
 
     api_r = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    # Bind original unpatched method
+    api_r.clean_rooms = BotslabVacuumApi._raw_clean_rooms.__get__(api_r, BotslabVacuumApi)
     api_r.get_latest_clean_record = AsyncMock(
         return_value={
             "cleanId": "clean_123",
@@ -888,6 +892,33 @@ async def test_legacy_360_clean_rooms():
 
     await api_r.clean_rooms("SN123", "pk", ["1", "2"], repeat_times=2)
     assert api_r._legacy_cached_status["SN123"] == "cleaning"
+
+
+@pytest.mark.asyncio
+async def test_legacy_360_clean_zone():
+    """Verify clean_zone on legacy 360 sends composite 30000 command (21023 + 21005)."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    api_z = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    # Bind original unpatched method
+    api_z.clean_zone = BotslabVacuumApi._raw_clean_zone.__get__(api_z, BotslabVacuumApi)
+    api_z.send_legacy_360_cmd = AsyncMock(return_value={"errno": 0})
+    api_z.get_latest_clean_record = AsyncMock(return_value={"mapId": 7})
+
+    zones = [[-500, -1000, 500, 1000]]
+    await api_z.clean_zone("SN123", "pk", zones)
+
+    api_z.send_legacy_360_cmd.assert_called_once()
+    sn_arg, cmd_arg, payload = api_z.send_legacy_360_cmd.call_args[0]
+    assert sn_arg == "SN123"
+    assert cmd_arg == "30000"
+    assert payload["cmds"][0]["infoType"] == "21023"
+    assert payload["cmds"][0]["data"]["mapId"] == 7
+    assert payload["cmds"][1]["infoType"] == "21005"
+    assert payload["cmds"][1]["data"]["mode"] == "reAppointClean"
+    assert api_z._legacy_cached_status["SN123"] == "cleaning"
+
 
 
 

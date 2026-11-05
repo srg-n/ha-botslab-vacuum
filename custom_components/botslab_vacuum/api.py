@@ -1309,7 +1309,8 @@ class BotslabVacuumApi:
         smart_area = record.get("smartArea")
         if not isinstance(smart_area, dict) or not smart_area.get("value"):
             raise BotslabCommandError(
-                "Room cleaning requires smartArea room layout in clean record, but none was found for this 360 model"
+                "Room partitioning (smartArea) is not supported by 360 S6 / legacy firmware. "
+                "Please use full cleaning or zone cleaning (clean_zone) instead."
             )
 
         area_setting = copy.deepcopy(smart_area)
@@ -1567,6 +1568,55 @@ class BotslabVacuumApi:
                 water_level=water_level,
             )
 
+    async def _clean_zone_legacy_360(
+        self,
+        sn: str,
+        zones: list[list[float]],
+        repeat_times: int = 1,
+        fan_speed: str | None = None,
+        water_level: str | None = None,
+    ) -> None:
+        """Clean custom rectangular zone(s) on legacy 360 (e.g. S6) via composite 30000 cmd (21023 + 21005)."""
+        if fan_speed:
+            await self.set_fan_speed(sn, "", fan_speed)
+
+        record = await self.get_latest_clean_record(sn)
+        map_id = int(record.get("mapId", 1)) if record else 1
+
+        areas = []
+        for i, z in enumerate(zones):
+            x1, y1, x2, y2 = int(z[0]), int(z[1]), int(z[2]), int(z[3])
+            vertices = [[x1, y1], [x1, y2], [x2, y2], [x2, y1]]
+            areas.append({
+                "vertexs": vertices,
+                "active": "normal",
+                "name": f"Area {i + 1}",
+                "tag": "",
+                "id": i + 1,
+                "mode": "default",
+            })
+
+        payload = {
+            "cmds": [
+                {
+                    "infoType": "21023",
+                    "data": {
+                        "mapId": map_id,
+                        "cleanId": [-2],
+                        "extraAreas": areas,
+                    },
+                },
+                {
+                    "infoType": "21005",
+                    "data": {"mode": "reAppointClean"},
+                },
+            ],
+            "mainCmds": ["21005"],
+        }
+        await self.send_legacy_360_cmd(sn, "30000", payload)
+        self._legacy_cached_status[sn] = STATUS_CLEANING
+        _LOGGER.info("Legacy 360 zone cleaning started on %s for %d zone(s)", sn, len(areas))
+
     async def clean_zone(
         self,
         sn: str,
@@ -1576,11 +1626,12 @@ class BotslabVacuumApi:
         fan_speed: str | None = None,
         water_level: str | None = None,
     ) -> None:
-        """Clean custom rectangular zone(s) via SetZones + StartCleanInZones."""
+        """Clean custom rectangular zone(s) via SetZones + StartCleanInZones or composite cmd 30000."""
         if self.is_legacy_360:
-            raise BotslabCommandError(
-                "Zone cleaning is not supported on the legacy 360 cloud server"
+            await self._clean_zone_legacy_360(
+                sn, zones, repeat_times, fan_speed, water_level
             )
+            return
         if fan_speed:
             await self.set_fan_speed(sn, product_key, fan_speed)
         if water_level:
@@ -1776,3 +1827,10 @@ class BotslabVacuumApi:
             if idx >= total:
                 break
         return pts
+
+
+# Raw unpatched method references for direct unit testing
+BotslabVacuumApi._raw_clean_rooms = BotslabVacuumApi.clean_rooms
+BotslabVacuumApi._raw_clean_zone = BotslabVacuumApi.clean_zone
+BotslabVacuumApi._raw_set_mop_mode = BotslabVacuumApi.set_mop_mode
+

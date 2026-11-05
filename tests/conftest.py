@@ -250,7 +250,7 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
 
 
 @pytest.fixture(autouse=True)
-def offline_hass():
+def offline_hass(request):
     """Keep every test off the network, then undo the patches.
 
     Home Assistant's shared aiohttp connector is built on a zeroconf backed DNS
@@ -266,6 +266,10 @@ def offline_hass():
     camera platform fails to set up and every test that touches any entity is
     reported as an unrelated failure.
     """
+    if "test_pure" in request.node.nodeid:
+        yield
+        return
+
     patch(
         "homeassistant.components.zeroconf.async_get_async_zeroconf",
         return_value=MagicMock(),
