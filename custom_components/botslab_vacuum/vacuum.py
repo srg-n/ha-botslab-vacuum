@@ -148,49 +148,49 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         """Start or resume cleaning."""
         if not self.device:
             return
-        self.coordinator.set_optimistic_status(self.device.device_name, STATUS_CLEANING)
-        self.coordinator.schedule_followup_refreshes()
+        initial_status = self.device.status
         if not self.coordinator.api.is_legacy_360 and self.activity == VacuumActivity.PAUSED:
             await self.coordinator.api.resume_clean(self.device.device_name, self.device.product_key)
         else:
             await self.coordinator.api.start_clean(self.device.device_name, self.device.product_key)
         await self.coordinator.async_request_refresh()
+        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 
     async def async_pause(self) -> None:
         """Pause cleaning."""
         if not self.device:
             return
-        self.coordinator.set_optimistic_status(self.device.device_name, STATUS_PAUSED, duration=15.0)
-        self.coordinator.schedule_followup_refreshes()
+        initial_status = self.device.status
         await self.coordinator.api.pause_clean(self.device.device_name, self.device.product_key)
         await self.coordinator.async_request_refresh()
+        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 
     async def async_stop(self, **kwargs: Any) -> None:
         """Stop cleaning."""
         if not self.device:
             return
-        self.coordinator.set_optimistic_status(self.device.device_name, STATUS_RETURNING, duration=25.0)
-        self.coordinator.schedule_followup_refreshes()
+        initial_status = self.device.status
         await self.coordinator.api.stop_clean(self.device.device_name, self.device.product_key)
         await self.coordinator.async_request_refresh()
+        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 
     async def async_return_to_base(self, **kwargs: Any) -> None:
         """Send the vacuum back to its charging dock."""
         if not self.device:
             return
-        self.coordinator.set_optimistic_status(self.device.device_name, STATUS_RETURNING, duration=25.0)
-        self.coordinator.schedule_followup_refreshes()
+        initial_status = self.device.status
         await self.coordinator.api.return_to_dock(self.device.device_name, self.device.product_key)
         await self.coordinator.async_request_refresh()
+        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 
     async def async_clean_spot(self, **kwargs: Any) -> None:
         """Spot clean."""
         if not self.device:
             return
-        self.coordinator.set_optimistic_status(self.device.device_name, STATUS_CLEANING)
-        self.coordinator.schedule_followup_refreshes()
+        initial_status = self.device.status
         await self.coordinator.api.start_clean(self.device.device_name, self.device.product_key)
         await self.coordinator.async_request_refresh()
+        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 
     async def async_locate(self, **kwargs: Any) -> None:
         """Play sound on robot to locate it."""
@@ -229,9 +229,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         if not selected_ids:
             raise ServiceValidationError("clean_rooms called with no valid room IDs or matching room names")
 
-        self.coordinator.set_optimistic_status(self.device.device_name, STATUS_CLEANING)
-        self.coordinator.schedule_followup_refreshes()
-
+        initial_status = self.device.status
         await self.coordinator.api.clean_rooms(
             self.device.device_name,
             self.device.product_key,
@@ -241,6 +239,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             water_level,
         )
         await self.coordinator.async_request_refresh()
+        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 
     async def async_clean_zone(
         self,
@@ -252,8 +251,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         """Clean custom rectangular zone(s) with optional water level."""
         if not self.device or not zones:
             return
-        self.coordinator.set_optimistic_status(self.device.device_name, STATUS_CLEANING)
-        self.coordinator.schedule_followup_refreshes()
+        initial_status = self.device.status
         await self.coordinator.api.clean_zone(
             self.device.device_name,
             self.device.product_key,
@@ -263,17 +261,18 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             water_level,
         )
         await self.coordinator.async_request_refresh()
+        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 
     async def async_goto_location(self, x: int, y: int) -> None:
         """Command the vacuum to navigate to specific coordinates."""
         if not self.device:
             return
-        self.coordinator.set_optimistic_status(self.device.device_name, STATUS_CLEANING)
-        self.coordinator.schedule_followup_refreshes()
+        initial_status = self.device.status
         await self.coordinator.api.goto_target(
             self.device.device_name, self.device.product_key, x, y
         )
         await self.coordinator.async_request_refresh()
+        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 
     async def async_set_water_level(self, water_level: str) -> None:
         """Set water pump flow rate (low, medium, high)."""

@@ -226,8 +226,8 @@ CONF_POLL_INTERVAL_ACTIVE: Final = "poll_interval_active"
 CONF_POLL_INTERVAL_IDLE: Final = "poll_interval_idle"
 CONF_ENABLE_MAP: Final = "enable_map"
 DEFAULT_POLL_INTERVAL: Final = 30  # seconds (fallback)
-DEFAULT_POLL_INTERVAL_ACTIVE: Final = 15  # seconds when vacuum is active
-DEFAULT_POLL_INTERVAL_IDLE: Final = 30  # seconds when vacuum is docked/idle
+DEFAULT_POLL_INTERVAL_ACTIVE: Final = 30  # seconds when vacuum is active
+DEFAULT_POLL_INTERVAL_IDLE: Final = 120  # seconds when vacuum is docked/idle
 REQUEST_TIMEOUT: Final = 15  # seconds
 
 ACTIVE_STATUSES: Final[set[str]] = {

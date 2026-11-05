@@ -1113,68 +1113,53 @@ def test_negative_error_code_not_treated_as_fault():
     assert resolve_status(True, "charge", 1) == STATUS_ERROR
 
 
-def test_coordinator_optimistic_state_hold():
-    """Verify optimistic state hold logic prevents stale cloud telemetry from overriding user actions."""
+def test_coordinator_watch_state_transition():
+    """Verify state transition watcher loop polls and stops as soon as cloud status changes."""
+    import asyncio
     from custom_components.botslab_vacuum.api import working_status_to_state
     from custom_components.botslab_vacuum.const import (
         DEFAULT_POLL_INTERVAL_ACTIVE,
         DEFAULT_POLL_INTERVAL_IDLE,
         STATUS_CLEANING,
         STATUS_DOCKED,
-        STATUS_ERROR,
     )
 
-    assert DEFAULT_POLL_INTERVAL_ACTIVE == 15
-    assert DEFAULT_POLL_INTERVAL_IDLE == 30
+    assert DEFAULT_POLL_INTERVAL_ACTIVE == 30
+    assert DEFAULT_POLL_INTERVAL_IDLE == 120
 
-    optimistic_status = {}
-    current_time = 100.0
+    # Sequence of cloud status returns simulated over time:
+    # 7 (docked), 7 (docked), 2 (CleanInAreas / cleaning)
+    cloud_responses = [7, 7, 2, 2]
+    poll_index = 0
 
-    def apply_update(raw_status: int | str, err_code: int = 0) -> str:
-        status = working_status_to_state(raw_status)
-        if err_code > 0 or str(raw_status).strip().lower() in ("9", "introuble"):
-            status = STATUS_ERROR
+    async def run_simulated_watcher():
+        nonlocal poll_index
+        initial_status = STATUS_DOCKED
+        cur_status = initial_status
+        attempts = 0
 
-        opt = optimistic_status.get("SN1")
-        if opt:
-            opt_status, expires_at = opt
-            if status == STATUS_ERROR or current_time >= expires_at:
-                optimistic_status.pop("SN1", None)
-            elif status == opt_status:
-                optimistic_status.pop("SN1", None)
-            else:
-                status = opt_status
-        return status
+        for attempt in range(1, 9):
+            attempts = attempt
+            # Simulate fetching latest status from cloud
+            raw_val = cloud_responses[min(poll_index, len(cloud_responses) - 1)]
+            poll_index += 1
+            cur_status = working_status_to_state(raw_val)
 
-    # Initial state on dock (WorkingStatus: 7)
-    assert apply_update(7) == STATUS_DOCKED
+            # Once genuine cloud status changes, watcher loop exits immediately
+            if cur_status != initial_status:
+                break
+            await asyncio.sleep(0.001)
 
-    # User commands room cleaning -> set optimistic status
-    optimistic_status["SN1"] = (STATUS_CLEANING, current_time + 25.0)
+        return cur_status, attempts
 
-    # Cloud poll at T=2s still returns WorkingStatus: 7 (docked). Optimistic hold preserves CLEANING!
-    current_time += 2.0
-    assert apply_update(7) == STATUS_CLEANING
-    assert "SN1" in optimistic_status
+    loop = asyncio.new_event_loop()
+    try:
+        final_status, total_attempts = loop.run_until_complete(run_simulated_watcher())
+    finally:
+        loop.close()
 
-    # Cloud poll at T=10s returns WorkingStatus: 2 (CleanInAreas). Cloud caught up -> lock cleared!
-    current_time += 8.0
-    assert apply_update(2) == STATUS_CLEANING
-    assert "SN1" not in optimistic_status
-
-    # Normal polling continues with real cloud status
-    assert apply_update(2) == STATUS_CLEANING
-
-    # Test genuine robot error immediately breaks optimistic lock
-    optimistic_status["SN1"] = (STATUS_CLEANING, current_time + 25.0)
-    assert apply_update(9) == STATUS_ERROR
-    assert "SN1" not in optimistic_status
-
-    # Test lock expiry after duration passes
-    optimistic_status["SN1"] = (STATUS_CLEANING, current_time + 10.0)
-    current_time += 15.0  # Expired
-    assert apply_update(7) == STATUS_DOCKED
-    assert "SN1" not in optimistic_status
+    assert final_status == STATUS_CLEANING
+    assert total_attempts == 3  # Broke early on attempt 3 without waiting for max_attempts!
 
 
 

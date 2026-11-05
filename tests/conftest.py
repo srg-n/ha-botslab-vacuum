@@ -263,6 +263,11 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
     # and stops, so the socket itself is replaced.
     patch.object(qpush_module.BotslabQPush, "run", AsyncMock(return_value=None)).start()
     patch.object(qpush_module.BotslabChinaQPush, "run", AsyncMock(return_value=None)).start()
+    patch.object(
+        coordinator_module.BotslabVacuumCoordinator,
+        "watch_state_transition",
+        MagicMock(),
+    ).start()
 
 
 @pytest.fixture(autouse=True)

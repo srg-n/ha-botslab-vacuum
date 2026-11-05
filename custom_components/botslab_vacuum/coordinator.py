@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 import json
 import logging
-import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -34,7 +33,6 @@ from .const import (
     FAN_SPEEDS_360_TO_HA,
     INT_TO_MOP_MODE,
     MODE_TO_FAN_SPEED,
-    STATUS_CLEANING,
     STATUS_ERROR,
 )
 from .models import BotslabConsumableStatus, BotslabMapInfo, BotslabRoom, BotslabVacuumDevice
@@ -132,7 +130,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self._rooms_cache: dict[str, list[BotslabRoom]] = {}
         self._map_cache: dict[str, bytes] = {}
         self._last_active_state: bool | None = None
-        self._optimistic_status: dict[str, tuple[str, float]] = {}
+        self._burst_poll_tasks: dict[str, asyncio.Task] = {}
 
     async def ensure_valid_session(self) -> None:
         """Ensure API has a valid session id and push alias, re-authenticating if necessary."""
@@ -314,24 +312,6 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 if err_code > 0 or str(raw_status).strip().lower() in ("9", "introuble"):
                     status = STATUS_ERROR
             active_error_code = err_code if err_code > 0 else 0
-
-            # Optimistic state hold: prevent temporary cloud lag from overwriting user action
-            opt = self._optimistic_status.get(sn)
-            if opt:
-                opt_status, expires_at = opt
-                now = time.monotonic()
-                if status == STATUS_ERROR or now >= expires_at:
-                    self._optimistic_status.pop(sn, None)
-                elif status == opt_status:
-                    self._optimistic_status.pop(sn, None)
-                else:
-                    _LOGGER.debug(
-                        "Preserving optimistic status '%s' for %s (cloud reports '%s')",
-                        opt_status,
-                        sn,
-                        status,
-                    )
-                    status = opt_status
 
             # Parse robot pose [x, y, angle]
             robot_pose: list[float] | None = None
@@ -515,26 +495,51 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         # When a push event arrives (status change, map update, etc.), immediately refresh coordinator
         await self.async_request_refresh()
 
-    def set_optimistic_status(self, sn: str, status: str, duration: float = 25.0) -> None:
-        """Override reported status temporarily while cloud catches up with device."""
-        self._optimistic_status[sn] = (status, time.monotonic() + duration)
-        dev = self.data.get(sn) if self.data else None
-        if dev:
-            dev.status = status
-            self.async_set_updated_data(self.data)
-        if status in ACTIVE_STATUSES:
-            self.update_interval = timedelta(seconds=self.poll_interval_active)
+    def watch_state_transition(
+        self,
+        sn: str,
+        initial_status: str | None = None,
+        max_attempts: int = 8,
+        interval: float = 1.5,
+    ) -> None:
+        """Rapidly poll coordinator until robot status genuinely changes in the cloud."""
+        old_task = self._burst_poll_tasks.get(sn)
+        if old_task and not old_task.done():
+            old_task.cancel()
 
-    async def async_delayed_refresh(self, delay_seconds: float) -> None:
-        """Schedule a coordinator refresh after a short delay."""
-        await asyncio.sleep(delay_seconds)
-        await self.async_request_refresh()
+        async def _loop() -> None:
+            try:
+                _LOGGER.debug(
+                    "Watching state transition for %s (initial=%s, interval=%.1fs, max_attempts=%d)",
+                    sn,
+                    initial_status,
+                    interval,
+                    max_attempts,
+                )
+                for attempt in range(1, max_attempts + 1):
+                    await asyncio.sleep(interval)
+                    await self.async_refresh()
+                    dev = self.data.get(sn) if self.data else None
+                    cur_status = dev.status if dev else None
+                    if initial_status and cur_status and cur_status != initial_status:
+                        _LOGGER.debug(
+                            "Transition detected for %s at attempt %d: %s -> %s",
+                            sn,
+                            attempt,
+                            initial_status,
+                            cur_status,
+                        )
+                        break
+            except asyncio.CancelledError:
+                _LOGGER.debug("State transition watch cancelled for %s", sn)
+            except Exception as err:
+                _LOGGER.debug("State transition watch error for %s: %s", sn, err)
+            finally:
+                self._burst_poll_tasks.pop(sn, None)
 
-    def schedule_followup_refreshes(self) -> None:
-        """Schedule rapid follow-up refreshes to capture state transitions."""
-        self.update_interval = timedelta(seconds=self.poll_interval_active)
-        for delay in (4, 10, 18):
-            self.hass.async_create_task(self.async_delayed_refresh(delay))
+        self._burst_poll_tasks[sn] = self.hass.async_create_task(
+            _loop(), name=f"watch_state_{sn}"
+        )
 
     @property
     def routines(self) -> list[dict[str, Any]]:
@@ -559,8 +564,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             return
         sn = first_dev.device_name
         pk = first_dev.product_key
-        self.set_optimistic_status(sn, STATUS_CLEANING)
-        self.schedule_followup_refreshes()
+        initial_status = first_dev.status
         if room_ids:
             await self.api.clean_rooms(
                 sn=sn,
@@ -574,3 +578,4 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 await self.api.set_fan_speed(sn, pk, suction)
             await self.api.start_clean(sn, pk)
         await self.async_request_refresh()
+        self.watch_state_transition(sn, initial_status=initial_status)

@@ -67,7 +67,6 @@ from .const import (
     SERVICE_SET_SCHEDULE,
     SERVICE_SET_WATER_LEVEL,
     SERVICE_SYNC_MAP,
-    STATUS_CLEANING,
 )
 from .coordinator import BotslabRuntimeData, BotslabVacuumCoordinator
 from .qpush import BotslabChinaQPush, BotslabQPush
@@ -496,8 +495,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 speed,
                 water,
             )
-            coordinator.set_optimistic_status(dev.device_name, STATUS_CLEANING)
-            coordinator.schedule_followup_refreshes()
+            initial_status = dev.status
             await coordinator.api.clean_rooms(
                 sn=dev.device_name,
                 product_key=dev.product_key,
@@ -507,6 +505,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 water_level=water,
             )
             await coordinator.async_request_refresh()
+            coordinator.watch_state_transition(dev.device_name, initial_status=initial_status)
 
     async def handle_clean_zone(call: ServiceCall) -> None:
         raw_zones = (
@@ -538,8 +537,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 speed,
                 water,
             )
-            coordinator.set_optimistic_status(dev.device_name, STATUS_CLEANING)
-            coordinator.schedule_followup_refreshes()
+            initial_status = dev.status
             await coordinator.api.clean_zone(
                 sn=dev.device_name,
                 product_key=dev.product_key,
@@ -549,6 +547,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 water_level=water,
             )
             await coordinator.async_request_refresh()
+            coordinator.watch_state_transition(dev.device_name, initial_status=initial_status)
 
     async def handle_set_water_level(call: ServiceCall) -> None:
         water = call.data.get(ATTR_WATER_LEVEL)
@@ -588,10 +587,10 @@ def _register_services(hass: HomeAssistant) -> None:
                 x,
                 y,
             )
-            coordinator.set_optimistic_status(dev.device_name, STATUS_CLEANING)
-            coordinator.schedule_followup_refreshes()
+            initial_status = dev.status
             await coordinator.api.goto_target(dev.device_name, dev.product_key, x, y)
             await coordinator.async_request_refresh()
+            coordinator.watch_state_transition(dev.device_name, initial_status=initial_status)
 
     async def handle_locate(call: ServiceCall) -> None:
         for coordinator, dev in _targets(call):
