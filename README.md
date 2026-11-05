@@ -71,22 +71,38 @@ Production-ready Home Assistant integration for **Botslab** and **Qihoo 360** ro
 
 ## 🚀 Installation
 
-### Preferred: HACS Custom Repository (RECOMMENDED) ⭐
+### Preferred: Home Assistant Marketplace / HACS (RECOMMENDED) ⭐
 
-No manual zip downloading or file copying needed. Install in seconds using HACS:
+No manual zip downloading or file copying needed. This integration is 100% compliant with both the official **Home Assistant Marketplace** (HA 2026+) and legacy **HACS**:
 
-1. Open **HACS** in your Home Assistant sidebar ➔ navigate to **Integrations**.
+> [!NOTE]
+> **Marketplace Ready:** This integration does not rely on internal HACS storage or dispatch signals (`hass.data["hacs"]`), adheres strictly to Home Assistant Core's integration manifest standards, and supports native Marketplace updates and repairs under **Settings ➔ System ➔ Repairs**.
+
+#### Via Home Assistant Marketplace (HA 2026+):
+1. Open **Marketplace** in your Home Assistant sidebar (or go to **Settings ➔ System ➔ Marketplace**).
 2. Click the **three dots** (`⋮`) in the top right corner and choose **Custom repositories**.
-3. In the Repository field, enter this URL:
+3. In the Repository field, enter:
    ```text
    https://github.com/srg-n/ha-botslab-vacuum
    ```
 4. Select **Integration** as the Category and click **Add**.
-5. Find **Botslab Vacuum Robot** in the integration list and click **Download** in the bottom right corner.
-6. **Restart Home Assistant** (**Settings ➔ System ➔ Restart**).
-7. Go to **Settings ➔ Devices & Services ➔ Add Integration**, search for **Botslab Vacuum**, and log in:
-   - **For Botslab models (e.g., S8):** Select your geographical region (e.g., `Europe 1 (Frankfurt)`) and enter your Botslab mobile app email and password.
-   - **For Legacy Qihoo 360 models (e.g., S5, S6, S7):** Select **`China Mainland (360 Smart Life)`** (regardless of whether you live in Europe or elsewhere) and enter your 360 Smart Life / 360 Robot app credentials.
+5. Search for **Botslab Vacuum Robot** and click **Install**.
+6. Restart Home Assistant (**Settings ➔ System ➔ Restart**).
+
+#### Via HACS (Legacy):
+1. Open **HACS** in your Home Assistant sidebar ➔ navigate to **Integrations**.
+2. Click the **three dots** (`⋮`) in the top right corner and choose **Custom repositories**.
+3. In the Repository field, enter `https://github.com/srg-n/ha-botslab-vacuum`, select **Integration** and click **Add**.
+4. Find **Botslab Vacuum Robot** in the list and click **Download**.
+5. Restart Home Assistant (**Settings ➔ System ➔ Restart**).
+
+#### Account Setup & Region Selection:
+After restarting, go to **Settings ➔ Devices & Services ➔ Add Integration**, search for **Botslab Vacuum**, and log in:
+- **For Botslab models (e.g., S8, S8 Plus):**
+  - Select **`Asia Pacific`** first if your account was created in Turkey, Middle East, or Asia Pacific.
+  - Or select **`Europe 1 (Frankfurt)`**, **`Europe 2`**, or **`North America`** matching your Botslab app account region.
+- **For Legacy Qihoo 360 models (e.g., S5, S6, S7, S9, X90):**
+  - Select **`China Mainland (360 Smart Life)`** (regardless of where you live in the world) and enter your 360 Smart Life app credentials.
 
 ---
 
