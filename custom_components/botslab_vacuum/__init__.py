@@ -364,30 +364,20 @@ def _register_services(hass: HomeAssistant) -> None:
         else:
             entity_ids = []
 
+        if not entity_ids:
+            _LOGGER.warning(
+                "%s was called without a target entity, so it was ignored. "
+                "Pass entity_id to choose which robot should run the command.",
+                call.service,
+            )
+            return []
+
         all_vacuums: list[tuple[BotslabVacuumCoordinator, Any]] = []
         for entry in hass.config_entries.async_entries(DOMAIN):
             runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
             if runtime and runtime.coordinator and runtime.coordinator.data:
                 for dev in runtime.coordinator.data.values():
                     all_vacuums.append((runtime.coordinator, dev))
-
-        if not entity_ids:
-            if len(all_vacuums) == 1:
-                _LOGGER.info(
-                    "No entity_id passed for %s, defaulting to sole vacuum %s",
-                    call.service,
-                    all_vacuums[0][1].device_title,
-                )
-                return all_vacuums
-            _LOGGER.error(
-                "%s called without a target entity_id and %d vacuums are loaded. "
-                "Specify entity_id to choose which robot to command.",
-                call.service,
-                len(all_vacuums),
-            )
-            raise ServiceValidationError(
-                f"{call.service} requires an entity_id parameter when multiple robots exist"
-            )
 
         entities = er.async_get(hass)
         devices = dr.async_get(hass)
@@ -717,8 +707,14 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
-                vol.Optional(ATTR_ZONES): cv.ensure_list,
-                vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.Coerce(int),
+                vol.Required(ATTR_ZONES): vol.All(
+                    cv.ensure_list,
+                    # Each zone is an (x1, y1, x2, y2) rectangle. Coercing the
+                    # whole list to float would reject every valid zone, so the
+                    # coercion belongs on the individual coordinates.
+                    [vol.ExactSequence((vol.Coerce(float),) * 4)],
+                ),
+                vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
                 vol.Optional(ATTR_FAN_SPEED): cv.string,
                 vol.Optional(ATTR_WATER_LEVEL): cv.string,
             },
