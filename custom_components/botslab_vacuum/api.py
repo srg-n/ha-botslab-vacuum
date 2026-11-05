@@ -27,6 +27,7 @@ from .const import (
     EP_360_LOGIN,
     EP_360_RECORD_GET_ONE,
     EP_360_RECORD_LIST,
+    EP_360_SET_AREA_AND_CLEANING,
     FAN_SPEED_TO_MODE,
     FAN_SPEEDS_HA_TO_360,
     INFO_360_CONSUMABLES,
@@ -39,6 +40,7 @@ from .const import (
     INFO_360_START,
     INFO_360_STATUS,
     LEGACY_360_MINT_UA,
+    LEGACY_360_ROOM_UA,
     LEGACY_360_USER_AGENT,
     MOP_MODE_TO_INT,
     REGIONS,
@@ -59,7 +61,7 @@ from .map_util import (
     room_cover_rects,
 )
 from .models import BotslabMapInfo, BotslabRoom
-from .quc_login import BotslabApiError, BotslabAuthError
+from .quc_login import BotslabApiError, BotslabAuthError, derive_qid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,7 +137,7 @@ class BotslabVacuumApi:
         self.t = t
         self.sid: str | None = None
         self.push_alias: str = ""
-        self.qid: str | None = qid
+        self.qid: str | None = qid or derive_qid(q)
         self._legacy_cached_status: dict[str, str] = {}
 
         reg_info = REGIONS.get(region, REGIONS["eu1"])
@@ -235,6 +237,16 @@ class BotslabVacuumApi:
             errno = int(result.get("errno", 0))
         except (ValueError, TypeError):
             errno = -1
+
+        # Placix compatibility: non-zero errorCode overrides errno
+        if "errorCode" in result:
+            try:
+                error_code = int(result["errorCode"])
+                if error_code != 0:
+                    errno = error_code
+            except (ValueError, TypeError):
+                pass
+
         if errno == 0:
             return
         errmsg = result.get("errmsg") or result.get("msg") or "unknown error"
@@ -468,6 +480,11 @@ class BotslabVacuumApi:
         try:
             res = await self.send_legacy_360_cmd(sn, INFO_360_STATUS, "")
             cmd_data = res.get("data")
+            if isinstance(cmd_data, str) and cmd_data.startswith("{"):
+                try:
+                    cmd_data = json.loads(cmd_data)
+                except Exception:
+                    pass
             if isinstance(cmd_data, dict):
                 for bkey in BATTERY_KEYS_360:
                     if bkey in cmd_data and cmd_data[bkey] is not None:
@@ -482,10 +499,30 @@ class BotslabVacuumApi:
                     props["workNoisy"] = cmd_data["workNoisy"]
                 if "vol" in cmd_data and isinstance(cmd_data["vol"], (int, float)):
                     props["VolumeLevel"] = int(cmd_data["vol"]) * 10
-                if "clean_time" in cmd_data:
-                    props["TEST_CleaningTime"] = cmd_data["clean_time"]
-                if "clean_area" in cmd_data:
-                    props["CleaningArea"] = cmd_data["clean_area"]
+
+                # Live cleaning time & area: support both camelCase (placix/360 protocol) and snake_case
+                clean_time = cmd_data.get("cleanTime") if cmd_data.get("cleanTime") is not None else cmd_data.get("clean_time")
+                if clean_time is not None:
+                    props["TEST_CleaningTime"] = clean_time
+                clean_area = cmd_data.get("cleanArea") if cmd_data.get("cleanArea") is not None else cmd_data.get("clean_area")
+                if clean_area is not None:
+                    props["CleaningArea"] = clean_area
+                if "allTime" in cmd_data and cmd_data["allTime"] is not None:
+                    props["TotalCleaningTime"] = cmd_data["allTime"]
+                if "allArea" in cmd_data and cmd_data["allArea"] is not None:
+                    props["TotalCleaningArea"] = cmd_data["allArea"]
+
+                # Extract live robot error state (matching placix: errorState list)
+                error_state = cmd_data.get("errorState")
+                if isinstance(error_state, list) and error_state:
+                    props["ErrorCode"] = error_state[-1]
+                elif isinstance(error_state, (int, float)):
+                    props["ErrorCode"] = int(error_state)
+
+                # Mop status / water box state
+                if "mopStatus" in cmd_data and cmd_data["mopStatus"] is not None:
+                    props["mopStatus"] = cmd_data["mopStatus"]
+                    props["MopStatus"] = cmd_data["mopStatus"]
         except BotslabAuthError:
             raise
         except Exception as err:
@@ -1245,6 +1282,90 @@ class BotslabVacuumApi:
         if action:
             await self.invoke_sync(sn, product_key, action, {})
 
+    async def _clean_rooms_legacy_360(
+        self,
+        sn: str,
+        room_ids: list[str],
+        repeat_times: int = 1,
+        fan_speed: str | None = None,
+        water_level: str | None = None,
+    ) -> None:
+        """Start room cleaning on legacy Qihoo 360 robot using /clean/record/setAreaAndCleaning."""
+        int_room_ids: list[int] = []
+        for r in room_ids:
+            try:
+                rid = int(str(r).strip())
+                if rid not in int_room_ids:
+                    int_room_ids.append(rid)
+            except (ValueError, TypeError):
+                continue
+        if not int_room_ids:
+            raise BotslabCommandError(f"No valid integer room IDs for legacy 360: {room_ids}")
+
+        record = await self.get_latest_clean_record(sn)
+        if not record:
+            raise BotslabCommandError("Cannot clean rooms: no clean record available from 360 cloud")
+
+        smart_area = record.get("smartArea")
+        if not isinstance(smart_area, dict) or not smart_area.get("value"):
+            raise BotslabCommandError(
+                "Room cleaning requires smartArea room layout in clean record, but none was found for this 360 model"
+            )
+
+        area_setting = copy.deepcopy(smart_area)
+        area_setting["activeIds"] = int_room_ids
+        area_setting["cleanTimes"] = repeat_times
+
+        for room in area_setting.get("value", []):
+            if room.get("id") in int_room_ids:
+                room["cleanTimes"] = repeat_times
+                if fan_speed and fan_speed in FAN_SPEEDS_HA_TO_360:
+                    room["windMode"] = FAN_SPEEDS_HA_TO_360[fan_speed]
+                if water_level and water_level in WATER_LEVEL_TO_INT:
+                    room["waterPump"] = WATER_LEVEL_TO_INT[water_level]
+
+        clean_id = str(record.get("cleanId") or f"{sn}-{int(time.time())}")
+        task_id = str(uuid.uuid4())
+        area_str = json.dumps(area_setting, separators=(",", ":"))
+
+        url = f"{self.base_url}{EP_360_SET_AREA_AND_CLEANING}"
+        headers = {
+            **self._headers("application/x-www-form-urlencoded"),
+            "User-Agent": LEGACY_360_ROOM_UA,
+        }
+        body = {
+            "sn": sn,
+            "cleanId": clean_id,
+            "areaSetting": area_str,
+            "taskid": task_id,
+            "from": "mpc_and",
+            "devType": "3",
+            "channel_id": "Overseas",
+            "appVer": "11.1.7",
+            "lang": "en_US",
+            "model": "sdk_gphone64_x86_64",
+            "manufacturer": "Google",
+        }
+
+        try:
+            async with self.session.post(
+                url,
+                data=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            ) as resp:
+                res = await resp.json(content_type=None)
+        except Exception as err:
+            raise BotslabApiError(f"Legacy 360 room cleaning request failed: {err}") from err
+
+        self._check_360_errno(res, "setAreaAndCleaning")
+        self._legacy_cached_status[sn] = STATUS_CLEANING
+        _LOGGER.info(
+            "Legacy 360 room cleaning started successfully on %s for rooms %s",
+            sn,
+            int_room_ids,
+        )
+
     async def clean_rooms(
         self,
         sn: str,
@@ -1254,11 +1375,12 @@ class BotslabVacuumApi:
         fan_speed: str | None = None,
         water_level: str | None = None,
     ) -> None:
-        """Clean specific room(s) by ID via StartCleanInAreas."""
+        """Clean specific room(s) by ID via StartCleanInAreas or setAreaAndCleaning."""
         if self.is_legacy_360:
-            raise BotslabCommandError(
-                "Room cleaning is not supported on the legacy 360 cloud server"
+            await self._clean_rooms_legacy_360(
+                sn, room_ids, repeat_times, fan_speed, water_level
             )
+            return
         if fan_speed:
             await self.set_fan_speed(sn, product_key, fan_speed)
         if water_level:
@@ -1539,6 +1661,12 @@ class BotslabVacuumApi:
     async def set_mop_mode(self, sn: str, product_key: str, mode: str | int) -> None:
         """Set mop mode switching (0: Vacuum & Mop, 1: Vacuum Only, 2: Mop Only)."""
         if self.is_legacy_360:
+            # 360 cloud uses cmd 21024 (setMopSwitch): value 2 = Mop Only, value 1 = Standard (vacuum/mop)
+            mode_str = str(mode).lower()
+            val = 2 if mode_str in ("2", "mop", "mop_only") else 1
+            await self.send_legacy_360_cmd(
+                sn, INFO_360_SETTINGS, {"cmd": "setMopSwitch", "value": val}
+            )
             return
         val = MOP_MODE_TO_INT.get(str(mode).lower(), int(mode) if str(mode).isdigit() else 0)
         await self.invoke_sync(sn, product_key, "SetMopModeSwitching", {"MopModeSwitching": val})

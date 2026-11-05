@@ -486,9 +486,23 @@ def test_legacy_360_headers():
     hdrs = api._headers("application/x-www-form-urlencoded")
     assert hdrs["User-Agent"] == LEGACY_360_USER_AGENT
     assert hdrs["Content-Type"] == "application/x-www-form-urlencoded"
-    assert f"q={COOKIE_Q_360}" in hdrs["Cookie"]
+    assert "q=fake_q" in hdrs["Cookie"]
+    assert "t=fake_t" in hdrs["Cookie"]
     assert "qid=12345678" in hdrs["Cookie"]
     assert "sid=sid_abc123" in hdrs["Cookie"]
+
+    # Fallback when q and t are empty
+    api_fallback = BotslabVacuumApi(
+        session=session,
+        region="cn",
+        m2="fake_m2",
+        q="",
+        t="",
+        qid="12345678",
+    )
+    api_fallback.sid = "sid_abc123"
+    hdrs_fallback = api_fallback._headers()
+    assert f"q={COOKIE_Q_360}" in hdrs_fallback["Cookie"]
 
 
 def test_legacy_360_check_errno():
@@ -502,15 +516,20 @@ def test_legacy_360_check_errno():
 
     # errno 0 = success
     api._check_360_errno({"errno": 0}, "test")
+    api._check_360_errno({"errno": 0, "errorCode": 0}, "test")
 
-    # Auth expired errnos
+    # Auth expired errnos via errno or errorCode
     for err in (102, 103, 401, 403, -2, 10001, 10002):
         with pytest.raises(BotslabAuthError):
             api._check_360_errno({"errno": err, "errmsg": "expired"}, "test")
+        with pytest.raises(BotslabAuthError):
+            api._check_360_errno({"errno": 0, "errorCode": err, "errmsg": "expired"}, "test")
 
-    # Generic command error
+    # Generic command error via errno or errorCode
     with pytest.raises(BotslabCommandError):
         api._check_360_errno({"errno": 999, "errmsg": "bad parameter"}, "test")
+    with pytest.raises(BotslabCommandError):
+        api._check_360_errno({"errno": 0, "errorCode": 999, "errmsg": "bad parameter"}, "test")
 
 
 def test_legacy_360_working_status_mapping():
@@ -757,6 +776,120 @@ def test_map_card_service_call_schema():
         assert "service_data" in schema
         assert "data" in schema
         assert schema["service_data"] == schema["data"]
+
+
+def test_derive_qid():
+    """Verify derive_qid parses decimal qid from various Q cookie formats."""
+    from custom_components.botslab_vacuum.quc_login import derive_qid
+
+    assert derive_qid("u=360H12345678&n=synth") == "12345678"
+    assert derive_qid("u=987654321&v=2.0") == "987654321"
+    assert derive_qid("Q=u%3D360H11223344%26t%3D1") == "11223344"
+    assert derive_qid("a=1&b=2;u=55667788;c=3") == "55667788"
+    assert derive_qid("") == ""
+    assert derive_qid(None) == ""
+    assert derive_qid("random_junk_without_u") == ""
+
+
+@pytest.mark.asyncio
+async def test_legacy_360_set_mop_mode():
+    """Verify set_mop_mode on legacy 360 uses cmd 21024 setMopSwitch."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+    from custom_components.botslab_vacuum.const import INFO_360_SETTINGS
+
+    api = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    api.send_legacy_360_cmd = AsyncMock(return_value={"errno": 0})
+
+    # Mop only -> value: 2
+    await api.set_mop_mode("SN123", "pk", 2)
+    api.send_legacy_360_cmd.assert_called_with(
+        "SN123", INFO_360_SETTINGS, {"cmd": "setMopSwitch", "value": 2}
+    )
+
+    await api.set_mop_mode("SN123", "pk", "mop")
+    api.send_legacy_360_cmd.assert_called_with(
+        "SN123", INFO_360_SETTINGS, {"cmd": "setMopSwitch", "value": 2}
+    )
+
+    # Standard / Sweep -> value: 1
+    await api.set_mop_mode("SN123", "pk", 0)
+    api.send_legacy_360_cmd.assert_called_with(
+        "SN123", INFO_360_SETTINGS, {"cmd": "setMopSwitch", "value": 1}
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_360_get_properties_live_telemetry():
+    """Verify live status parsing from 20001 (cleanTime, cleanArea, errorState, mopStatus)."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    api = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    api.send_legacy_360_cmd = AsyncMock()
+    api.get_latest_clean_record = AsyncMock(return_value=None)
+
+    # Status response matching placix / 360 protocol
+    api.send_legacy_360_cmd.side_effect = [
+        {
+            "errno": 0,
+            "data": {
+                "elecReal": 88,
+                "mode": "smartClean",
+                "cleanTime": 1420,
+                "cleanArea": 35,
+                "allTime": 50000,
+                "allArea": 1200,
+                "errorState": [10],
+                "mopStatus": 1,
+                "workNoisy": "strong",
+                "vol": 7,
+            },
+        },
+        {"errno": 0, "data": {}},  # consumables
+    ]
+
+    props, _ = await api._legacy_360_get_properties("SN123")
+    assert props["BatteryLevel"] == 88
+    assert props["WorkingStatus"] == "smartClean"
+    assert props["TEST_CleaningTime"] == 1420
+    assert props["CleaningArea"] == 35
+    assert props["TotalCleaningTime"] == 50000
+    assert props["TotalCleaningArea"] == 1200
+    assert props["ErrorCode"] == 10
+    assert props["mopStatus"] == 1
+    assert props["workNoisy"] == "strong"
+    assert props["VolumeLevel"] == 70
+
+
+@pytest.mark.asyncio
+async def test_legacy_360_clean_rooms():
+    """Verify clean_rooms on legacy 360 posts to setAreaAndCleaning."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    api_r = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    api_r.get_latest_clean_record = AsyncMock(
+        return_value={
+            "cleanId": "clean_123",
+            "smartArea": {
+                "activeIds": [],
+                "cleanTimes": 1,
+                "value": [{"id": 1, "name": "Room 1"}, {"id": 2, "name": "Room 2"}],
+            },
+        }
+    )
+    ctx = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.json = AsyncMock(return_value={"errno": 0})
+    ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    api_r.session.post.return_value = ctx
+
+    await api_r.clean_rooms("SN123", "pk", ["1", "2"], repeat_times=2)
+    assert api_r._legacy_cached_status["SN123"] == "cleaning"
+
+
 
 
 

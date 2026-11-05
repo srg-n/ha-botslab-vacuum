@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import urllib.parse
+from typing import Final
 import aiohttp
 
 from .const import (
@@ -32,6 +34,23 @@ from .crypto import (
 from .exceptions import BotslabApiError, BotslabAuthError, BotslabCaptchaRequired
 
 _LOGGER = logging.getLogger(__name__)
+
+_QID_FROM_USER: Final = re.compile(r"(?:^|[&;])u=360H(?P<qid>[0-9]+)(?=$|[&;])")
+_QID_FROM_NUMERIC_USER: Final = re.compile(r"(?:^|[&;])u=(?P<qid>[0-9]+)(?=$|[&;])")
+
+
+def derive_qid(q: str | None) -> str:
+    """Extract decimal qid from Q cookie's u parameter (matching 360/placix)."""
+    if not q or not isinstance(q, str):
+        return ""
+    normalized = urllib.parse.unquote(q.strip())
+    normalized = normalized.removeprefix("q=").removeprefix("Q=")
+    match = _QID_FROM_USER.search(normalized)
+    if match is None:
+        match = _QID_FROM_NUMERIC_USER.search(normalized)
+    if match is not None:
+        return match.group("qid")
+    return ""
 
 
 def build_login_params(
@@ -222,6 +241,9 @@ async def async_login(
 
     q = urllib.parse.unquote(str(q))
     t = urllib.parse.unquote(str(t))
+
+    if not qid and q:
+        qid = derive_qid(q)
 
     _LOGGER.info("QUC login successful for %s (qid: %s)", email, qid)
     return {"q": q, "t": t, "qid": qid}
