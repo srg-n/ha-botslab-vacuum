@@ -225,21 +225,30 @@ def build_maintenance_card(
 
 
 def build_legacy_dashboard_card(
-    device: BotslabVacuumDevice, entity_ids: Mapping[str, str]
+    device: BotslabVacuumDevice, entity_ids: Mapping[str, str], is_tr: bool = False
 ) -> str:
     """Return a native Home Assistant dashboard configuration for legacy 360 models (S6, etc.)."""
     vacuum_id = entity_ids.get("vacuum", "vacuum.botslab_vacuum")
     camera_id = entity_ids.get("camera")
     battery_id = entity_ids.get("battery")
 
-    battery_line = f"\n      - entity: {battery_id}\n        name: {_yaml_str('Pil Seviyesi')}" if battery_id else ""
+    battery_label = "Pil Seviyesi" if is_tr else "Battery Level"
+    vacuum_label = "Robot Durumu" if is_tr else "Vacuum Status"
+    camera_title = "Temizlik Haritası" if is_tr else "Cleaning Map"
+    maint_title = "Sarf Malzemeleri ve Ayarlar" if is_tr else "Maintenance & Settings"
+    btn_start = "Başlat" if is_tr else "Start"
+    btn_pause = "Duraklat" if is_tr else "Pause"
+    btn_dock = "Şarja Dön" if is_tr else "Return to Dock"
+    btn_stop = "Durdur" if is_tr else "Stop"
+
+    battery_line = f"\n      - entity: {battery_id}\n        name: {_yaml_str(battery_label)}" if battery_id else ""
 
     camera_block = ""
     if camera_id:
         camera_block = f"""
-  # Son Temizlik Haritası (Last Clean Map)
+  # {"Son Temizlik Haritası" if is_tr else "Last Clean Map"}
   - type: picture-entity
-    title: {_yaml_str('Temizlik Haritası')}
+    title: {_yaml_str(camera_title)}
     entity: {camera_id}
     camera_image: {camera_id}
     show_state: false
@@ -247,9 +256,9 @@ def build_legacy_dashboard_card(
 """
 
     maintenance_lines = [
-        "  # Sarf Malzemeleri ve Ayarlar (Maintenance)",
+        f"  # {maint_title}",
         "  - type: entities",
-        f"    title: {_yaml_str('Sarf Malzemeleri ve Ayarlar')}",
+        f"    title: {_yaml_str(maint_title)}",
         "    show_header_toggle: false",
         "    entities:",
     ]
@@ -261,36 +270,29 @@ def build_legacy_dashboard_card(
         maintenance_lines.append(f"        name: {_yaml_str(label)}")
     maintenance_block = "\n".join(maintenance_lines)
 
-    return f"""# ==============================================================================
-# 360 Legacy Vacuum ({device.device_title}) - Kontrol Paneli Yapılandırması
+    header_comment = f"""# ==============================================================================
+# 360 Legacy Vacuum ({device.device_title}) - {"Kontrol Paneli Yapılandırması" if is_tr else "Dashboard Card Configuration"}
 #
-# ⚠️ ÖNEMLİ KURULUM TALİMATI (IMPORTANT INSTALLATION INSTRUCTION):
-# Bu kod TEK BİR KART yapılandırmasıdır. Panonun tamamının "Ham Yapılandırma
-# Düzenleyicisi" içine YAPIŞTIRMAYIN.
-# Panolar -> Düzenle -> + Kart Ekle -> Manuel (en altta) alanına yapıştırın.
-#
-# ℹ️ MODEL BİLGİSİ (LEGACY 360):
-# Robotunuz eski nesil Qihoo 360 protokolü (q.smart.360.cn) ile çalışmaktadır.
-# Bu modellerde bulut tabanlı oda ayrıştırma (OSS) bulunmadığından, harici HACS
-# kartı gerektirmeyen standart, kararlı ve hızlı Home Assistant kontrol paneli
-# hazırlanmıştır.
+# ⚠️ {"KURULUM TALİMATI" if is_tr else "INSTALLATION INSTRUCTION"}:
+# {"Bu kod TEK BİR KART yapılandırmasıdır. Panonun tamamının 'Ham Yapılandırma Düzenleyicisi' içine yapıştırmayın." if is_tr else "This snippet is a SINGLE CARD configuration. Do NOT paste into dashboard Raw Configuration Editor."}
+# {"Panolar -> Düzenle -> + Kart Ekle -> Manuel (en altta) alanına yapıştırın." if is_tr else "Dashboard -> Edit -> + Add Card -> Manual (at the bottom)."}
 # ==============================================================================
+"""
 
+    return f"""{header_comment}
 type: vertical-stack
 title: {_yaml_str(device.device_title)}
 cards:
-  # Robot Durumu ve Pil
   - type: entities
     show_header_toggle: false
     entities:
       - entity: {vacuum_id}
-        name: {_yaml_str('Robot Durumu')}{battery_line}
+        name: {_yaml_str(vacuum_label)}{battery_line}
 
-  # Temel Kontrol Butonları
   - type: horizontal-stack
     cards:
       - type: button
-        name: Başlat
+        name: {_yaml_str(btn_start)}
         icon: mdi:play
         tap_action:
           action: call-service
@@ -298,7 +300,7 @@ cards:
           target:
             entity_id: {vacuum_id}
       - type: button
-        name: Duraklat
+        name: {_yaml_str(btn_pause)}
         icon: mdi:pause
         tap_action:
           action: call-service
@@ -306,7 +308,7 @@ cards:
           target:
             entity_id: {vacuum_id}
       - type: button
-        name: Şarja Dön
+        name: {_yaml_str(btn_dock)}
         icon: mdi:home-map-marker
         tap_action:
           action: call-service
@@ -314,7 +316,7 @@ cards:
           target:
             entity_id: {vacuum_id}
       - type: button
-        name: Durdur
+        name: {_yaml_str(btn_stop)}
         icon: mdi:stop
         tap_action:
           action: call-service
@@ -330,10 +332,11 @@ def build_full_dashboard_snippet(
     device: BotslabVacuumDevice,
     entity_ids: Mapping[str, str],
     is_legacy: bool = False,
+    is_tr: bool = False,
 ) -> str:
     """Return complete dashboard snippet, tailored for modern or legacy 360 robots."""
     if is_legacy:
-        return build_legacy_dashboard_card(device, entity_ids)
+        return build_legacy_dashboard_card(device, entity_ids, is_tr=is_tr)
     return (
         f"{build_map_card(device, entity_ids)}\n---\n"
         f"{build_maintenance_card(device, entity_ids)}\n"
