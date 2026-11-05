@@ -163,7 +163,10 @@ async def async_login(
     except aiohttp.ClientError as err:
         raise BotslabApiError(f"Network error during login: {err}") from err
 
-    errno = data.get("errno", -1)
+    try:
+        errno = int(data.get("errno", -1))
+    except (ValueError, TypeError):
+        errno = -1
     errmsg_outer = str(data.get("errmsg") or "")
     _LOGGER.debug("QUC login raw envelope: errno=%s, errmsg=%s", errno, errmsg_outer)
 
@@ -185,7 +188,10 @@ async def async_login(
 
     ret = decrypt_response(ret_b64, a117)
     _LOGGER.debug("QUC decrypted response ret: %s", ret)
-    ret_errno = ret.get("errno", 0)
+    try:
+        ret_errno = int(ret.get("errno", 0))
+    except (ValueError, TypeError):
+        ret_errno = 0
     errdetail = ret.get("errdetail") or {}
     ctype = str(errdetail.get("captchaType") or "graph")
     ret_errmsg = str(ret.get("errmsg") or "")

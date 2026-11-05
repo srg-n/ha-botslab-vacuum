@@ -223,7 +223,10 @@ class BotslabVacuumApi:
 
     def _check_360_errno(self, result: dict[str, Any], label: str) -> None:
         """Check response status code from 360 cloud and map auth/command errors."""
-        errno = result.get("errno", 0)
+        try:
+            errno = int(result.get("errno", 0))
+        except (ValueError, TypeError):
+            errno = -1
         if errno == 0:
             return
         errmsg = result.get("errmsg") or result.get("msg") or "unknown error"
@@ -542,7 +545,11 @@ class BotslabVacuumApi:
             raise BotslabApiError(f"app_login network failed: {err}") from err
 
         code = data.get("code")
-        if code != 0:
+        try:
+            code_int = int(code) if code is not None else -1
+        except (ValueError, TypeError):
+            code_int = -1
+        if code_int != 0:
             raise BotslabAuthError(f"app_login failed code {code}: {data.get('message') or data.get('msg')}")
 
         result = data.get("data") or data.get("result") or {}
