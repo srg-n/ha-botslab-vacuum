@@ -28,6 +28,7 @@ from .const import (
     EP_360_RECORD_GET_ONE,
     EP_360_RECORD_LIST,
     EP_360_SET_AREA_AND_CLEANING,
+    FAN_SPEED_TO_LEVEL,
     FAN_SPEED_TO_MODE,
     FAN_SPEEDS_HA_TO_360,
     INFO_360_CONSUMABLES,
@@ -84,8 +85,14 @@ def _room_color(index: int) -> tuple[int, int, int]:
 
 def working_status_to_state(status_code: Any) -> str:
     """Map Botslab / 360 working status code to standard status string."""
-    code_str = str(status_code).lower()
+    code_str = str(status_code).strip().lower()
+    # Cleaning states
+    # TSL numeric: 1: DefaultClean, 2: CleanInAreas, 3: CleanInZones, 10: InRemoteControl
     if code_str in (
+        "1",
+        "2",
+        "3",
+        "10",
         "clean",
         "cleaning",
         "sweep",
@@ -96,15 +103,38 @@ def working_status_to_state(status_code: Any) -> str:
         "spotclean",
         "totalclean",
         "mop",
-        "1",
-        "2",
+        "defaultclean",
+        "cleaninareas",
+        "cleaninzones",
+        "inremotecontrol",
     ):
         return STATUS_CLEANING
-    if code_str in ("charge", "charging", "docked", "dock", "fullcharge", "5", "6"):
-        return STATUS_DOCKED
-    if code_str in ("pause", "paused", "3"):
-        return STATUS_PAUSED
+
+    # Docked states
+    # TSL numeric: 6: Charging, 7: ChargeDone, 11: InDustCollecting
     if code_str in (
+        "6",
+        "7",
+        "11",
+        "charge",
+        "charging",
+        "docked",
+        "dock",
+        "fullcharge",
+        "chargedone",
+        "industcollecting",
+    ):
+        return STATUS_DOCKED
+
+    # Paused states
+    # TSL numeric: 4: Paused
+    if code_str in ("4", "pause", "paused"):
+        return STATUS_PAUSED
+
+    # Returning states
+    # TSL numeric: 5: GotoChargeBase
+    if code_str in (
+        "5",
         "goback",
         "go_charging",
         "returning",
@@ -112,13 +142,20 @@ def working_status_to_state(status_code: Any) -> str:
         "backcharge",
         "return",
         "gocharge",
-        "4",
+        "gotochargebase",
     ):
         return STATUS_RETURNING
-    if code_str in ("error", "fault", "warn"):
+
+    # Error states
+    # TSL numeric: 9: InTrouble
+    if code_str in ("9", "error", "fault", "warn", "introuble"):
         return STATUS_ERROR
-    if code_str in ("idle", "standby", "dormant", "0"):
+
+    # Idle states
+    # TSL numeric: 0: StandBy, 8: Dormant
+    if code_str in ("0", "8", "idle", "standby", "dormant"):
         return STATUS_IDLE
+
     return STATUS_IDLE
 
 
@@ -1206,6 +1243,45 @@ class BotslabVacuumApi:
         except Exception as err:
             raise BotslabApiError(f"invoke_sync {action} failed: {err}") from err
 
+    async def set_desired_property(
+        self, sn: str, product_key: str, identifier: str, value: Any
+    ) -> dict[str, Any]:
+        """Set desired property on device shadow (for modern Botslab IoT cloud)."""
+        if self.is_legacy_360:
+            return {}
+        ts, nonce, sig = self._sign()
+        url = f"{self.base_url}/v1/iot/device/set_desired_property"
+        q = self._base_query(ts, nonce, sig)
+        body = {
+            "product_key": product_key,
+            "device_name": sn,
+            "items": json.dumps({identifier: value}, separators=(",", ":")),
+        }
+        try:
+            async with self.session.post(
+                url,
+                params=q,
+                headers=self._headers("application/x-www-form-urlencoded"),
+                data=body,
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            ) as resp:
+                data = await resp.json(content_type=None)
+                code = data.get("code")
+                if code != 0:
+                    raise BotslabCommandError(
+                        f"set_desired_property {identifier} failed: code {code} {data.get('msg')}"
+                    )
+                return data
+        except Exception as err:
+            _LOGGER.error(
+                "Failed to set desired property %s=%s on %s: %s",
+                identifier,
+                value,
+                sn,
+                err,
+            )
+            raise
+
     async def invoke_async(
         self, sn: str, product_key: str, action: str, params: dict[str, Any]
     ) -> dict[str, Any]:
@@ -1288,7 +1364,7 @@ class BotslabVacuumApi:
             await self.send_legacy_360_cmd(sn, INFO_360_PAUSE, {"cmd": "pause"})
             self._legacy_cached_status[sn] = STATUS_PAUSED
             return
-        await self.invoke_sync(sn, product_key, "PauseRobot", {})
+        await self.invoke_sync(sn, product_key, "PauseRobot", {"TargetAction": 0})
 
     async def stop_clean(self, sn: str, product_key: str) -> None:
         """Stop current cleaning operation."""
@@ -1296,7 +1372,15 @@ class BotslabVacuumApi:
             await self.send_legacy_360_cmd(sn, INFO_360_RETURN, {"cmd": "start"})
             self._legacy_cached_status[sn] = STATUS_RETURNING
             return
-        await self.invoke_sync(sn, product_key, "PauseRobot", {})
+        await self.invoke_sync(sn, product_key, "PauseRobot", {"TargetAction": 2})
+
+    async def resume_clean(self, sn: str, product_key: str) -> None:
+        """Resume cleaning from pause."""
+        if self.is_legacy_360:
+            await self.send_legacy_360_cmd(sn, INFO_360_PAUSE, {"cmd": "continue"})
+            self._legacy_cached_status[sn] = STATUS_CLEANING
+            return
+        await self.invoke_sync(sn, product_key, "ResumeWork", {})
 
     async def return_to_dock(self, sn: str, product_key: str) -> None:
         """Send robot back to charging dock."""
@@ -1320,7 +1404,17 @@ class BotslabVacuumApi:
             await self.send_legacy_360_cmd(sn, INFO_360_FAN_SPEED, {"cmd": speed_cmd})
             return
         mode = FAN_SPEED_TO_MODE.get(fan_speed, 2)
-        await self.invoke_sync(sn, product_key, "SetSuctionPowLevel", {"SuctionPowLevel": mode})
+        level = FAN_SPEED_TO_LEVEL.get(fan_speed, max(0, mode - 1))
+        try:
+            await self.invoke_sync(
+                sn, product_key, "SetSuctionPowLevelWithMode", {"Mode": 0, "Level": level}
+            )
+        except Exception as err:
+            _LOGGER.debug(
+                "SetSuctionPowLevelWithMode failed (%s), falling back to SetSuctionPowLevel",
+                err,
+            )
+            await self.invoke_sync(sn, product_key, "SetSuctionPowLevel", {"SuctionPowLevel": mode})
 
     async def reset_consumable(self, sn: str, product_key: str, consumable: str) -> None:
         """Reset consumable life counter."""
@@ -1762,7 +1856,14 @@ class BotslabVacuumApi:
         if self.is_legacy_360:
             return
         val = WATER_LEVEL_TO_INT.get(str(level).lower(), int(level) if str(level).isdigit() else 2)
-        await self.invoke_sync(sn, product_key, "SetPadWetness", {"PadWetness": val})
+        try:
+            await self.set_desired_property(sn, product_key, "PadWetness", val)
+        except Exception as err:
+            _LOGGER.debug(
+                "set_desired_property PadWetness failed (%s), falling back to SetPadWetness",
+                err,
+            )
+            await self.invoke_sync(sn, product_key, "SetPadWetness", {"PadWetness": val})
 
     async def set_mop_mode(self, sn: str, product_key: str, mode: str | int) -> None:
         """Set mop mode switching (0: Vacuum & Mop, 1: Vacuum Only, 2: Mop Only)."""
@@ -1775,25 +1876,53 @@ class BotslabVacuumApi:
             )
             return
         val = MOP_MODE_TO_INT.get(str(mode).lower(), int(mode) if str(mode).isdigit() else 0)
-        await self.invoke_sync(sn, product_key, "SetMopModeSwitching", {"MopModeSwitching": val})
+        try:
+            await self.set_desired_property(sn, product_key, "MopModeSwitching", val)
+        except Exception as err:
+            _LOGGER.debug(
+                "set_desired_property MopModeSwitching failed (%s), falling back to SetMopModeSwitching",
+                err,
+            )
+            await self.invoke_sync(sn, product_key, "SetMopModeSwitching", {"MopModeSwitching": val})
 
     async def set_auto_boost(self, sn: str, product_key: str, state: bool) -> None:
         """Toggle carpet auto suction boost."""
         if self.is_legacy_360:
             return
-        await self.invoke_sync(sn, product_key, "SetAutoBoost", {"AutoBoost": bool(state)})
+        try:
+            await self.set_desired_property(sn, product_key, "AutoBoost", bool(state))
+        except Exception as err:
+            _LOGGER.debug(
+                "set_desired_property AutoBoost failed (%s), falling back to SetAutoBoost",
+                err,
+            )
+            await self.invoke_sync(sn, product_key, "SetAutoBoost", {"AutoBoost": bool(state)})
 
     async def set_button_backlight(self, sn: str, product_key: str, state: bool) -> None:
         """Toggle physical button LED light."""
         if self.is_legacy_360:
             return
-        await self.invoke_sync(sn, product_key, "SetButtonBacklight", {"ButtonBacklight": bool(state)})
+        try:
+            await self.set_desired_property(sn, product_key, "ButtonBacklight", bool(state))
+        except Exception as err:
+            _LOGGER.debug(
+                "set_desired_property ButtonBacklight failed (%s), falling back to SetButtonBacklight",
+                err,
+            )
+            await self.invoke_sync(sn, product_key, "SetButtonBacklight", {"ButtonBacklight": bool(state)})
 
     async def set_collision_protection(self, sn: str, product_key: str, state: bool) -> None:
         """Toggle collision protection sensor sensitivity."""
         if self.is_legacy_360:
             return
-        await self.invoke_sync(sn, product_key, "SetCollisionProtection", {"CollisionProtection": bool(state)})
+        try:
+            await self.set_desired_property(sn, product_key, "CollisionProtection", bool(state))
+        except Exception as err:
+            _LOGGER.debug(
+                "set_desired_property CollisionProtection failed (%s), falling back to SetCollisionProtection",
+                err,
+            )
+            await self.invoke_sync(sn, product_key, "SetCollisionProtection", {"CollisionProtection": bool(state)})
 
     async def set_volume_level(self, sn: str, product_key: str, volume: int) -> None:
         """Set speaker voice volume (0-100)."""
@@ -1804,7 +1933,14 @@ class BotslabVacuumApi:
             )
             return
         vol = max(0, min(100, int(volume)))
-        await self.invoke_sync(sn, product_key, "SetVolumeLevel", {"VolumeLevel": vol})
+        try:
+            await self.set_desired_property(sn, product_key, "VolumeLevel", vol)
+        except Exception as err:
+            _LOGGER.debug(
+                "set_desired_property VolumeLevel failed (%s), falling back to SetVolumeLevel",
+                err,
+            )
+            await self.invoke_sync(sn, product_key, "SetVolumeLevel", {"VolumeLevel": vol})
 
     async def start_map_sync(self, sn: str, product_key: str, duration_s: int = 60) -> None:
         """Tell robot to sync live map package to OSS."""

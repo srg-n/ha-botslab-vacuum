@@ -298,8 +298,13 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             clean_sub_status = props.get("CleanSubStatus")
             current_loc = props.get("CurrentLocation")
             err_code = int(props.get("ErrorCode", 0) or 0)
-            if err_code != 0:
-                status = STATUS_ERROR
+            if self.api.is_legacy_360:
+                if err_code > 0:
+                    status = STATUS_ERROR
+            else:
+                if err_code > 0 or str(raw_status).strip().lower() in ("9", "introuble"):
+                    status = STATUS_ERROR
+            active_error_code = err_code if err_code > 0 else 0
 
             # Parse robot pose [x, y, angle]
             robot_pose: list[float] | None = None
@@ -409,7 +414,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 volume_level=volume_level,
                 current_map_id=map_id,
                 clean_id=clean_id,
-                error_code=err_code,
+                error_code=active_error_code,
                 total_cleaning_area_sqm=round(total_area / 100.0 if total_area > 500 else total_area, 1),
                 total_cleaning_time_minutes=(
                     round(total_time / 60)

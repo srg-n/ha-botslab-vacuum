@@ -1027,14 +1027,91 @@ def test_working_status_to_state_extra_modes():
     from custom_components.botslab_vacuum.api import working_status_to_state
     from custom_components.botslab_vacuum.const import (
         STATUS_CLEANING,
-        STATUS_RETURNING,
+        STATUS_DOCKED,
+        STATUS_ERROR,
         STATUS_IDLE,
+        STATUS_PAUSED,
+        STATUS_RETURNING,
     )
 
     assert working_status_to_state("mop") == STATUS_CLEANING
     assert working_status_to_state("backcharge") == STATUS_RETURNING
     assert working_status_to_state("standby") == STATUS_IDLE
     assert working_status_to_state("dormant") == STATUS_IDLE
+
+    # Official Botslab TSL working status codes
+    assert working_status_to_state(0) == STATUS_IDLE          # StandBy
+    assert working_status_to_state(1) == STATUS_CLEANING      # DefaultClean
+    assert working_status_to_state(2) == STATUS_CLEANING      # CleanInAreas
+    assert working_status_to_state(3) == STATUS_CLEANING      # CleanInZones
+    assert working_status_to_state(4) == STATUS_PAUSED        # Paused
+    assert working_status_to_state(5) == STATUS_RETURNING     # GotoChargeBase
+    assert working_status_to_state(6) == STATUS_DOCKED        # Charging
+    assert working_status_to_state(7) == STATUS_DOCKED        # ChargeDone
+    assert working_status_to_state(8) == STATUS_IDLE          # Dormant
+    assert working_status_to_state(9) == STATUS_ERROR         # InTrouble
+    assert working_status_to_state(10) == STATUS_CLEANING     # InRemoteControl
+    assert working_status_to_state(11) == STATUS_DOCKED       # InDustCollecting
+
+
+def test_fan_speed_level_mapping():
+    """Verify fan speed to 0-based and 1-based level mappings."""
+    from custom_components.botslab_vacuum.const import (
+        FAN_SPEED_QUIET,
+        FAN_SPEED_STANDARD,
+        FAN_SPEED_POWERFUL,
+        FAN_SPEED_MAX,
+        FAN_SPEED_TO_LEVEL,
+        MODE_TO_FAN_SPEED,
+    )
+
+    assert FAN_SPEED_TO_LEVEL[FAN_SPEED_QUIET] == 0
+    assert FAN_SPEED_TO_LEVEL[FAN_SPEED_STANDARD] == 1
+    assert FAN_SPEED_TO_LEVEL[FAN_SPEED_POWERFUL] == 2
+    assert FAN_SPEED_TO_LEVEL[FAN_SPEED_MAX] == 3
+
+    assert MODE_TO_FAN_SPEED[0] == FAN_SPEED_QUIET
+    assert MODE_TO_FAN_SPEED[1] == FAN_SPEED_STANDARD
+    assert MODE_TO_FAN_SPEED[2] == FAN_SPEED_POWERFUL
+    assert MODE_TO_FAN_SPEED[3] == FAN_SPEED_MAX
+
+
+def test_negative_error_code_not_treated_as_fault():
+    """Verify negative telemetry ErrorCode does not put modern Botslab into error state."""
+    from custom_components.botslab_vacuum.api import working_status_to_state
+    from custom_components.botslab_vacuum.const import (
+        STATUS_CLEANING,
+        STATUS_DOCKED,
+        STATUS_ERROR,
+        STATUS_RETURNING,
+    )
+
+    # Simulated coordinator error logic
+    def resolve_status(is_legacy: bool, raw_status: int | str, err_code: int) -> str:
+        status = working_status_to_state(raw_status)
+        if is_legacy:
+            if err_code > 0:
+                status = STATUS_ERROR
+        else:
+            if err_code > 0 or str(raw_status).strip().lower() in ("9", "introuble"):
+                status = STATUS_ERROR
+        return status
+
+    # S8 live telemetry: ChargeDone with ErrorCode -2406
+    assert resolve_status(False, 7, -2406) == STATUS_DOCKED
+    # S8 live telemetry: GotoChargeBase with ErrorCode -2406
+    assert resolve_status(False, 5, -2406) == STATUS_RETURNING
+    # S8 live telemetry: CleanInAreas with ErrorCode -2605
+    assert resolve_status(False, 2, -2605) == STATUS_CLEANING
+
+    # Genuine faults
+    assert resolve_status(False, 9, -2406) == STATUS_ERROR
+    assert resolve_status(False, 0, 102) == STATUS_ERROR
+
+    # Legacy 360 logic
+    assert resolve_status(True, "charge", 0) == STATUS_DOCKED
+    assert resolve_status(True, "charge", 1) == STATUS_ERROR
+
 
 
 

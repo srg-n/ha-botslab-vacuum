@@ -52,12 +52,13 @@ class BotslabProblemBinarySensor(BotslabVacuumEntity, BinarySensorEntity):
         """Return True if the vacuum has an active fault or error."""
         if not self.device:
             return False
-        has_error_code = bool(self.device.error_code and self.device.error_code != 0)
+        has_error_code = bool(self.device.error_code and self.device.error_code > 0)
         is_error_status = str(self.device.status).lower() in (
             STATUS_ERROR,
             "error",
             "fault",
             "warn",
+            "introuble",
         )
         return has_error_code or is_error_status
 

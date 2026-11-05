@@ -148,7 +148,10 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         """Start or resume cleaning."""
         if not self.device:
             return
-        await self.coordinator.api.start_clean(self.device.device_name, self.device.product_key)
+        if not self.coordinator.api.is_legacy_360 and self.activity == VacuumActivity.PAUSED:
+            await self.coordinator.api.resume_clean(self.device.device_name, self.device.product_key)
+        else:
+            await self.coordinator.api.start_clean(self.device.device_name, self.device.product_key)
         await self.coordinator.async_request_refresh()
 
     async def async_pause(self) -> None:

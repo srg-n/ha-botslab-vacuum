@@ -165,10 +165,18 @@ FAN_SPEED_TO_MODE: Final[dict[str, int]] = {
     FAN_SPEED_MAX: 4,
 }
 
+FAN_SPEED_TO_LEVEL: Final[dict[str, int]] = {
+    FAN_SPEED_QUIET: 0,
+    FAN_SPEED_STANDARD: 1,
+    FAN_SPEED_POWERFUL: 2,
+    FAN_SPEED_MAX: 3,
+}
+
 MODE_TO_FAN_SPEED: Final[dict[int, str]] = {
-    1: FAN_SPEED_QUIET,
-    2: FAN_SPEED_STANDARD,
-    3: FAN_SPEED_POWERFUL,
+    0: FAN_SPEED_QUIET,
+    1: FAN_SPEED_STANDARD,
+    2: FAN_SPEED_POWERFUL,
+    3: FAN_SPEED_MAX,
     4: FAN_SPEED_MAX,
 }
 
