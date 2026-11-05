@@ -81,7 +81,8 @@ async def _async_generate_map_card(
 
     device = coordinator.data.get(device.device_name) if coordinator.data else device
     entity_ids = _resolve_card_entity_ids(hass, device)
-    is_legacy = bool(coordinator.api.is_legacy_360)
+    is_legacy = getattr(coordinator.api, "is_legacy_360", False) is True
+    room_count = len([r for r in device.rooms if len(r.outline) >= 3])
 
     # A card without both of these cannot work for modern robots, and they are absent when the
     # map is disabled and the camera entity was never created. For legacy 360, vacuum entity is sufficient.
@@ -130,7 +131,6 @@ async def _async_generate_map_card(
             "(Tüm panonun 'Ham Yapılandırma Düzenleyicisi' içine yapıştırmayın)."
         )
     else:
-        room_count = len([r for r in device.rooms if len(r.outline) >= 3])
         if not room_count:
             hint = (
                 "Map support is currently disabled in the integration options. "
@@ -162,11 +162,17 @@ async def _async_generate_map_card(
         title=f"Botslab map card - {device.device_title}",
         notification_id=f"botslab_map_card_{device.device_name}",
     )
-    _LOGGER.info(
-        "Generated Lovelace map card for %s with %d rooms",
-        device.device_title,
-        room_count,
-    )
+    if is_legacy:
+        _LOGGER.info(
+            "Generated Lovelace dashboard card for legacy 360 robot %s",
+            device.device_title,
+        )
+    else:
+        _LOGGER.info(
+            "Generated Lovelace map card for %s with %d rooms",
+            device.device_title,
+            room_count,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
