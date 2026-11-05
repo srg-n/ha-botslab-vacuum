@@ -122,6 +122,11 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 devices = await api.get_devices()
 
                 if not devices:
+                    _LOGGER.warning(
+                        "No vacuum devices found for %s in region %s. If your robot is registered in another server, try selecting another region (e.g. Asia Pacific or North America).",
+                        email,
+                        region,
+                    )
                     errors["base"] = "no_devices_found"
                 else:
                     await self.async_set_unique_id(f"botslab_{qid or email}")
@@ -290,6 +295,11 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 devices = await api.get_devices()
 
                 if not devices:
+                    _LOGGER.warning(
+                        "No vacuum devices found for %s in region %s. If your robot is registered in another server, try selecting another region (e.g. Asia Pacific or North America).",
+                        email,
+                        region,
+                    )
                     errors["base"] = "no_devices_found"
                 else:
                     await self.async_set_unique_id(f"botslab_{qid or email}")

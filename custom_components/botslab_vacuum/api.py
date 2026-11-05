@@ -580,10 +580,27 @@ class BotslabVacuumApi:
         if code != 0:
             raise BotslabApiError(f"get_devices code {code}: {data.get('message')}")
 
-        res = data.get("data") or data.get("result") or []
+        _LOGGER.debug("get_devices raw response from %s: %s", url, data)
+
+        res = (
+            data.get("data")
+            or data.get("result")
+            or data.get("list")
+            or data.get("devices")
+            or []
+        )
         if isinstance(res, dict):
-            return res.get("list") or []
-        return res
+            raw_list = (
+                res.get("list")
+                or res.get("devices")
+                or res.get("device_list")
+                or res.get("devList")
+                or res.get("bind_list")
+                or res.get("cleanDevList")
+                or []
+            )
+            return raw_list if isinstance(raw_list, list) else []
+        return res if isinstance(res, list) else []
 
     async def get_desired_property(self, sn: str, product_key: str) -> dict[str, Any]:
         """Fetch properties for a specific device."""
