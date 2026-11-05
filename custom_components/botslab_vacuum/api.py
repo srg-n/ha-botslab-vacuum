@@ -183,7 +183,15 @@ class BotslabVacuumApi:
 
     def _headers(self, content_type: str | None = None) -> dict[str, str]:
         if self.is_legacy_360:
-            cookie_str = f"q={COOKIE_Q_360}; qid={self.qid or ''}; sid={self.sid or ''}"
+            q_val = self.q if self.q else COOKIE_Q_360
+            cookie_parts = [f"q={q_val}"]
+            if self.t:
+                cookie_parts.append(f"t={self.t}")
+            if self.qid:
+                cookie_parts.append(f"qid={self.qid}")
+            if self.sid:
+                cookie_parts.append(f"sid={self.sid}")
+            cookie_str = "; ".join(cookie_parts)
             hdrs: dict[str, str] = {
                 "User-Agent": LEGACY_360_USER_AGENT,
                 "Accept": "*/*",

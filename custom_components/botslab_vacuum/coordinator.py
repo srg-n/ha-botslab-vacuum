@@ -135,6 +135,19 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         if self.api.sid and self.api.push_alias:
             return
 
+        # 1. Try to mint a new session id using existing Q and T tokens first
+        if self.api.q and self.api.t:
+            try:
+                _LOGGER.debug("Obtaining session sid using existing Q/T tokens...")
+                await self.api.app_login()
+                if self.api.sid and self.api.push_alias:
+                    return
+            except BotslabAuthError as err:
+                _LOGGER.debug("Existing Q/T tokens expired or rejected: %s", err)
+                self.api.sid = None
+                self.api.push_alias = None
+
+        # 2. Existing tokens are missing or expired; refresh them using email and password
         email = self.entry.data.get(CONF_EMAIL)
         password = self.entry.data.get(CONF_PASSWORD)
         region = self.entry.data.get(CONF_REGION, "eu1")
@@ -156,7 +169,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 new_data[CONF_QID] = tokens["qid"]
             self.hass.config_entries.async_update_entry(self.entry, data=new_data)
         else:
-            _LOGGER.debug("Refreshing Botslab session sid using existing tokens...")
+            raise BotslabAuthError("No valid session tokens or credentials available")
 
         await self.api.app_login()
 
