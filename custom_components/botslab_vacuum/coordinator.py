@@ -297,6 +297,8 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             clean_sub_status = props.get("CleanSubStatus")
             current_loc = props.get("CurrentLocation")
             err_code = int(props.get("ErrorCode", 0) or 0)
+            if err_code != 0:
+                status = STATUS_ERROR
 
             # Parse robot pose [x, y, angle]
             robot_pose: list[float] | None = None
@@ -386,7 +388,11 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 raw=d,
                 props=props,
                 battery_level=battery,
-                cleaning_time_minutes=clean_time,
+                cleaning_time_minutes=(
+                    round(clean_time / 60)
+                    if self.api.is_legacy_360 and clean_time > 0
+                    else clean_time
+                ),
                 cleaned_area_sqm=round(clean_area / 100.0 if clean_area > 500 else clean_area, 1),
                 status=status,
                 fan_speed=fan_speed,
@@ -404,7 +410,11 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 clean_id=clean_id,
                 error_code=err_code,
                 total_cleaning_area_sqm=round(total_area / 100.0 if total_area > 500 else total_area, 1),
-                total_cleaning_time_minutes=total_time,
+                total_cleaning_time_minutes=(
+                    round(total_time / 60)
+                    if self.api.is_legacy_360 and total_time > 0
+                    else total_time
+                ),
                 tasks_total_count=tasks_count,
                 clean_sub_status=str(clean_sub_status) if clean_sub_status is not None else None,
                 current_location=current_loc if isinstance(current_loc, list) else None,

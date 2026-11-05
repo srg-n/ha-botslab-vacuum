@@ -970,12 +970,72 @@ async def test_legacy_360_get_properties_with_live_push():
 
 
 def test_decode_china_push():
-    """Verify decode_china_push handles None and basic shapes safely."""
+    """Verify decode_china_push handles None, malformed, and unencrypted envelopes."""
+    import base64
+    import json
     from custom_components.botslab_vacuum.qpush import decode_china_push
 
     assert decode_china_push("", "key") is None
     assert decode_china_push('{"data": ""}', "") is None
     assert decode_china_push("malformed", "key") is None
+
+    # Test unencrypted payload (encrypt: 0)
+    inner = json.dumps({"sn": "SN_P1", "data": {"mode": "charge", "elecReal": 88}}).encode("utf-8")
+    envelope = json.dumps({"data": base64.b64encode(inner).decode("ascii"), "encrypt": 0})
+    result = decode_china_push(envelope, "some_push_key")
+    assert result is not None
+    assert result[0] == "SN_P1"
+    assert result[1]["mode"] == "charge"
+    assert result[1]["elecReal"] == 88
+
+
+def test_china_push_frame_buffer_and_ack():
+    """Verify _ChinaPushFrameBuffer and _build_push_ack on binary transport frames."""
+    import struct
+    from custom_components.botslab_vacuum.qpush import (
+        _ChinaPushFrameBuffer,
+        _parse_push_message_frame,
+        _build_push_ack,
+        PUSH_OP_MESSAGE,
+        PUSH_OP_ACK,
+    )
+
+    prop = b"ack:9988\nt:30\n"
+    prefix = struct.pack(">hhH", 5, PUSH_OP_MESSAGE, len(prop)) + prop
+    payload = b"\x00" * 8 + struct.pack(">II", 60009, 4) + b"test"
+    full_frame = prefix + struct.pack(">I", len(payload)) + payload
+
+    fb = _ChinaPushFrameBuffer()
+    frames = fb.feed(full_frame)
+    assert len(frames) == 1
+    opcode, frame_bytes = frames[0]
+    assert opcode == PUSH_OP_MESSAGE
+
+    parsed = _parse_push_message_frame(frame_bytes)
+    assert parsed is not None
+    pfx, bodies = parsed
+    assert len(bodies) == 1
+    assert bodies[0] == b"test"
+
+    ack = _build_push_ack(pfx)
+    assert ack is not None
+    assert int.from_bytes(ack[2:4], "big") == PUSH_OP_ACK
+
+
+def test_working_status_to_state_extra_modes():
+    """Verify working_status_to_state covers mop, backcharge, standby, dormant."""
+    from custom_components.botslab_vacuum.api import working_status_to_state
+    from custom_components.botslab_vacuum.const import (
+        STATUS_CLEANING,
+        STATUS_RETURNING,
+        STATUS_IDLE,
+    )
+
+    assert working_status_to_state("mop") == STATUS_CLEANING
+    assert working_status_to_state("backcharge") == STATUS_RETURNING
+    assert working_status_to_state("standby") == STATUS_IDLE
+    assert working_status_to_state("dormant") == STATUS_IDLE
+
 
 
 

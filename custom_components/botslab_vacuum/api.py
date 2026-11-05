@@ -95,6 +95,7 @@ def working_status_to_state(status_code: Any) -> str:
         "aroundclean",
         "spotclean",
         "totalclean",
+        "mop",
         "1",
         "2",
     ):
@@ -108,6 +109,7 @@ def working_status_to_state(status_code: Any) -> str:
         "go_charging",
         "returning",
         "chargeback",
+        "backcharge",
         "return",
         "gocharge",
         "4",
@@ -115,6 +117,8 @@ def working_status_to_state(status_code: Any) -> str:
         return STATUS_RETURNING
     if code_str in ("error", "fault", "warn"):
         return STATUS_ERROR
+    if code_str in ("idle", "standby", "dormant", "0"):
+        return STATUS_IDLE
     return STATUS_IDLE
 
 
@@ -512,6 +516,18 @@ class BotslabVacuumApi:
             props["mopStatus"] = live["mopStatus"]
             props["MopStatus"] = live["mopStatus"]
 
+        # Robot position and heading
+        pos = live.get("pos") or raw_dev.get("pos")
+        phi = live.get("phi") if live.get("phi") is not None else raw_dev.get("phi", 0)
+        if isinstance(pos, (list, tuple)) and len(pos) >= 2:
+            props["CurrentLocation"] = [pos[0], pos[1], phi or 0]
+
+        # Auto boost (carpet boost)
+        if "autoBoost" in live and live["autoBoost"] is not None:
+            props["AutoBoost"] = bool(live["autoBoost"])
+        elif "autoBoost" in raw_dev and raw_dev["autoBoost"] is not None:
+            props["AutoBoost"] = bool(raw_dev["autoBoost"])
+
         # Trigger status poll on legacy 360 cloud (pokes device to emit fresh push frame)
         try:
             res = await self.send_legacy_360_cmd(sn, INFO_360_STATUS, "")
@@ -556,6 +572,11 @@ class BotslabVacuumApi:
                 if "mopStatus" in cmd_data and cmd_data["mopStatus"] is not None:
                     props["mopStatus"] = cmd_data["mopStatus"]
                     props["MopStatus"] = cmd_data["mopStatus"]
+
+                if "pos" in cmd_data and isinstance(cmd_data["pos"], (list, tuple)) and len(cmd_data["pos"]) >= 2:
+                    props["CurrentLocation"] = [cmd_data["pos"][0], cmd_data["pos"][1], cmd_data.get("phi", 0) or 0]
+                if "autoBoost" in cmd_data and cmd_data["autoBoost"] is not None:
+                    props["AutoBoost"] = bool(cmd_data["autoBoost"])
         except BotslabAuthError:
             raise
         except Exception as err:
