@@ -33,6 +33,7 @@ from .const import (
     FAN_SPEEDS_360_TO_HA,
     INT_TO_MOP_MODE,
     MODE_TO_FAN_SPEED,
+    STATUS_ERROR,
 )
 from .models import BotslabConsumableStatus, BotslabMapInfo, BotslabRoom, BotslabVacuumDevice
 from .qpush import BotslabChinaQPush, BotslabQPush
