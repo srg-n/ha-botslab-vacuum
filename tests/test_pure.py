@@ -655,5 +655,50 @@ async def test_async_get_captcha():
     assert sc == "sc_token_123/xyz"
 
 
+@pytest.mark.asyncio
+async def test_generate_map_card_persistent_notification_signature():
+    """Verify _async_generate_map_card calls persistent_notification.async_create with hass as first arg."""
+    from custom_components.botslab_vacuum.button import _async_generate_map_card
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    hass = MagicMock()
+    coordinator = MagicMock()
+    coordinator.async_refresh_rooms = AsyncMock()
+    coordinator.async_request_refresh = AsyncMock()
+    dev = BotslabVacuumDevice(
+        device_name="sn123",
+        product_key="pk123",
+        device_title="Test Vacuum S8",
+        model="Botslab S8",
+    )
+    coordinator.data = {"sn123": dev}
+
+    with patch("homeassistant.components.persistent_notification.async_create") as mock_pn:
+        # With missing vacuum/camera entities:
+        with patch("custom_components.botslab_vacuum.button._resolve_card_entity_ids", return_value={}):
+            await _async_generate_map_card(hass, coordinator, dev)
+            mock_pn.assert_called_once()
+            args, kwargs = mock_pn.call_args
+            assert args[0] is hass  # First positional argument MUST be hass!
+
+        mock_pn.reset_mock()
+        # With resolved entities:
+        with patch(
+            "custom_components.botslab_vacuum.button._resolve_card_entity_ids",
+            return_value={"vacuum": "vacuum.test", "camera": "camera.test"},
+        ), patch(
+            "custom_components.botslab_vacuum.button.build_full_dashboard_snippet",
+            return_value="type: custom:card",
+        ):
+            hass.config.path.return_value = "/tmp/fake_card.yaml"
+            with patch("pathlib.Path.write_text"):
+                await _async_generate_map_card(hass, coordinator, dev)
+                mock_pn.assert_called_once()
+                args, kwargs = mock_pn.call_args
+                assert args[0] is hass  # First positional argument MUST be hass!
+
+
+
 
 

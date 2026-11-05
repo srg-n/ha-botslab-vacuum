@@ -87,11 +87,14 @@ async def _async_generate_map_card(
     if missing:
         persistent_notification.async_create(
             hass,
-            "Botslab map card",
-            f"No {', '.join(missing)} entity is registered for "
-            f"{device.device_title}, so the card could not be generated. "
-            "Check that the robot is loaded and that **Enable live map** is on "
-            "in the integration options.",
+            message=(
+                f"No {', '.join(missing)} entity is registered for "
+                f"{device.device_title}, so the card could not be generated. "
+                "Check that the robot is loaded and that **Enable live map** is on "
+                "in the integration options."
+            ),
+            title="Botslab map card",
+            notification_id=f"botslab_map_card_error_{device.device_name}",
         )
         return
 
@@ -129,8 +132,9 @@ async def _async_generate_map_card(
         )
 
     persistent_notification.async_create(
-        f"Botslab map card - {device.device_title}",
+        hass,
         message,
+        title=f"Botslab map card - {device.device_title}",
         notification_id=f"botslab_map_card_{device.device_name}",
     )
     _LOGGER.info(
