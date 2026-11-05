@@ -2,9 +2,7 @@ rules:
   # Bronze Tier (The Baseline Standard)
   action-setup: done
   appropriate-polling: done
-  brands:
-    status: exempt
-    comment: "HACS custom component. Assets are hosted in the repository and will be submitted to home-assistant/brands upon core inclusion."
+  brands: done
   common-modules: done
   config-flow: done
   config-flow-test-coverage: done

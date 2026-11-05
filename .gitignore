@@ -53,6 +53,7 @@ data/
 temp/
 *.png
 !assets/*.png
+!custom_components/**/brand/*.png
 
 # Testing
 .pytest_cache/

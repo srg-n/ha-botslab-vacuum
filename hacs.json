@@ -1,7 +1,4 @@
 {
   "name": "Botslab Vacuum Robot",
-  "content_in_root": false,
-  "render_readme": true,
-  "homeassistant": "2026.1.0",
-  "iot_class": "cloud_polling"
+  "homeassistant": "2026.1.0"
 }
