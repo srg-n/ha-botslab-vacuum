@@ -647,6 +647,14 @@ def _register_services(hass: HomeAssistant) -> None:
 
             if mode == "clear":
                 result = []
+                try:
+                    await coordinator.api.clear_cleaning_zones(
+                        sn=dev.device_name,
+                        product_key=dev.product_key,
+                        map_id=map_id,
+                    )
+                except Exception as err:
+                    _LOGGER.debug("Could not clear cleaning zones on %s: %s", dev.device_name, err)
             elif mode == "add":
                 result = existing + new_zones
             else:  # replace
@@ -662,7 +670,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 map_id=map_id,
                 places=result,
             )
-            coordinator.api.clear_map_cache(dev.device_name)
+            coordinator.clear_map_cache(dev.device_name)
             await coordinator.async_request_refresh()
 
     async def handle_set_schedule(call: ServiceCall) -> None:

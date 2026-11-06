@@ -1960,6 +1960,28 @@ class BotslabVacuumApi:
 
         await self.invoke_sync(sn, product_key, "StartCleanInZones", {})
 
+    async def clear_cleaning_zones(
+        self, sn: str, product_key: str, map_id: int | str
+    ) -> dict[str, Any]:
+        """Clear custom cleaning zones from the robot cloud state."""
+        if self.is_legacy_360:
+            return {}
+        zones_payload = {
+            "zones": [],
+            "activeIds": [],
+            "cleanTimes": 1,
+            "isAttrOn": 0,
+        }
+        return await self.invoke_async(
+            sn,
+            product_key,
+            "SetZones",
+            {
+                "MapID": int(map_id),
+                "ZonesList": json.dumps(zones_payload, separators=(",", ":")),
+            },
+        )
+
     async def goto_target(self, sn: str, product_key: str, x: int, y: int) -> None:
         """Send robot to target point coordinates."""
         if self.is_legacy_360:

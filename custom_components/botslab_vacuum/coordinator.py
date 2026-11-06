@@ -401,8 +401,15 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 ):
                     pose_changed = True
 
+            dev_map_info = self.api.get_cached_map_info(sn)
+
             if self.enable_map:
-                if dev_is_active or pose_changed or (sn not in self._map_cache):
+                if (
+                    dev_is_active
+                    or pose_changed
+                    or (sn not in self._map_cache)
+                    or (dev_map_info is None)
+                ):
                     try:
                         map_bytes = await self.api.get_live_map(
                             sn, pk, robot_pose=robot_pose, cleaning_path=cleaning_path
@@ -646,3 +653,15 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             await self.api.start_clean(sn, pk)
         await self.async_request_refresh()
         self.watch_state_transition(sn, initial_status=initial_status)
+
+    def clear_map_cache(self, sn: str | None = None) -> None:
+        """Invalidate map caches in both coordinator and API."""
+        if sn:
+            self._map_cache.pop(sn, None)
+            self._last_rendered_pose.pop(sn, None)
+            self._rooms_cache.pop(sn, None)
+        else:
+            self._map_cache.clear()
+            self._last_rendered_pose.clear()
+            self._rooms_cache.clear()
+        self.api.clear_map_cache(sn)
