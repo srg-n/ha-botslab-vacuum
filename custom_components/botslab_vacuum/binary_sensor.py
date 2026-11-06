@@ -11,10 +11,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import STATUS_ERROR
+from .const import ERROR_CODE_DESCRIPTIONS, STATUS_ERROR
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
-from .i18n import translate_error_code
 from .models import BotslabVacuumDevice
 
 PARALLEL_UPDATES: Final = 0
@@ -65,23 +64,15 @@ class BotslabProblemBinarySensor(BotslabVacuumEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return error details as attributes with automatic locale resolution."""
+        """Return error details as attributes."""
         if not self.device:
             return {"error_code": 0, "error_type": "Normal"}
         code = self.device.error_code or 0
-
-        lang = getattr(getattr(self, "hass", None), "config", None)
-        lang_code = getattr(lang, "language", "en") or "en"
-
-        desc_en = translate_error_code(code, lang="en")
-        desc_tr = translate_error_code(code, lang="tr")
-        active_desc = translate_error_code(code, lang=lang_code)
-
+        error_desc = ERROR_CODE_DESCRIPTIONS.get(
+            code, f"Error {code}" if code else "Normal"
+        )
         return {
             "error_code": code,
-            "error_type": active_desc,
-            "error_description": active_desc,
-            "error_description_en": desc_en,
-            "error_description_tr": desc_tr,
+            "error_type": error_desc,
             "status": self.device.status,
         }
