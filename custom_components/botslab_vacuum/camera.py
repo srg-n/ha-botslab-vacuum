@@ -93,6 +93,19 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
         }
         if info.dock_position:
             attrs["dock"] = list(info.dock_position)
+            if len(info.dock_position) >= 2:
+                attrs["charger_position"] = {
+                    "x": float(info.dock_position[0]),
+                    "y": float(info.dock_position[1]),
+                    "a": 0.0,
+                }
+        device = self.device
+        if device and device.robot_pose and len(device.robot_pose) >= 2:
+            attrs["vacuum_position"] = {
+                "x": float(device.robot_pose[0]),
+                "y": float(device.robot_pose[1]),
+                "a": float(device.robot_pose[2]) if len(device.robot_pose) >= 3 else 0.0,
+            }
         if info.no_go_zones:
             attrs["no_go_zones"] = info.no_go_zones
         if info.scale > 1:

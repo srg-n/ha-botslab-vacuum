@@ -277,12 +277,17 @@ def test_awkward_room_names_survive():
     assert len(selections[0]["outline"]) == 3
 
 
-def test_snippet_has_two_documents():
-    """The full snippet is a map card plus a maintenance card."""
+def test_snippet_cards():
+    """The full snippet includes the modern map card, routines card, maintenance card, and legacy map card."""
     import yaml
 
     docs = list(yaml.safe_load_all(build_full_dashboard_snippet(_device(), _ids())))
-    assert [d["type"] for d in docs] == ["custom:xiaomi-vacuum-map-card", "entities"]
+    assert [d["type"] for d in docs] == [
+        "custom:botslab-vacuum-map-card",
+        "custom:botslab-routines-card",
+        "entities",
+        "custom:xiaomi-vacuum-map-card",
+    ]
 
 
 # ----------------------------------------------------------------- crypto
@@ -1160,6 +1165,320 @@ def test_coordinator_watch_state_transition():
 
     assert final_status == STATUS_CLEANING
     assert total_attempts == 3  # Broke early on attempt 3 without waiting for max_attempts!
+
+
+# ---------------------------------------------------------------------------
+# R1: Dynamic QPush IP Resolution & Fallback Tests
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_qpush_dynamic_resolution_and_fallback():
+    """Verify resolve_qpush_gateway resolves endpoints and falls back safely."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from custom_components.botslab_vacuum.qpush import (
+        CHINA_PUSH_HOST,
+        CHINA_PUSH_PORT,
+        BotslabQPush,
+        resolve_qpush_gateway,
+    )
+
+    # 1. Successful resolution from dispatcher
+    session = MagicMock()
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(
+        return_value={
+            "errno": 0,
+            "data": [{"ip": "8.211.52.133", "p": "443"}, {"ip": "8.211.52.133", "p": "80"}],
+        }
+    )
+    session.get.return_value.__aenter__.return_value = mock_resp
+
+    endpoints = await resolve_qpush_gateway(session, "gqrwex6nq54m")
+    assert endpoints == [("8.211.52.133", 443), ("8.211.52.133", 80)]
+
+    # 2. Dispatcher failure fallback (network error / timeout)
+    session.get.side_effect = Exception("Connection timed out")
+    fallback = await resolve_qpush_gateway(session, "gqrwex6nq54m")
+    assert fallback == [("8.211.52.133", 443), ("8.211.52.133", 80)]
+
+    # 3. Non-zero errno or empty data fallback
+    session.get.side_effect = None
+    mock_resp.json = AsyncMock(return_value={"errno": 1001, "data": []})
+    session.get.return_value.__aenter__.return_value = mock_resp
+    assert await resolve_qpush_gateway(session, "gqrwex6nq54m") == [
+        ("8.211.52.133", 443),
+        ("8.211.52.133", 80),
+    ]
+
+    # 4. Legacy China QPush isolation
+    assert CHINA_PUSH_HOST == "47.254.151.104"
+    assert CHINA_PUSH_PORT == 443
+
+    # 5. Connection fallback: port 443 fails, port 80 succeeds
+    qpush = BotslabQPush(
+        session=session,
+        device_id="test_dev",
+        get_alias=lambda: "alias123",
+        on_push=lambda p: None,
+        ensure_session=AsyncMock(),
+    )
+    mock_reader = AsyncMock()
+    mock_writer = MagicMock()
+    mock_writer.write = MagicMock()
+    mock_writer.drain = AsyncMock()
+    call_log = []
+
+    async def mock_open_connection(ip, port, ssl=None):
+        assert ssl is None, "Port 443 must use raw binary TCP without TLS/SSL"
+        call_log.append((ip, port))
+        if port == 443:
+            raise OSError("Port 443 connection refused")
+        return mock_reader, mock_writer
+
+    with patch("custom_components.botslab_vacuum.qpush.resolve_qpush_gateway", AsyncMock(return_value=[("8.211.52.133", 443), ("8.211.52.133", 80)])), \
+         patch("asyncio.open_connection", side_effect=mock_open_connection), \
+         patch.object(qpush, "_read_msg", AsyncMock(side_effect=asyncio.CancelledError)):
+        try:
+            await qpush._session_once()
+        except asyncio.CancelledError:
+            pass
+
+    assert call_log == [("8.211.52.133", 443), ("8.211.52.133", 80)]
+
+
+# ---------------------------------------------------------------------------
+# R2: Map Sync & 1days Bucket Prioritization Tests
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_map_sync_and_1days_bucket_prioritization():
+    """Verify start/stop map sync and 1days bucket prioritization in get_map_json."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    session = MagicMock()
+    api = BotslabVacuumApi(session, "eu1", "m2", "q", "t")
+    api.invoke_async = AsyncMock(return_value={"code": 0, "data": {"request_id": "req_1"}})
+    api.wait_async_reply = AsyncMock(return_value=True)
+    api.invoke_sync = AsyncMock(return_value={"code": 0, "data": {}})
+
+    # start_sync_map_to_oss with 60s default
+    res = await api.start_sync_map_to_oss("SN123", "PK123", sync_duration=60)
+    api.invoke_async.assert_called_once_with(
+        "SN123", "PK123", "StartSyncMapPkgToOss", {"SyncDuration": 60}
+    )
+    assert res == {"code": 0, "data": {"request_id": "req_1"}}
+
+    # alias start_map_sync
+    api.invoke_async.reset_mock()
+    await api.start_map_sync("SN123", "PK123", duration_s=60)
+    api.invoke_async.assert_called_once_with(
+        "SN123", "PK123", "StartSyncMapPkgToOss", {"SyncDuration": 60}
+    )
+
+    # stop_sync_map_to_oss
+    await api.stop_sync_map_to_oss("SN123", "PK123")
+    api.invoke_sync.assert_called_once_with("SN123", "PK123", "StopSyncMapPkgToOss", {})
+
+    # alias stop_map_sync
+    api.invoke_sync.reset_mock()
+    await api.stop_map_sync("SN123", "PK123")
+    api.invoke_sync.assert_called_once_with("SN123", "PK123", "StopSyncMapPkgToOss", {})
+
+    # Legacy 360 returns {} immediately without calling invoke
+    api_legacy = BotslabVacuumApi(session, "cn", "m2", "q", "t")
+    assert api_legacy.is_legacy_360 is True
+    assert await api_legacy.start_sync_map_to_oss("SN_LEGACY", "PK_LEGACY") == {}
+    assert await api_legacy.stop_sync_map_to_oss("SN_LEGACY", "PK_LEGACY") == {}
+
+    # 1days bucket prioritization during active cleaning
+    props_active = {
+        "WorkingStatus": 2,  # Active cleaning (CleanInAreas)
+        "MapPkgOssInfo": '{"Url": "https://eu1-ali-1days.oss-eu-central-1.aliyuncs.com/map_active.bin"}',
+    }
+    signs = {
+        "https://eu1-ali-1days.oss-eu-central-1.aliyuncs.com/map_active.bin": "sig1",
+        "https://eu1-ali-90days.oss-eu-central-1.aliyuncs.com/map_archive.bin": "sig2",
+    }
+    api.get_property_extended = AsyncMock(return_value=(props_active, signs))
+    doc_1days = {"width": 100, "height": 100, "map": "data1", "smartArea": {"value": []}}
+    doc_90days = {
+        "width": 100,
+        "height": 100,
+        "map": "data2",
+        "smartArea": {"value": [{"id": 1, "vertexs": [[0, 0], [1, 1], [1, 0]]}]},
+    }
+
+    async def mock_fetch(url, signed):
+        if "1days" in url:
+            return doc_1days
+        return doc_90days
+
+    api._fetch_signed_json = AsyncMock(side_effect=mock_fetch)
+    best_doc, _ = await api.get_map_json("SN123", "PK123")
+    assert best_doc["map"] == doc_1days["map"]
+
+    # When idle/docked, highest polygon quality (90days) is preferred
+    props_idle = {
+        "WorkingStatus": 7,  # Docked (ChargeDone)
+        "MapPkgOssInfo": '{"Url": "https://eu1-ali-1days.oss-eu-central-1.aliyuncs.com/map_active.bin"}',
+    }
+    api.get_property_extended = AsyncMock(return_value=(props_idle, signs))
+    best_doc_idle, _ = await api.get_map_json("SN123", "PK123")
+    assert best_doc_idle["map"] == doc_90days["map"]
+
+
+# ---------------------------------------------------------------------------
+# R3: Two-Stage Polling, 50s Keepalive & CurrentLocation Parsing Tests
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_r3_coordinator_two_stage_polling_and_keepalive():
+    """Verify R3 scan intervals, 50s keepalive loop, and CurrentLocation parsing."""
+    from datetime import timedelta
+    import json
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from custom_components.botslab_vacuum.const import (
+        ACTIVE_SCAN_INTERVAL,
+        DEFAULT_POLL_INTERVAL_ACTIVE,
+        DEFAULT_POLL_INTERVAL_IDLE,
+        DEFAULT_SCAN_INTERVAL,
+        MAP_SYNC_DURATION,
+        MAP_SYNC_KEEPALIVE_INTERVAL,
+        STATUS_CLEANING,
+        STATUS_DOCKED,
+    )
+    from custom_components.botslab_vacuum.coordinator import BotslabVacuumCoordinator
+
+    assert DEFAULT_SCAN_INTERVAL == 300
+    assert ACTIVE_SCAN_INTERVAL == 5
+    assert MAP_SYNC_KEEPALIVE_INTERVAL == 50
+    assert MAP_SYNC_DURATION == 60
+    assert DEFAULT_POLL_INTERVAL_ACTIVE == 30
+    assert DEFAULT_POLL_INTERVAL_IDLE == 120
+
+    # CurrentLocation parsing test (list and stringified)
+    loc_list = [1420, -510, 90]
+    loc_str = json.dumps(loc_list)
+
+    def parse_pose(raw_loc):
+        if isinstance(raw_loc, str):
+            try:
+                raw_loc = json.loads(raw_loc)
+            except Exception:
+                pass
+        if isinstance(raw_loc, (list, tuple)):
+            raw_loc = list(raw_loc)
+            if len(raw_loc) >= 2:
+                return [float(x) for x in raw_loc]
+        return None
+
+    assert parse_pose(loc_list) == [1420.0, -510.0, 90.0]
+    assert parse_pose(loc_str) == [1420.0, -510.0, 90.0]
+    assert parse_pose(None) is None
+
+    # Coordinator polling interval & keepalive watchdog behavior
+    hass = MagicMock()
+    entry = MagicMock()
+    entry.options = {}
+    entry.data = {}
+    entry.entry_id = "test_entry"
+    api = MagicMock()
+    api.is_legacy_360 = False
+    api.start_sync_map_to_oss = AsyncMock()
+    api.stop_sync_map_to_oss = AsyncMock()
+    api.get_devices = AsyncMock(return_value=[{"device_name": "SN123", "product_key": "PK123", "device_title": "Botslab S8"}])
+    api.get_live_map = AsyncMock(return_value=b"png")
+    api.fetch_rooms = AsyncMock(return_value=[])
+
+    coord = BotslabVacuumCoordinator(hass, entry, api)
+    assert coord._last_map_sync_time == {}
+
+    # 1. Simulate active cleaning state
+    props_cleaning = {
+        "WorkingStatus": 2,  # Cleaning
+        "CurrentLocation": [1420, -510, 90],
+        "BatteryLevel": 90,
+    }
+    api.get_property_extended = AsyncMock(return_value=(props_cleaning, {}))
+
+    # First update: switches interval to ACTIVE_SCAN_INTERVAL (5s) and sends start_sync_map_to_oss
+    with patch("time.time", return_value=1000.0):
+        data = await coord._async_update_data()
+        assert coord.update_interval == timedelta(seconds=ACTIVE_SCAN_INTERVAL)
+        assert data["SN123"].status == STATUS_CLEANING
+        assert data["SN123"].current_location == [1420, -510, 90]
+        assert data["SN123"].robot_pose == [1420.0, -510.0, 90.0]
+        api.start_sync_map_to_oss.assert_called_once_with("SN123", "PK123", sync_duration=MAP_SYNC_DURATION)
+        assert coord._last_map_sync_time["SN123"] == 1000.0
+
+    # Next update at t=1030s (<50s): should NOT send start_sync_map_to_oss again
+    api.start_sync_map_to_oss.reset_mock()
+    with patch("time.time", return_value=1030.0):
+        await coord._async_update_data()
+        api.start_sync_map_to_oss.assert_not_called()
+
+    # Next update at t=1055s (>=50s keepalive elapsed): triggers start_sync_map_to_oss watchdog
+    with patch("time.time", return_value=1055.0):
+        await coord._async_update_data()
+        api.start_sync_map_to_oss.assert_called_once_with("SN123", "PK123", sync_duration=MAP_SYNC_DURATION)
+        assert coord._last_map_sync_time["SN123"] == 1055.0
+
+    # 2. Cleaning ends -> docked: sends stop_sync_map_to_oss, resets timer, and sets interval to DEFAULT_SCAN_INTERVAL (300s)
+    props_docked = {
+        "WorkingStatus": 7,  # Docked
+        "CurrentLocation": [0, 0, 0],
+        "BatteryLevel": 100,
+    }
+    api.get_property_extended = AsyncMock(return_value=(props_docked, {}))
+    with patch("time.time", return_value=1060.0):
+        data_docked = await coord._async_update_data()
+        assert coord.update_interval == timedelta(seconds=DEFAULT_SCAN_INTERVAL)
+        assert data_docked["SN123"].status == STATUS_DOCKED
+        api.stop_sync_map_to_oss.assert_called_once_with("SN123", "PK123")
+        assert coord._last_map_sync_time["SN123"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# R4: Vacuum Attributes & Camera Rendering Tests
+# ---------------------------------------------------------------------------
+def test_r4_vacuum_attributes_and_camera():
+    """Verify vacuum extra_state_attributes contains current_location, cleaning_path, robot_pose."""
+    from unittest.mock import MagicMock
+    from custom_components.botslab_vacuum.camera import BotslabMapCamera
+    from custom_components.botslab_vacuum.models import BotslabMapInfo
+    from custom_components.botslab_vacuum.vacuum import BotslabVacuum
+
+    dev = MagicMock()
+    dev.device_name = "SN123"
+    dev.product_key = "PK123"
+    dev.current_location = [1420, -510, 90]
+    dev.cleaning_path = [[0, 0], [100, 20], [1420, -510]]
+    dev.robot_pose = [1420.0, -510.0, 90.0]
+    dev.cleaning_time_minutes = 25
+    dev.cleaned_area_sqm = 18.5
+    dev.consumables.filter_life_pct = 85
+    dev.consumables.main_brush_life_pct = 80
+    dev.consumables.side_brush_life_pct = 75
+    dev.consumables.sensor_clean_pct = 90
+    dev.status = "cleaning"
+    dev.rooms = []
+
+    coordinator = MagicMock()
+    coordinator.data = {"SN123": dev}
+    vac = BotslabVacuum(coordinator, dev)
+    attrs = vac.extra_state_attributes
+
+    assert attrs["current_location"] == [1420, -510, 90]
+    assert attrs["cleaning_path"] == [[0, 0], [100, 20], [1420, -510]]
+    assert attrs["robot_pose"] == [1420.0, -510.0, 90.0]
+
+    # Verify camera extra_state_attributes extracts vacuum_position from robot_pose
+    map_info = BotslabMapInfo(width=100, height=100, x_min=-5.0, y_min=-5.0, resolution=0.05)
+    dev.map_info = map_info
+    camera = BotslabMapCamera(coordinator, dev)
+    cam_attrs = camera.extra_state_attributes
+    assert cam_attrs["vacuum_position"] == {"x": 1420.0, "y": -510.0, "a": 90.0}
+
 
 
 

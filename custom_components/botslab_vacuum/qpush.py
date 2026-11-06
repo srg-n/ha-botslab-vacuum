@@ -30,6 +30,10 @@ _LOGGER = logging.getLogger(__name__)
 
 QPUSH_APPID = "gqrwex6nq54m"
 QPUSH_DISPATCHER = "https://dp.push.dc.360.cn/v1/list/ip"
+QPUSH_FALLBACK_ENDPOINTS: list[tuple[str, int]] = [
+    ("8.211.52.133", 443),
+    ("8.211.52.133", 80),
+]
 QPUSH_PROTO_VERSION = 5
 QPUSH_OP_PING = 0
 QPUSH_OP_BIND = 2
@@ -41,6 +45,41 @@ QPUSH_HEARTBEAT = 30
 REQUEST_TIMEOUT = 10
 _RECONNECT_MIN = 5
 _RECONNECT_MAX = 180
+
+
+async def resolve_qpush_gateway(
+    session: aiohttp.ClientSession, app_id: str = QPUSH_APPID
+) -> list[tuple[str, int]]:
+    """Resolve dynamic gateway IPs from the Qihoo GSLB dispatcher.
+
+    Port 443 is RAW BINARY TCP without TLS/SSL as primary, Port 80 as fallback.
+    If dispatcher fails, times out, or returns invalid/empty data, safely fallback
+    to [("8.211.52.133", 443), ("8.211.52.133", 80)].
+    """
+    try:
+        url = f"{QPUSH_DISPATCHER}?appId={app_id}"
+        async with session.get(
+            url,
+            timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json(content_type=None)
+                if isinstance(data, dict) and data.get("errno") in (0, "0", None):
+                    servers = data.get("data")
+                    if isinstance(servers, list) and servers:
+                        resolved: list[tuple[str, int]] = []
+                        for s in servers:
+                            if isinstance(s, dict) and "ip" in s:
+                                ip = str(s["ip"]).strip()
+                                port = int(s.get("p") or 443)
+                                if ip and (ip, port) not in resolved:
+                                    resolved.append((ip, port))
+                        if resolved:
+                            return resolved
+    except Exception as err:
+        _LOGGER.debug("Dynamic QPush resolution error: %s; using Frankfurt fallback", err)
+
+    return list(QPUSH_FALLBACK_ENDPOINTS)
 
 
 def _encode(op: int, header: dict[str, str] | None = None) -> bytes:
@@ -114,29 +153,9 @@ class BotslabQPush:
             backoff = min(backoff * 2, _RECONNECT_MAX)
 
     async def _get_server(self) -> tuple[str, int]:
-        """Fetch push gateway (IP and port) from the Qihoo dispatcher."""
-        params = {
-            "appId": QPUSH_APPID,
-            "source": QPUSH_APPID,
-            "version": "2.5.23",
-            "retry": "0",
-            "device_id": self._device_id,
-        }
-        try:
-            async with self._session.get(
-                QPUSH_DISPATCHER,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
-            ) as resp:
-                data = await resp.json(content_type=None)
-        except Exception as err:
-            raise ConnectionError(f"Dispatcher error: {err}") from err
-
-        servers = data.get("data") or []
-        if not servers:
-            raise ConnectionError("Dispatcher returned no push servers")
-        first = servers[0]
-        return first["ip"], int(first.get("p") or 443)
+        """Fetch push gateway (IP and port) using dynamic resolution or fallback."""
+        endpoints = await resolve_qpush_gateway(self._session, QPUSH_APPID)
+        return endpoints[0]
 
     async def _session_once(self) -> None:
         """Single connection lifecycle: connect, bind, alias, listen."""
@@ -145,9 +164,29 @@ class BotslabQPush:
         if not alias:
             raise ConnectionError("No push_alias available yet")
 
-        ip, port = await self._get_server()
-        _LOGGER.debug("QPush connecting to %s:%s", ip, port)
-        reader, writer = await asyncio.open_connection(ip, port)
+        endpoints = await resolve_qpush_gateway(self._session, QPUSH_APPID)
+        reader: asyncio.StreamReader | None = None
+        writer: asyncio.StreamWriter | None = None
+        last_error: Exception | None = None
+
+        for ip, port in endpoints:
+            _LOGGER.debug("QPush connecting to %s:%s (raw TCP, ssl=None)", ip, port)
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(ip, port, ssl=None),
+                    timeout=REQUEST_TIMEOUT,
+                )
+                _LOGGER.debug("QPush connected successfully to %s:%s", ip, port)
+                break
+            except Exception as err:
+                last_error = err
+                _LOGGER.debug("Failed connecting to QPush endpoint %s:%s: %s", ip, port, err)
+
+        if reader is None or writer is None:
+            raise ConnectionError(
+                f"Failed to connect to any QPush endpoint {endpoints}: {last_error}"
+            ) from last_error
+
         self._writer = writer
 
         # OP_BIND

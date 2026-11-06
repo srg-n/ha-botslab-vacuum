@@ -11,6 +11,8 @@ botslab_bridge.py
 botslab_map_card.yaml
 
 # Local scratch / reverse-engineering artifacts (never publish)
+docs/botslab_network_and_telemetry_architecture.md
+botslab_network_and_telemetry_architecture.md
 eskiseyler/
 *.har
 oss_*.txt
@@ -67,3 +69,5 @@ htmlcov/
 *.swo
 .DS_Store
 Thumbs.db
+.agents/
+scratch/

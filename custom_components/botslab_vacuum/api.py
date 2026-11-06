@@ -16,6 +16,7 @@ from typing import Any
 import aiohttp
 
 from .const import (
+    ACTIVE_STATUSES,
     APP_KEY,
     APP_SECRET,
     APP_VER,
@@ -971,26 +972,35 @@ class BotslabVacuumApi:
         # the room segmentation) arrive in the same payload.
         map_url = self._parse_oss_info(props.get("MapPkgOssInfo")).get("Url")
 
-        candidates: list[tuple[dict[str, Any], str]] = []
+        candidates: list[tuple[dict[str, Any], str, str]] = []
 
         async def consider(url: str, label: str) -> None:
             signed = signs.get(url) or self.cached_s3_signs.get(url)
             document = await self._fetch_signed_json(url, signed)
             if document and (document.get("smartArea") or document.get("map")):
-                candidates.append((document, label))
+                candidates.append((document, label, url))
 
         if map_url:
             await consider(map_url, "current map")
 
         # Related objects arrive signed alongside the current one. Try the ones
-        # that look like maps or room definitions; there are usually few.
-        for url in self.cached_s3_signs:
+        # that look like maps, 1days live packages, or room definitions.
+        all_sign_urls = dict(self.cached_s3_signs)
+        if signs:
+            all_sign_urls.update(signs)
+
+        for url in all_sign_urls:
             if url == map_url:
                 continue
             tail = url.rsplit("/", 2)
             folder = tail[-2] if len(tail) >= 2 else ""
-            if folder in ("temp", "robot_config", "180days", "90days", "long"):
-                await consider(url, folder or "related object")
+            matched_folder = next(
+                (f for f in ("1days", "temp", "robot_config", "180days", "90days", "long") if f in url or f == folder),
+                None,
+            )
+            if matched_folder is not None:
+                label = "1days live map" if "1days" in matched_folder else (matched_folder or folder or "related object")
+                await consider(url, label)
 
         if not candidates:
             return None, props
@@ -999,13 +1009,30 @@ class BotslabVacuumApi:
         with_raster = [c for c in candidates if usable(c[0])]
         pool = with_raster or candidates
 
-        best_doc, best_source = max(pool, key=lambda c: self._map_quality(c[0]))
+        # Check if active cleaning is ongoing
+        raw_status = props.get("WorkingStatus")
+        is_active_cleaning = (
+            working_status_to_state(raw_status) == STATUS_CLEANING
+            or raw_status in (1, 2, 3, 10, "1", "2", "3", "10")
+            or raw_status in ACTIVE_STATUSES
+        )
+
+        if is_active_cleaning:
+            # During active cleaning, prioritize 1days bucket and /temp/ URLs over older 90days/long archives
+            live_pool = [
+                c for c in pool
+                if "1days" in c[2] or "/temp/" in c[2] or "1days" in c[1].lower() or "temp" in c[1].lower()
+            ]
+            if live_pool:
+                pool = live_pool
+
+        best_doc, best_source, _ = max(pool, key=lambda c: self._map_quality(c[0]))
         vertices, room_count = self._map_quality(best_doc)
 
         if len(pool) > 1:
             others = ", ".join(
                 f"{src} ({self._map_quality(doc)[0]} vertices)"
-                for doc, src in pool
+                for doc, src, _ in pool
                 if src != best_source
             )
             _LOGGER.debug(
@@ -1019,7 +1046,7 @@ class BotslabVacuumApi:
         # A room-only document carries no raster, so borrow the grid from a
         # document that has one to keep geometry and image consistent.
         if not usable(best_doc):
-            for doc, _ in pool:
+            for doc, _, _ in pool:
                 if usable(doc):
                     merged = dict(doc)
                     for key in ("map", "width", "height", "x_min", "y_min", "resolution"):
@@ -1524,6 +1551,7 @@ class BotslabVacuumApi:
         repeat_times: int = 1,
         fan_speed: str | None = None,
         water_level: str | None = None,
+        rooms_config: dict[int | str, dict[str, Any]] | list[dict[str, Any]] | None = None,
     ) -> None:
         """Clean specific room(s) by ID via StartCleanInAreas or setAreaAndCleaning."""
         if self.is_legacy_360:
@@ -1581,12 +1609,35 @@ class BotslabVacuumApi:
             water_level,
         )
 
+        norm_room_cfg: dict[str, dict[str, Any]] = {}
+        if isinstance(rooms_config, dict):
+            for k, v in rooms_config.items():
+                if isinstance(v, dict):
+                    norm_room_cfg[str(k).strip()] = v
+        elif isinstance(rooms_config, list):
+            for item in rooms_config:
+                if isinstance(item, dict):
+                    rid_key = str(item.get("room_id", item.get("id", ""))).strip()
+                    if rid_key:
+                        norm_room_cfg[rid_key] = item
+
         for r in room_list:
             rid = r.get("id")
-            if rid in int_room_ids or str(rid) in str_room_ids:
-                r["cleanTimes"] = repeat_times
-                if water_level and water_level in WATER_LEVEL_TO_INT:
-                    r["waterPump"] = WATER_LEVEL_TO_INT[water_level]
+            str_rid = str(rid)
+            if rid in int_room_ids or str_rid in str_room_ids:
+                rcfg = norm_room_cfg.get(str_rid, {})
+                r_repeats = rcfg.get("repeat_times", repeat_times)
+                r_speed = rcfg.get("fan_speed", fan_speed)
+                r_water = rcfg.get("water_level", water_level)
+
+                r["cleanTimes"] = int(r_repeats)
+                if r_speed:
+                    r["windMode"] = FAN_SPEEDS_HA_TO_360.get(str(r_speed).lower(), "auto")
+                if r_water is not None:
+                    if isinstance(r_water, int):
+                        r["waterPump"] = r_water
+                    elif str(r_water).lower() in WATER_LEVEL_TO_INT:
+                        r["waterPump"] = WATER_LEVEL_TO_INT[str(r_water).lower()]
 
         # 1. Invoke SetCleanPolicyList first (as required by Botslab / 360 protocol)
         policy = {
@@ -1942,22 +1993,36 @@ class BotslabVacuumApi:
             )
             await self.invoke_sync(sn, product_key, "SetVolumeLevel", {"VolumeLevel": vol})
 
-    async def start_map_sync(self, sn: str, product_key: str, duration_s: int = 60) -> None:
-        """Tell robot to sync live map package to OSS."""
+    async def start_sync_map_to_oss(
+        self, sn: str, product_key: str, sync_duration: int = 60
+    ) -> dict[str, Any]:
+        """Trigger vacuum firmware to stream fresh map packages to 1days OSS every 5s with safety timeout."""
         if self.is_legacy_360:
-            return
+            return {}
         res = await self.invoke_async(
-            sn, product_key, "StartSyncMapPkgToOss", {"SyncDuration": int(duration_s)}
+            sn, product_key, "StartSyncMapPkgToOss", {"SyncDuration": int(sync_duration)}
         )
-        req_id = res.get("data", {}).get("request_id")
+        req_id = (res or {}).get("data", {}).get("request_id")
         if req_id:
             await self.wait_async_reply(req_id, timeout=5)
+        return res or {}
 
-    async def stop_map_sync(self, sn: str, product_key: str) -> None:
-        """Tell robot to stop syncing live map to OSS."""
+    async def stop_sync_map_to_oss(self, sn: str, product_key: str) -> dict[str, Any]:
+        """Stop rapid map streaming when cleaning ends."""
         if self.is_legacy_360:
-            return
-        await self.invoke_sync(sn, product_key, "StopSyncMapPkgToOss", {})
+            return {}
+        res = await self.invoke_sync(sn, product_key, "StopSyncMapPkgToOss", {})
+        return res or {}
+
+    async def start_map_sync(
+        self, sn: str, product_key: str, duration_s: int = 60
+    ) -> dict[str, Any]:
+        """Backwards-compatible alias for start_sync_map_to_oss."""
+        return await self.start_sync_map_to_oss(sn, product_key, sync_duration=duration_s)
+
+    async def stop_map_sync(self, sn: str, product_key: str) -> dict[str, Any]:
+        """Backwards-compatible alias for stop_sync_map_to_oss."""
+        return await self.stop_sync_map_to_oss(sn, product_key)
 
     async def set_no_go_zones(
         self,

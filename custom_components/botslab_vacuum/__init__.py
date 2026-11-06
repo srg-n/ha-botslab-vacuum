@@ -74,7 +74,7 @@ from .qpush import BotslabChinaQPush, BotslabQPush
 _LOGGER = logging.getLogger(__name__)
 
 # Frontend cards bundled in ./www and auto-registered so dashboards work zero-config
-_CARDS = ["botslab-routines-card.js", "xiaomi-vacuum-map-card.js"]
+_CARDS = ["botslab-routines-card.js", "botslab-vacuum-map-card.js", "xiaomi-vacuum-map-card.js"]
 
 
 async def _register_resources(hass: HomeAssistant, base: str, ver: str) -> bool:
@@ -467,6 +467,7 @@ def _register_services(hass: HomeAssistant) -> None:
             repeat = 1
         speed = call.data.get(ATTR_FAN_SPEED)
         water = call.data.get(ATTR_WATER_LEVEL)
+        rooms_config = call.data.get("rooms_config")
 
         room_ids = _parse_room_ids(raw_rooms)
         wanted_names = [n.strip().lower() for n in (room_names or []) if n and n.strip()]
@@ -510,6 +511,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 repeat_times=repeat,
                 fan_speed=speed,
                 water_level=water,
+                rooms_config=rooms_config,
             )
             await coordinator.async_request_refresh()
             coordinator.watch_state_transition(dev.device_name, initial_status=initial_status)
@@ -718,6 +720,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.Coerce(int),
                 vol.Optional(ATTR_FAN_SPEED): cv.string,
                 vol.Optional(ATTR_WATER_LEVEL): cv.string,
+                vol.Optional("rooms_config"): vol.Any(dict, list),
             },
             extra=vol.ALLOW_EXTRA,
         ),
@@ -744,6 +747,10 @@ def _register_services(hass: HomeAssistant) -> None:
             extra=vol.ALLOW_EXTRA,
         ),
     )
+
+    # Compatibility aliases for vacuum segment and zone cleaning
+    hass.services.async_register(DOMAIN, "vacuum_clean_segment", handle_clean_rooms)
+    hass.services.async_register(DOMAIN, "vacuum_clean_zone", handle_clean_zone)
 
     hass.services.async_register(
         DOMAIN,

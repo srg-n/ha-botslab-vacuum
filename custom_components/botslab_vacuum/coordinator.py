@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 import json
 import logging
+import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -18,6 +19,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import BotslabVacuumApi, working_status_to_state
 from .const import (
+    ACTIVE_SCAN_INTERVAL,
     ACTIVE_STATUSES,
     BATTERY_KEYS_360,
     CONF_EMAIL,
@@ -29,10 +31,14 @@ from .const import (
     CONF_T,
     DEFAULT_POLL_INTERVAL_ACTIVE,
     DEFAULT_POLL_INTERVAL_IDLE,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     FAN_SPEEDS_360_TO_HA,
     INT_TO_MOP_MODE,
+    MAP_SYNC_DURATION,
+    MAP_SYNC_KEEPALIVE_INTERVAL,
     MODE_TO_FAN_SPEED,
+    STATUS_CLEANING,
     STATUS_ERROR,
 )
 from .models import BotslabConsumableStatus, BotslabMapInfo, BotslabRoom, BotslabVacuumDevice
@@ -131,6 +137,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self._map_cache: dict[str, bytes] = {}
         self._last_active_state: bool | None = None
         self._burst_poll_tasks: dict[str, asyncio.Task] = {}
+        self._last_map_sync_time: dict[str, float] = {}
 
     async def ensure_valid_session(self) -> None:
         """Ensure API has a valid session id and push alias, re-authenticating if necessary."""
@@ -320,8 +327,10 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                     current_loc = json.loads(current_loc)
                 except Exception:
                     pass
-            if isinstance(current_loc, (list, tuple)) and len(current_loc) >= 2:
-                robot_pose = [float(x) for x in current_loc]
+            if isinstance(current_loc, (list, tuple)):
+                current_loc = list(current_loc)
+                if len(current_loc) >= 2:
+                    robot_pose = [float(x) for x in current_loc]
 
             raw_oss = props.get("MapPkgOssInfo")
             oss_dict = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
@@ -440,20 +449,50 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             )
             device_map[sn] = dev
 
-        # Adaptive Polling Interval Adjustment
-        any_active = any(d.status in ACTIVE_STATUSES for d in device_map.values())
-        if any_active != self._last_active_state:
-            self._last_active_state = any_active
-            new_interval = timedelta(
-                seconds=self.poll_interval_active if any_active else self.poll_interval_idle
-            )
-            self.update_interval = new_interval
+        # Two-stage dynamic polling interval & map sync keepalive watchdog
+        now = time.time()
+        any_cleaning = any(d.status == STATUS_CLEANING for d in device_map.values())
+        if any_cleaning:
+            self.update_interval = timedelta(seconds=ACTIVE_SCAN_INTERVAL)
+        else:
+            self.update_interval = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
+
+        if any_cleaning != self._last_active_state:
+            self._last_active_state = any_cleaning
             _LOGGER.info(
-                "Botslab vacuum state changed (active=%s). "
-                "Adaptive polling interval adjusted to %s seconds.",
-                any_active,
-                int(new_interval.total_seconds()),
+                "Botslab vacuum state changed (cleaning=%s). "
+                "Polling interval adjusted to %s seconds.",
+                any_cleaning,
+                int(self.update_interval.total_seconds()),
             )
+
+        for sn, dev in device_map.items():
+            pk = dev.product_key
+            if dev.status == STATUS_CLEANING:
+                last_sync = self._last_map_sync_time.get(sn, 0.0)
+                if now - last_sync >= MAP_SYNC_KEEPALIVE_INTERVAL:
+                    try:
+                        await self.api.start_sync_map_to_oss(
+                            sn, pk, sync_duration=MAP_SYNC_DURATION
+                        )
+                        self._last_map_sync_time[sn] = now
+                        _LOGGER.debug(
+                            "Sent map sync keepalive to %s (watchdog=%ss)",
+                            sn,
+                            MAP_SYNC_DURATION,
+                        )
+                    except Exception as err:
+                        _LOGGER.debug(
+                            "Failed sending map sync keepalive for %s: %s", sn, err
+                        )
+            else:
+                if self._last_map_sync_time.get(sn, 0.0) > 0:
+                    try:
+                        await self.api.stop_sync_map_to_oss(sn, pk)
+                        _LOGGER.debug("Sent stop map sync to %s", sn)
+                    except Exception as err:
+                        _LOGGER.debug("Failed sending stop map sync for %s: %s", sn, err)
+                    self._last_map_sync_time[sn] = 0.0
 
         # Remove stale devices from device registry
         try:

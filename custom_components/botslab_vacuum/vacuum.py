@@ -133,6 +133,8 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             "clean_id": dev.clean_id,
             "clean_sub_status": dev.clean_sub_status,
             "current_location": dev.current_location,
+            "cleaning_path": dev.cleaning_path,
+            "robot_pose": dev.robot_pose,
             "dock_position": dev.dock_position,
             "no_go_zones": dev.no_go_zones,
             "error_code": dev.error_code,
@@ -214,6 +216,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         repeat_times: int = 1,
         fan_speed: str | None = None,
         water_level: str | None = None,
+        rooms_config: dict[int | str, dict[str, Any]] | list[dict[str, Any]] | None = None,
     ) -> None:
         """Clean specific room(s) by ID or name with optional water level."""
         if not self.device:
@@ -237,6 +240,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             repeat_times,
             fan_speed or self.fan_speed,
             water_level,
+            rooms_config=rooms_config,
         )
         await self.coordinator.async_request_refresh()
         self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
@@ -297,3 +301,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         if not self.device:
             return
         await self.coordinator.async_refresh_rooms(self.device.device_name)
+
+
+# Alias for backward compatibility
+BotslabVacuum = BotslabVacuumRobot

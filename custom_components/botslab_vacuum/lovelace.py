@@ -321,6 +321,63 @@ cards:
 """
 
 
+def build_botslab_map_card(
+    device: BotslabVacuumDevice, entity_ids: Mapping[str, str]
+) -> str:
+    """Return a complete botslab-vacuum-map-card configuration for one robot.
+
+    This card is bundled with the integration, provides an interactive visual GUI editor,
+    supports per-room customized cleaning (individual suction, water level, and repeat cycles),
+    and automatically reads calibration, outlines, and robot/dock markers from camera attributes.
+    """
+    vacuum_id = entity_ids.get("vacuum", "vacuum.botslab_vacuum")
+    camera_id = entity_ids.get("camera", "camera.botslab_vacuum_cleaning_map")
+    title = device.device_title or "Botslab Vacuum"
+
+    return f"""# ==============================================================================
+# Botslab Vacuum Map Card (ÖNERİLEN / RECOMMENDED)
+#
+# Kart Türü: type: custom:botslab-vacuum-map-card
+# - Entegre görsel kart düzenleyici (Visual UI Editor)
+# - Odaya özel temizlik modu (Her oda için ayrı emiş gücü, su seviyesi, tur sayısı)
+# - Harita üzerinde robot ve şarj istasyonu konumları
+# - Oda temizliği, bölge temizliği, nokta temizliği (Go To / Spot)
+# ==============================================================================
+
+type: custom:botslab-vacuum-map-card
+entity: {vacuum_id}
+map_entity: {camera_id}
+title: {_yaml_str(title)}
+default_mode: room
+"""
+
+
+def build_routines_card(
+    device: BotslabVacuumDevice, entity_ids: Mapping[str, str]
+) -> str:
+    """Return a botslab-routines-card configuration for this robot.
+
+    This card is bundled with the integration, allowing users to create,
+    edit, and execute scheduled cleaning routines directly from the dashboard.
+    """
+    vacuum_id = entity_ids.get("vacuum", "vacuum.botslab_vacuum")
+    schedules_id = entity_ids.get("schedules")
+    schedules_prop = f"\nschedules_entity: {schedules_id}" if schedules_id else ""
+
+    return f"""# ==============================================================================
+# Botslab Routines Card (Temizlik Rutinleri / Cleaning Schedules)
+#
+# Kart Türü: type: custom:botslab-routines-card
+# - Zamanlanmış oda/tüm ev temizlik rutinleri oluşturma ve düzenleme
+# - Emiş gücü, geçiş sayısı ve temizlik sırası belirleme
+# - Tek tıkla rutin başlatma ve aktif/pasif anahtarı
+# ==============================================================================
+
+type: custom:botslab-routines-card
+entity: {vacuum_id}{schedules_prop}
+"""
+
+
 def build_full_dashboard_snippet(
     device: BotslabVacuumDevice,
     entity_ids: Mapping[str, str],
@@ -329,8 +386,13 @@ def build_full_dashboard_snippet(
 ) -> str:
     """Return complete dashboard snippet, tailored for modern or legacy 360 robots."""
     if is_legacy:
-        return build_legacy_dashboard_card(device, entity_ids, lang=lang)
+        return (
+            f"{build_legacy_dashboard_card(device, entity_ids, lang=lang)}\n---\n"
+            f"{build_routines_card(device, entity_ids)}\n"
+        )
     return (
-        f"{build_map_card(device, entity_ids)}\n---\n"
-        f"{build_maintenance_card(device, entity_ids)}\n"
+        f"{build_botslab_map_card(device, entity_ids)}\n---\n"
+        f"{build_routines_card(device, entity_ids)}\n---\n"
+        f"{build_maintenance_card(device, entity_ids)}\n---\n"
+        f"{build_map_card(device, entity_ids)}\n"
     )

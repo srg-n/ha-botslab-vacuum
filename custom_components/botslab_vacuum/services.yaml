@@ -46,6 +46,12 @@ clean_rooms:
             - low
             - medium
             - high
+    rooms_config:
+      name: Rooms Configuration
+      description: "Per-room customized cleaning settings (suction power, water flow, repeat passes for each room)."
+      example: '{"0": {"fan_speed": "powerful", "water_level": "high", "repeat_times": 2}}'
+      selector:
+        object:
 
 clean_zone:
   name: Clean Zone
@@ -306,3 +312,45 @@ run_schedule:
         number:
           min: 0
           max: 50
+
+vacuum_clean_segment:
+  name: Clean Segments (Alias)
+  description: Alias for clean_rooms for compatibility with generic vacuum cards.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    segments:
+      name: Segments
+      description: Room IDs or segments to clean.
+      selector:
+        object:
+    repeats:
+      name: Repeats
+      description: Number of passes.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 2
+
+vacuum_clean_zone:
+  name: Clean Zone (Alias)
+  description: Alias for clean_zone for compatibility with generic vacuum cards.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    zone:
+      name: Zone
+      description: Zone bounding box.
+      selector:
+        object:
+    repeats:
+      name: Repeats
+      description: Number of passes.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 2

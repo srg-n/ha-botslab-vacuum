@@ -34,6 +34,7 @@ CARD_ENTITIES: tuple[tuple[str, str, str], ...] = (
     ("vacuum", "vacuum", "vacuum"),
     ("camera", "camera", "map_camera"),
     ("battery", "sensor", "battery"),
+    ("schedules", "sensor", "schedules"),
     *((key, platform, suffix) for key, platform, suffix, _ in MAINTENANCE_ROWS),
 )
 

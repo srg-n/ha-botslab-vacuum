@@ -32,6 +32,30 @@
 
 
 # ==============================================================================
+# CARD 0 - Botslab Vacuum Map Card (ÖNERİLEN / RECOMMENDED)
+# ==============================================================================
+# Entegre edilmiş modern React harita kartı:
+# - CleanGenius / gereksiz kontroller tamamen kaldırılmıştır.
+# - Odaya Özel Temizlik: Her oda için ayrı ayrı çekim gücü, su seviyesi ve
+#   tur sayısı belirlenebilir (Per-room customized cleaning).
+# - Oda temizliği, serbest bölge temizliği, nokta temizliği (Go To / Spot).
+# - Harita üzerinde robot ve şarj istasyonu konum ikonları.
+# - Görsel Etkileşimli Kart Düzenleyici (Visual UI Editor) desteği.
+# ==============================================================================
+type: custom:botslab-vacuum-map-card
+entity: >
+  {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
+                              | map(attribute='entity_id') | list -%}
+  {{ ids | first if ids else 'vacuum.botslab_vacuum' }}
+map_entity: >
+  {%- set cams = states('camera') | selectattr('entity_id', 'match', '_map_camera$')
+                               | map(attribute='entity_id') | list -%}
+  {{ cams | first if cams else 'camera.botslab_map_camera' }}
+title: Botslab Vacuum
+default_mode: room
+
+---
+# ==============================================================================
 # CARD 1 - Vacuum control (standard Home Assistant card)
 # ==============================================================================
 type: vacuum-card

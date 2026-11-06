@@ -38,11 +38,11 @@ CATALOG: dict[str, dict[str, str]] = {
             "```yaml\n{snippet}\n```"
         ),
         "map_card_success": (
-            "Map card configuration generated for **{title}** ({room_count} rooms).\n\n"
+            "Map and routine card configurations generated for **{title}** ({room_count} rooms).\n\n"
             "Saved to: `{filename}` in your Home Assistant configuration directory.\n\n"
             "📋 **Direct Setup**: No file manager needed! Copy the YAML snippet below and paste it into **Edit Dashboard ➔ + Add Card ➔ Manual** (at the bottom):\n\n"
             "```yaml\n{snippet}\n```\n\n"
-            "Requires the bundled *xiaomi-vacuum-map-card* frontend card."
+            "Includes bundled *botslab-vacuum-map-card* and *botslab-routines-card* frontend cards (ready zero-config)."
         ),
         "map_card_no_rooms": (
             "No room geometry available yet. {hint}"
@@ -93,10 +93,11 @@ CATALOG: dict[str, dict[str, str]] = {
             "```yaml\n{snippet}\n```"
         ),
         "map_card_success": (
-            "Harita kartı **{title}** ({room_count} oda) için başarıyla oluşturuldu.\n\n"
+            "Harita ve rutin kartı yapılandırmaları **{title}** ({room_count} oda) için başarıyla oluşturuldu.\n\n"
             "Kayıt konumu: `{filename}` (Home Assistant yapılandırma klasörü).\n\n"
             "📋 **Hemen Kullanın**: Dosya yöneticisine gerek olmadan, aşağıdaki kodu kopyalayıp panonuzda **+ Kart Ekle ➔ Manuel** (en altta) alanına yapıştırın:\n\n"
-            "```yaml\n{snippet}\n```"
+            "```yaml\n{snippet}\n```\n\n"
+            "Dahili *botslab-vacuum-map-card* ve *botslab-routines-card* kartlarını içerir (otomatik yüklüdür)."
         ),
         "map_card_no_rooms": (
             "Henüz oda geometrisi bulunamadı. {hint}"

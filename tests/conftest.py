@@ -8,12 +8,171 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.core import HomeAssistant, State
-from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+import sys
+import types
+
+try:
+    from homeassistant.core import HomeAssistant, State
+    from homeassistant.helpers import entity_registry as er
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    HAVE_HA = True
+except ModuleNotFoundError:
+    HAVE_HA = False
+    import enum
+
+    class _HAFinder:
+        def find_spec(self, fullname, path, target=None):
+            if fullname.startswith(("homeassistant", "pytest_homeassistant_custom_component")):
+                from importlib.machinery import ModuleSpec
+                return ModuleSpec(fullname, _HALoader())
+            return None
+
+    class _HALoader:
+        def create_module(self, spec):
+            m = types.ModuleType(spec.name)
+            m.__path__ = []
+            return m
+        def exec_module(self, module):
+            module.__getattr__ = lambda name: MagicMock()
+
+    sys.meta_path.insert(0, _HAFinder())
+
+    class Platform(str, enum.Enum):
+        VACUUM = "vacuum"
+        SENSOR = "sensor"
+        BINARY_SENSOR = "binary_sensor"
+        BUTTON = "button"
+        SWITCH = "switch"
+        SELECT = "select"
+        NUMBER = "number"
+        CAMERA = "camera"
+
+    import homeassistant.const
+    homeassistant.const.Platform = Platform
+
+    import homeassistant.core
+    class HomeAssistant:
+        pass
+    class State:
+        pass
+    homeassistant.core.HomeAssistant = HomeAssistant
+    homeassistant.core.State = State
+
+    import homeassistant.config_entries
+    class ConfigEntry:
+        pass
+    homeassistant.config_entries.ConfigEntry = ConfigEntry
+
+    import homeassistant.exceptions
+    class HomeAssistantError(Exception):
+        pass
+    class ConfigEntryAuthFailed(HomeAssistantError):
+        pass
+    class ConfigEntryNotReady(HomeAssistantError):
+        pass
+    homeassistant.exceptions.HomeAssistantError = HomeAssistantError
+    homeassistant.exceptions.ConfigEntryAuthFailed = ConfigEntryAuthFailed
+    homeassistant.exceptions.ConfigEntryNotReady = ConfigEntryNotReady
+
+    import homeassistant.components.http
+    class HomeAssistantView:
+        requires_auth = True
+        url = ""
+        name = ""
+    homeassistant.components.http.HomeAssistantView = HomeAssistantView
+
+    from dataclasses import dataclass
+
+    import homeassistant.components.button
+    @dataclass(frozen=True, kw_only=True)
+    class ButtonEntityDescription:
+        key: str = ""
+        translation_key: str | None = None
+        icon: str | None = None
+        entity_category: Any = None
+    class ButtonEntity:
+        pass
+    class ButtonDeviceClass:
+        pass
+    homeassistant.components.button.ButtonEntityDescription = ButtonEntityDescription
+    homeassistant.components.button.ButtonEntity = ButtonEntity
+    homeassistant.components.button.ButtonDeviceClass = ButtonDeviceClass
+
+    import homeassistant.helpers.update_coordinator
+    class CoordinatorEntity:
+        __class_getitem__ = classmethod(lambda cls, key: cls)
+        def __init__(self, coordinator=None, *args, **kwargs):
+            self.coordinator = coordinator
+    class DataUpdateCoordinator:
+        __class_getitem__ = classmethod(lambda cls, key: cls)
+        def __init__(self, hass, logger, *, name, update_interval=None, update_method=None):
+            self.hass = hass
+            self.logger = logger
+            self.name = name
+            self.update_interval = update_interval
+            self.update_method = update_method
+            self.data = None
+    class UpdateFailed(Exception):
+        pass
+    homeassistant.helpers.update_coordinator.CoordinatorEntity = CoordinatorEntity
+    homeassistant.helpers.update_coordinator.DataUpdateCoordinator = DataUpdateCoordinator
+    homeassistant.helpers.update_coordinator.UpdateFailed = UpdateFailed
+
+    import homeassistant.components.vacuum
+    class StateVacuumEntity:
+        pass
+    class VacuumEntityFeature(enum.IntFlag):
+        STATE = 1
+        PAUSE = 2
+        STOP = 4
+        RETURN_HOME = 8
+        FAN_SPEED = 16
+        BATTERY = 32
+        CLEAN_SPOT = 64
+        LOCATE = 128
+        START = 256
+        SEND_COMMAND = 512
+    class VacuumActivity(str, enum.Enum):
+        CLEANING = "cleaning"
+        DOCKED = "docked"
+        PAUSED = "paused"
+        IDLE = "idle"
+        RETURNING = "returning"
+        ERROR = "error"
+    homeassistant.components.vacuum.StateVacuumEntity = StateVacuumEntity
+    homeassistant.components.vacuum.VacuumEntityFeature = VacuumEntityFeature
+    homeassistant.components.vacuum.VacuumActivity = VacuumActivity
+
+    import homeassistant.components.camera
+    class Camera:
+        pass
+    homeassistant.components.camera.Camera = Camera
+
+    class MockConfigEntry:
+        def __init__(self, domain="", title="", data=None, options=None, unique_id=None, entry_id="mock_id"):
+            self.domain = domain
+            self.title = title
+            self.data = data or {}
+            self.options = options or {}
+            self.unique_id = unique_id
+            self.entry_id = entry_id
+    er = MagicMock()
+
+if HAVE_HA:
+    @pytest.fixture(autouse=True)
+    def auto_enable_custom_integrations(enable_custom_integrations):
+        """Make the integration in custom_components/ loadable by the test instance."""
+        yield
+else:
+    @pytest.fixture(autouse=True)
+    def auto_enable_custom_integrations():
+        """No-op fixture when running pure unit tests without HA."""
+        yield
+
 
 from custom_components.botslab_vacuum.const import (
     CONF_EMAIL,
@@ -29,18 +188,6 @@ TEST_EMAIL = "user@example.com"
 TEST_PASSWORD = "hunter2"
 TEST_M2 = "a" * 32
 TEST_SN = "SN12345"
-
-
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations):
-    """Make the integration in custom_components/ loadable by the test instance.
-
-    This has to be an autouse fixture: a module level ``pytestmark`` inside
-    conftest.py is only applied to conftest itself, never to the test modules,
-    so the integration would stay invisible and every test would fail with
-    "Integration not found".
-    """
-    yield
 
 
 MAP_WIDTH = 40
@@ -230,6 +377,8 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
         "reset_consumable": AsyncMock(),
         "start_map_sync": AsyncMock(),
         "stop_map_sync": AsyncMock(),
+        "start_sync_map_to_oss": AsyncMock(),
+        "stop_sync_map_to_oss": AsyncMock(),
         "set_no_go_zones": AsyncMock(),
         "set_desired_property": AsyncMock(return_value={"code": 0, "data": {}}),
         "get_desired_property": AsyncMock(return_value={}),
