@@ -15,6 +15,10 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CLEAN_SUB_STATUS_DESCRIPTIONS,
+    CLEAN_SUB_STATUS_DESCRIPTIONS_TR,
+    ERROR_CODE_DESCRIPTIONS,
+    ERROR_CODE_DESCRIPTIONS_TR,
     FAN_SPEEDS,
     STATUS_CLEANING,
     STATUS_DOCKED,
@@ -132,12 +136,24 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             "current_map_id": dev.current_map_id,
             "clean_id": dev.clean_id,
             "clean_sub_status": dev.clean_sub_status,
+            "clean_sub_status_desc": CLEAN_SUB_STATUS_DESCRIPTIONS.get(
+                int(dev.clean_sub_status or 0), str(dev.clean_sub_status or "")
+            ),
+            "clean_sub_status_desc_tr": CLEAN_SUB_STATUS_DESCRIPTIONS_TR.get(
+                int(dev.clean_sub_status or 0), str(dev.clean_sub_status or "")
+            ),
             "current_location": dev.current_location,
             "cleaning_path": dev.cleaning_path,
             "robot_pose": dev.robot_pose,
             "dock_position": dev.dock_position,
             "no_go_zones": dev.no_go_zones,
             "error_code": dev.error_code,
+            "error_description": ERROR_CODE_DESCRIPTIONS.get(
+                dev.error_code or 0, "Normal"
+            ),
+            "error_description_tr": ERROR_CODE_DESCRIPTIONS_TR.get(
+                dev.error_code or 0, "Normal"
+            ),
             "available_rooms": [
                 {"id": r.room_id, "name": r.name, "outline": [list(p) for p in r.outline]}
                 for r in dev.rooms
