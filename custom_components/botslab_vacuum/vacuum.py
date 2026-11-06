@@ -102,24 +102,51 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             return {}
         dev = self.device
         return {
-            "cleaning_time_minutes": dev.cleaning_time_minutes,
+            # Battery & live stats for botslab-vacuum-map-card
+            "battery": dev.battery_level,
+            "battery_level": dev.battery_level,
+            "cleaned_area": dev.cleaned_area_sqm,
             "cleaned_area_sqm": dev.cleaned_area_sqm,
+            "cleaning_area": dev.cleaned_area_sqm,
+            "cleaning_time": dev.cleaning_time_minutes,
+            "cleaning_time_minutes": dev.cleaning_time_minutes,
             "total_cleaning_time_minutes": dev.total_cleaning_time_minutes,
             "total_cleaning_area_sqm": dev.total_cleaning_area_sqm,
+            "total_cleaned_area": dev.total_cleaning_area_sqm,
+            "total_cleaning_time": dev.total_cleaning_time_minutes,
             "tasks_total_count": dev.tasks_total_count,
+            "cleaning_count": dev.tasks_total_count,
+            # Device Info & Network for botslab-vacuum-map-card
+            "firmware_version": dev.props.get("firmware_version") or dev.props.get("sw_version") or dev.raw.get("softversion") or dev.raw.get("version") or "-",
+            "sw_version": dev.props.get("firmware_version") or dev.props.get("sw_version") or dev.raw.get("softversion") or dev.raw.get("version") or "-",
+            "ap": dev.props.get("ap") or {
+                "ssid": dev.props.get("wifi_ssid") or dev.raw.get("ssid") or "-",
+                "rssi": dev.props.get("wifi_rssi") or dev.raw.get("rssi") or "-",
+                "ip": dev.props.get("ip") or dev.raw.get("ip") or dev.raw.get("devIp") or "-",
+            },
+            "wifi_ssid": dev.props.get("wifi_ssid") or dev.raw.get("ssid") or "-",
+            "wifi_rssi": dev.props.get("wifi_rssi") or dev.raw.get("rssi") or "-",
+            "ip_address": dev.props.get("ip") or dev.raw.get("ip") or dev.raw.get("devIp") or "-",
+            # Consumable percentages (0 - 100)
             "filter_life_pct": dev.consumables.filter_life_pct,
             "main_brush_life_pct": dev.consumables.main_brush_life_pct,
             "side_brush_life_pct": dev.consumables.side_brush_life_pct,
             "sensor_life_pct": dev.consumables.sensor_clean_pct,
-            # Aliases used by third-party dashboard cards (xiaomi-vacuum-map-card
-            # and friends) which expect Roborock-style consumable keys (in hours).
-            "filter_left": dev.consumables.filter_left_hours,
-            "main_brush_left": dev.consumables.main_brush_left_hours,
-            "side_brush_left": dev.consumables.side_brush_left_hours,
-            "sensor_dirty_left": dev.consumables.sensor_left_hours,
-            "cleaning_count": dev.tasks_total_count,
-            "cleaning_time": dev.cleaning_time_minutes,
-            "cleaning_area": dev.cleaned_area_sqm,
+            # Card consumable percentage aliases
+            "filter_left": dev.consumables.filter_life_pct,
+            "main_brush_left": dev.consumables.main_brush_life_pct,
+            "side_brush_left": dev.consumables.side_brush_life_pct,
+            "sensor_dirty_left": dev.consumables.sensor_clean_pct,
+            # Card consumable remaining hours aliases
+            "filter_time_left": dev.consumables.filter_left_hours,
+            "main_brush_time_left": dev.consumables.main_brush_left_hours,
+            "side_brush_time_left": dev.consumables.side_brush_left_hours,
+            "sensor_dirty_time_left": dev.consumables.sensor_left_hours,
+            # Backward-compatible hour aliases
+            "filter_left_hours": dev.consumables.filter_left_hours,
+            "main_brush_left_hours": dev.consumables.main_brush_left_hours,
+            "side_brush_left_hours": dev.consumables.side_brush_left_hours,
+            "sensor_dirty_left_hours": dev.consumables.sensor_left_hours,
             "status": dev.status,
             "water_level": dev.water_level,
             "mop_mode": dev.mop_mode,
@@ -151,7 +178,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         if not self.device:
             return
         initial_status = self.device.status
-        if not self.coordinator.api.is_legacy_360 and self.activity == VacuumActivity.PAUSED:
+        if self.activity == VacuumActivity.PAUSED and self.device.status == STATUS_PAUSED:
             await self.coordinator.api.resume_clean(self.device.device_name, self.device.product_key)
         else:
             await self.coordinator.api.start_clean(self.device.device_name, self.device.product_key)
@@ -168,13 +195,8 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 
     async def async_stop(self, **kwargs: Any) -> None:
-        """Stop cleaning."""
-        if not self.device:
-            return
-        initial_status = self.device.status
-        await self.coordinator.api.stop_clean(self.device.device_name, self.device.product_key)
-        await self.coordinator.async_request_refresh()
-        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
+        """Stop cleaning and return to charging dock."""
+        await self.async_return_to_base(**kwargs)
 
     async def async_return_to_base(self, **kwargs: Any) -> None:
         """Send the vacuum back to its charging dock."""

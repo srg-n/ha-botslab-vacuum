@@ -23,20 +23,27 @@ import struct
 import zlib
 from typing import Any
 
-# Color Palette (RGB / RGBA)
-C_UNKNOWN = (18, 20, 26)
-C_FLOOR = (236, 240, 245)
-C_WALL = (44, 56, 82)
-C_NOGO_FILL = (224, 74, 74, 80)
-C_NOGO_LINE = (224, 74, 74, 235)
-C_DOCK = (46, 196, 110)
-C_ROBOT = (255, 140, 0)
-C_PATH = (90, 200, 250, 215)
+# Color Palette (RGB / RGBA) - Modern sleek transparent dark-mode palette
+C_UNKNOWN = (0, 0, 0, 0)
+C_FLOOR = (35, 42, 54, 200)
+C_WALL = (75, 90, 120, 255)
+C_NOGO_FILL = (235, 60, 60, 90)
+C_NOGO_LINE = (235, 60, 60, 230)
+C_DOCK = (46, 196, 110, 255)
+C_ROBOT = (255, 140, 0, 255)
+C_PATH = (255, 255, 255, 240)
 
 ROOM_PALETTE: list[tuple[int, int, int]] = [
-    (122, 193, 255), (255, 193, 122), (150, 214, 160), (214, 150, 200),
-    (224, 208, 130), (150, 200, 214), (220, 150, 150), (178, 170, 230),
-    (160, 210, 200), (230, 180, 140), (190, 200, 150), (200, 160, 210),
+    (255, 150, 85),   # Living room warm orange
+    (90, 200, 250),   # Sky blue / cyan
+    (245, 185, 65),   # Warm golden yellow
+    (122, 156, 214),  # Soft slate blue
+    (180, 130, 200),  # Mauve / purple
+    (235, 105, 95),   # Coral red
+    (95, 215, 140),   # Mint green
+    (91, 147, 230),   # Royal blue
+    (230, 135, 175),  # Rose
+    (150, 200, 214),  # Aqua
 ]
 
 
@@ -240,11 +247,11 @@ def render_map_png(
                 continue
             val = pixels[base + x]
             if val == 0:  # Wall / Obstacle
-                raw_rows.extend((235, 235, 240, 255))
+                raw_rows.extend((75, 90, 120, 255))
             elif val == 127:  # Floor
-                raw_rows.extend((50, 85, 130, 255))
-            else:  # Unexplored background
-                raw_rows.extend((18, 20, 26, 255))
+                raw_rows.extend((35, 42, 54, 200))
+            else:  # Unexplored background - fully transparent
+                raw_rows.extend((0, 0, 0, 0))
 
     compressed_idat = zlib.compress(bytes(raw_rows), 6)
 
@@ -321,32 +328,33 @@ def render_map_advanced(
     rmin = max(0, height - lower)
     rmax = max(rmin, height - 1 - upper)
 
-    # 3. Colorize base image
-    # Lookup table for RGB
+    # 3. Colorize base image with RGBA lookup tables (transparent background)
     lut_r = bytearray(256)
     lut_g = bytearray(256)
     lut_b = bytearray(256)
+    lut_a = bytearray(256)
 
-    # Set background default
+    # Set background default (all unknown/empty space is fully transparent)
     for i in range(256):
-        lut_r[i], lut_g[i], lut_b[i] = C_UNKNOWN
+        lut_r[i], lut_g[i], lut_b[i], lut_a[i] = C_UNKNOWN
 
-    # Floor (127)
-    lut_r[127], lut_g[127], lut_b[127] = C_FLOOR
-    # Wall (0)
-    lut_r[0], lut_g[0], lut_b[0] = C_WALL
+    # Floor (127) - modern slate with soft opacity
+    lut_r[127], lut_g[127], lut_b[127], lut_a[127] = C_FLOOR
+    # Wall / Obstacle (0) - crisp modern obstacle/wall line
+    lut_r[0], lut_g[0], lut_b[0], lut_a[0] = C_WALL
 
-    rgb = Image.merge("RGB", (
+    rgba = Image.merge("RGBA", (
         lflip.point(bytes(lut_r)),
         lflip.point(bytes(lut_g)),
         lflip.point(bytes(lut_b)),
+        lflip.point(bytes(lut_a)),
     ))
 
     # Crop and scale
-    crop = rgb.crop((left, upper, right, lower))
+    crop = rgba.crop((left, upper, right, lower))
     crop_w = max(1, (right - left) * scale)
     crop_h = max(1, (lower - upper) * scale)
-    base_img = crop.resize((crop_w, crop_h), Image.NEAREST).convert("RGBA")
+    base_img = crop.resize((crop_w, crop_h), Image.NEAREST)
     draw = ImageDraw.Draw(base_img, "RGBA")
 
     # Helper coordinate transform: world (mm) -> cropped pixel (x, y)
@@ -355,21 +363,15 @@ def render_map_advanced(
         cy = (wy_mm / 1000.0 - y_min) / resolution
         return ((cx - cmin) * scale, (rmax - cy) * scale)
 
-    # 4. Draw Room Polygons & Labels
+    # 4. Draw Room Polygons
     for idx, r in enumerate(rooms or []):
         v = getattr(r, "outline", None) or r.get("vertexs") or []
         if len(v) < 3:
             continue
         poly = [w2p(pt[0], pt[1]) for pt in v]
         col = ROOM_PALETTE[idx % len(ROOM_PALETTE)]
-        draw.polygon(poly, fill=(col[0], col[1], col[2], 110))
-        draw.line(poly + [poly[0]], fill=(col[0], col[1], col[2], 255), width=max(1, scale // 3))
-        # Draw room name
-        name = getattr(r, "name", "") or r.get("name", "")
-        if name:
-            cx = sum(p[0] for p in poly) / len(poly)
-            cy = sum(p[1] for p in poly) / len(poly)
-            draw.text((cx, cy), str(name), fill=(30, 36, 50, 255), anchor="mm")
+        draw.polygon(poly, fill=(col[0], col[1], col[2], 180))
+        draw.line(poly + [poly[0]], fill=(col[0], col[1], col[2], 255), width=max(1, scale // 2))
 
     # 5. Draw No-Go Zones
     for zone in no_go_zones or []:
@@ -377,7 +379,7 @@ def render_map_advanced(
         if len(v) >= 3:
             poly = [w2p(pt[0], pt[1]) for pt in v]
             draw.polygon(poly, fill=C_NOGO_FILL)
-            draw.line(poly + [poly[0]], fill=C_NOGO_LINE, width=max(1, scale // 3))
+            draw.line(poly + [poly[0]], fill=C_NOGO_LINE, width=max(1, scale // 2))
 
     # 6. Draw Charging Dock Station
     if dock_pos and len(dock_pos) >= 2:
@@ -406,7 +408,7 @@ def render_map_advanced(
         base_r = (rcx + math.cos(hr - 2.5) * r, rcy + math.sin(hr - 2.5) * r)
         draw.polygon([tip, base_l, base_r], fill=(255, 255, 255, 230))
         draw.ellipse([rcx - r, rcy - r, rcx + r, rcy + r],
-                     fill=C_ROBOT + (255,), outline=(255, 255, 255, 255), width=max(2, scale // 3))
+                     fill=C_ROBOT, outline=(255, 255, 255, 255), width=max(2, scale // 3))
 
     buf = io.BytesIO()
     base_img.save(buf, format="PNG")

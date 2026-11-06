@@ -725,7 +725,7 @@ async def test_generate_map_card_persistent_notification_signature():
 
 
 def test_parse_consumable_lifetime():
-    """Verify raw seconds from robot are correctly converted to hours and percentages."""
+    """Verify raw elapsed seconds and legacy percentages are converted to remaining hours and %."""
     from custom_components.botslab_vacuum.coordinator import (
         FILTER_MAX_HOURS,
         MAIN_BRUSH_MAX_HOURS,
@@ -734,33 +734,39 @@ def test_parse_consumable_lifetime():
         _parse_consumable_lifetime,
     )
 
-    # 469736 seconds for filter (150 h max)
+    # Botslab modern IoT: reports used/elapsed seconds
+    # 469736 used seconds for filter (540,000s / 150h max -> 70,264s remaining = 19.5h, 13%)
     pct, hrs = _parse_consumable_lifetime(469736, FILTER_MAX_HOURS)
-    assert hrs == 130.5
-    assert pct == 87
+    assert hrs == 19.5
+    assert pct == 13
 
-    # 651935 seconds for main brush (300 h max)
+    # 651935 used seconds for main brush (1,080,000s / 300h max -> 428,065s remaining = 118.9h, 40%)
     pct, hrs = _parse_consumable_lifetime(651935, MAIN_BRUSH_MAX_HOURS)
-    assert hrs == 181.1
-    assert pct == 60
+    assert hrs == 118.9
+    assert pct == 40
 
-    # 90718 seconds for sensors (30 h max)
+    # 90718 used seconds for sensors (108,000s / 30h max -> 17,282s remaining = 4.8h, 16%)
     pct, hrs = _parse_consumable_lifetime(90718, SENSOR_MAX_HOURS)
-    assert hrs == 25.2
-    assert pct == 84
+    assert hrs == 4.8
+    assert pct == 16
 
-    # 500000 seconds for side brush (200 h max)
+    # 500000 used seconds for side brush (720,000s / 200h max -> 220,000s remaining = 61.1h, 31%)
     pct, hrs = _parse_consumable_lifetime(500000, SIDE_BRUSH_MAX_HOURS)
-    assert hrs == 138.9
-    assert pct == 69
+    assert hrs == 61.1
+    assert pct == 31
 
-    # Fresh 100% replacement
-    pct, hrs = _parse_consumable_lifetime(100, FILTER_MAX_HOURS)
+    # Fresh reset on Botslab (0 used seconds -> 100% remaining, max hours)
+    pct, hrs = _parse_consumable_lifetime(0, FILTER_MAX_HOURS)
     assert pct == 100
     assert hrs == 150.0
 
-    # 0% expired
-    pct, hrs = _parse_consumable_lifetime(0, FILTER_MAX_HOURS)
+    # Legacy 360 mode: reports remaining percentage directly
+    pct, hrs = _parse_consumable_lifetime(85, FILTER_MAX_HOURS, is_legacy_360=True)
+    assert pct == 85
+    assert hrs == 127.5
+
+    # Legacy 360 mode: 0% expired
+    pct, hrs = _parse_consumable_lifetime(0, FILTER_MAX_HOURS, is_legacy_360=True)
     assert pct == 0
     assert hrs == 0.0
 

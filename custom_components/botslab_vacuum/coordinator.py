@@ -54,33 +54,37 @@ SIDE_BRUSH_MAX_HOURS = 200.0
 SENSOR_MAX_HOURS = 30.0
 
 
-def _parse_consumable_lifetime(raw_val: Any, max_hours: float) -> tuple[int, float]:
+def _parse_consumable_lifetime(
+    raw_val: Any, max_hours: float, is_legacy_360: bool = False
+) -> tuple[int, float]:
     """Parse raw consumable value from robot into (life_pct, remaining_hours).
 
-    Botslab / 360 robots report remaining consumable lifetime in seconds (e.g. 469736).
-    If raw_val is in seconds (> 100):
-      remaining_hours = round(raw_seconds / 3600.0, 1)
-      life_pct = clamp(round((raw_seconds / (max_hours * 3600.0)) * 100), 0, 100)
-    If raw_val is already a percentage (<= 100):
-      life_pct = clamp(round(raw_val), 0, 100)
-      remaining_hours = round((life_pct / 100.0) * max_hours, 1)
+    Botslab modern IoT robots report elapsed/used consumable lifetime in seconds.
+    When newly reset or not worn, used seconds = 0 (100% remaining).
+    When is_legacy_360: reports remaining percentage directly (0-100%).
     """
     try:
         val = float(raw_val)
     except (ValueError, TypeError):
         return 100, max_hours
 
-    if val < 0:
-        return 0, 0.0
+    if is_legacy_360:
+        if val <= 100:
+            life_pct = int(max(0, min(100, round(val))))
+            remaining_hours = round((life_pct / 100.0) * max_hours, 1)
+            return life_pct, remaining_hours
+        else:
+            remaining_hours = round(val / 3600.0, 1)
+            total_seconds = max_hours * 3600.0
+            life_pct = int(max(0, min(100, round((val / total_seconds) * 100))))
+            return life_pct, remaining_hours
 
-    if val > 100:
-        remaining_hours = round(val / 3600.0, 1)
-        total_seconds = max_hours * 3600.0
-        life_pct = int(max(0, min(100, round((val / total_seconds) * 100))))
-        return life_pct, remaining_hours
-
-    life_pct = int(max(0, min(100, round(val))))
-    remaining_hours = round((life_pct / 100.0) * max_hours, 1)
+    # Botslab modern IoT devices (S8, etc.): value is used/elapsed seconds
+    used_seconds = max(0.0, val)
+    total_seconds = max_hours * 3600.0
+    remaining_seconds = max(0.0, total_seconds - used_seconds)
+    remaining_hours = round(remaining_seconds / 3600.0, 1)
+    life_pct = int(max(0, min(100, round((remaining_seconds / total_seconds) * 100))))
     return life_pct, remaining_hours
 
 
@@ -138,6 +142,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self._last_active_state: bool | None = None
         self._burst_poll_tasks: dict[str, asyncio.Task] = {}
         self._last_map_sync_time: dict[str, float] = {}
+        self._firmware_cache: dict[str, str] = {}
 
     async def ensure_valid_session(self) -> None:
         """Ensure API has a valid session id and push alias, re-authenticating if necessary."""
@@ -242,6 +247,15 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 _LOGGER.warning("Could not fetch properties for %s: %s", sn, err)
                 props = {}
 
+            # Fetch/cache firmware version for modern Botslab devices
+            if sn not in self._firmware_cache or self._firmware_cache[sn] == "-":
+                try:
+                    self._firmware_cache[sn] = await self.api.get_firmware_version(sn, pk)
+                except Exception:
+                    self._firmware_cache[sn] = "-"
+            props["firmware_version"] = self._firmware_cache.get(sn, "-")
+            props["sw_version"] = props["firmware_version"]
+
             # Status and activity
             raw_status = None
             for skey in (
@@ -343,10 +357,10 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             raw_side = props.get("EdgeBrushLifeTime", props.get("side_brush_life", 100))
             raw_sensor = props.get("SensorLifeTime", props.get("sensor_life", 100))
 
-            f_pct, f_hrs = _parse_consumable_lifetime(raw_filter, FILTER_MAX_HOURS)
-            m_pct, m_hrs = _parse_consumable_lifetime(raw_main, MAIN_BRUSH_MAX_HOURS)
-            s_pct, s_hrs = _parse_consumable_lifetime(raw_side, SIDE_BRUSH_MAX_HOURS)
-            sens_pct, sens_hrs = _parse_consumable_lifetime(raw_sensor, SENSOR_MAX_HOURS)
+            f_pct, f_hrs = _parse_consumable_lifetime(raw_filter, FILTER_MAX_HOURS, self.api.is_legacy_360)
+            m_pct, m_hrs = _parse_consumable_lifetime(raw_main, MAIN_BRUSH_MAX_HOURS, self.api.is_legacy_360)
+            s_pct, s_hrs = _parse_consumable_lifetime(raw_side, SIDE_BRUSH_MAX_HOURS, self.api.is_legacy_360)
+            sens_pct, sens_hrs = _parse_consumable_lifetime(raw_sensor, SENSOR_MAX_HOURS, self.api.is_legacy_360)
 
             consumables = BotslabConsumableStatus(
                 filter_life_pct=f_pct,
@@ -431,11 +445,11 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 current_map_id=map_id,
                 clean_id=clean_id,
                 error_code=active_error_code,
-                total_cleaning_area_sqm=round(total_area / 100.0 if total_area > 500 else total_area, 1),
+                total_cleaning_area_sqm=round(total_area, 1),
                 total_cleaning_time_minutes=(
                     round(total_time / 60)
-                    if self.api.is_legacy_360 and total_time > 0
-                    else total_time
+                    if total_time > 0
+                    else 0
                 ),
                 tasks_total_count=tasks_count,
                 clean_sub_status=str(clean_sub_status) if clean_sub_status is not None else None,
@@ -451,18 +465,18 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
 
         # Two-stage dynamic polling interval & map sync keepalive watchdog
         now = time.time()
-        any_cleaning = any(d.status == STATUS_CLEANING for d in device_map.values())
-        if any_cleaning:
+        any_active = any(d.status in ACTIVE_STATUSES for d in device_map.values())
+        if any_active:
             self.update_interval = timedelta(seconds=ACTIVE_SCAN_INTERVAL)
         else:
             self.update_interval = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
 
-        if any_cleaning != self._last_active_state:
-            self._last_active_state = any_cleaning
+        if any_active != self._last_active_state:
+            self._last_active_state = any_active
             _LOGGER.info(
-                "Botslab vacuum state changed (cleaning=%s). "
+                "Botslab vacuum active state changed (active=%s). "
                 "Polling interval adjusted to %s seconds.",
-                any_cleaning,
+                any_active,
                 int(self.update_interval.total_seconds()),
             )
 

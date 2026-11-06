@@ -507,10 +507,28 @@ class BotslabVacuumApi:
             "WorkingStatus": current_status,
             "BatteryLevel": live.get("elecReal") if live.get("elecReal") is not None else raw_dev.get("battery", 100),
             "SuctionPowLevel": live.get("workNoisy") or raw_dev.get("fan_speed", 2),
-            "TotalCleaningArea": live.get("allArea") if live.get("allArea") is not None else raw_dev.get("total_area", 0.0),
-            "TotalCleaningTime": live.get("allTime") if live.get("allTime") is not None else raw_dev.get("total_time", 0),
-            "TasksTotalCount": raw_dev.get("tasks_count", 0),
+            "TotalCleaningArea": live.get("allArea") if live.get("allArea") is not None else (raw_dev.get("allArea") or raw_dev.get("total_area") or raw_dev.get("all_area") or 0.0),
+            "TotalCleaningTime": live.get("allTime") if live.get("allTime") is not None else (raw_dev.get("allTime") or raw_dev.get("total_time") or raw_dev.get("all_time") or 0),
+            "TasksTotalCount": raw_dev.get("tasks_count") or raw_dev.get("clean_count") or raw_dev.get("allCount") or 0,
             "ErrorCode": 0,
+            "firmware_version": (
+                raw_dev.get("softversion")
+                or raw_dev.get("version")
+                or raw_dev.get("software_version")
+                or raw_dev.get("firmware_version")
+                or raw_dev.get("rom_version")
+                or raw_dev.get("firmware")
+                or "-"
+            ),
+            "wifi_ssid": raw_dev.get("ssid") or raw_dev.get("wifi_ssid") or raw_dev.get("wifiSsid") or live.get("ssid") or "-",
+            "wifi_rssi": raw_dev.get("rssi") or raw_dev.get("wifi_rssi") or raw_dev.get("wifiSignal") or raw_dev.get("signal") or live.get("rssi") or "-",
+            "ip": raw_dev.get("ip") or raw_dev.get("devIp") or raw_dev.get("ip_address") or raw_dev.get("lanIp") or live.get("ip") or "-",
+        }
+        props["sw_version"] = props["firmware_version"]
+        props["ap"] = {
+            "ssid": props["wifi_ssid"],
+            "rssi": props["wifi_rssi"],
+            "ip": props["ip"],
         }
 
         # Check raw device for battery keys if not provided by live push
@@ -1373,14 +1391,11 @@ class BotslabVacuumApi:
         return False
 
     async def start_clean(self, sn: str, product_key: str) -> None:
-        """Start or resume default cleaning."""
+        """Start full/default cleaning operation."""
         if self.is_legacy_360:
-            if self._legacy_cached_status.get(sn) == STATUS_PAUSED:
-                await self.send_legacy_360_cmd(sn, INFO_360_PAUSE, {"cmd": "continue"})
-            else:
-                await self.send_legacy_360_cmd(
-                    sn, INFO_360_START, {"mode": "smartClean", "globalCleanTimes": 1}
-                )
+            await self.send_legacy_360_cmd(
+                sn, INFO_360_START, {"mode": "smartClean", "globalCleanTimes": 1}
+            )
             self._legacy_cached_status[sn] = STATUS_CLEANING
             return
         await self.invoke_sync(sn, product_key, "StartDefaultClean", {"CleanTimes": 1})
@@ -1394,12 +1409,8 @@ class BotslabVacuumApi:
         await self.invoke_sync(sn, product_key, "PauseRobot", {"TargetAction": 0})
 
     async def stop_clean(self, sn: str, product_key: str) -> None:
-        """Stop current cleaning operation."""
-        if self.is_legacy_360:
-            await self.send_legacy_360_cmd(sn, INFO_360_RETURN, {"cmd": "start"})
-            self._legacy_cached_status[sn] = STATUS_RETURNING
-            return
-        await self.invoke_sync(sn, product_key, "PauseRobot", {"TargetAction": 2})
+        """Stop current cleaning operation and return to dock."""
+        await self.return_to_dock(sn, product_key)
 
     async def resume_clean(self, sn: str, product_key: str) -> None:
         """Resume cleaning from pause."""
@@ -1457,6 +1468,49 @@ class BotslabVacuumApi:
         action = cmd_map.get(consumable)
         if action:
             await self.invoke_sync(sn, product_key, action, {})
+
+    async def get_firmware_version(self, sn: str, product_key: str) -> str:
+        """Fetch firmware version from Botslab OTA check."""
+        if self.is_legacy_360:
+            dev = self._legacy_device_cache.get(sn) or {}
+            return str(
+                dev.get("softversion")
+                or dev.get("version")
+                or dev.get("software_version")
+                or dev.get("firmware_version")
+                or "-"
+            )
+
+        ts, nonce, sig = self._sign()
+        url = f"{self.base_url}/v1/iot/ota/check_upgrade_version"
+        params = self._base_query(ts, nonce, sig)
+        body = {
+            "product_key": product_key,
+            "device_name": sn,
+            "group_identifier": "all_group",
+            "show_upgrading_info": "2",
+        }
+
+        try:
+            async with self.session.post(
+                url,
+                params=params,
+                headers=self._headers("application/x-www-form-urlencoded"),
+                data=body,
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            ) as resp:
+                data = await resp.json(content_type=None)
+                if (
+                    isinstance(data, dict)
+                    and data.get("code") == 0
+                    and isinstance(data.get("data"), list)
+                    and data["data"]
+                ):
+                    return str(data["data"][0].get("current_version") or "-")
+        except Exception as err:
+            _LOGGER.debug("Failed to fetch firmware version for %s: %s", sn, err)
+
+        return "-"
 
     async def _clean_rooms_legacy_360(
         self,

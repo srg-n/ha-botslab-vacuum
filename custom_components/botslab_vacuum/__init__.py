@@ -606,7 +606,9 @@ def _register_services(hass: HomeAssistant) -> None:
             await coordinator.api.locate(dev.device_name, dev.product_key)
 
     async def handle_reset_consumable(call: ServiceCall) -> None:
-        consumable = call.data.get(ATTR_CONSUMABLE_TYPE)
+        consumable = call.data.get(ATTR_CONSUMABLE_TYPE) or call.data.get("consumable")
+        if not consumable:
+            return
         for coordinator, dev in _targets(call):
             await coordinator.api.reset_consumable(dev.device_name, dev.product_key, consumable)
             await coordinator.async_request_refresh()
@@ -805,16 +807,26 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
     )
 
+    reset_consumable_schema = vol.Schema(
+        {
+            vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+            vol.Optional(ATTR_CONSUMABLE_TYPE): cv.string,
+            vol.Optional("consumable"): cv.string,
+        }
+    )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_RESET_CONSUMABLE,
         handle_reset_consumable,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
-                vol.Required(ATTR_CONSUMABLE_TYPE): cv.string,
-            }
-        ),
+        schema=reset_consumable_schema,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "vacuum_reset_consumable",
+        handle_reset_consumable,
+        schema=reset_consumable_schema,
     )
 
     hass.services.async_register(
