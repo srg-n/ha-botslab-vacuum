@@ -764,6 +764,16 @@ def test_parse_consumable_lifetime():
     assert pct == 0
     assert hrs == 0.0
 
+    # Explicit Legacy 360 mode (85% remaining)
+    pct, hrs = _parse_consumable_lifetime(85, FILTER_MAX_HOURS, is_legacy_360=True)
+    assert pct == 85
+    assert hrs == 127.5
+
+    # Explicit Legacy 360 mode (0% expired)
+    pct, hrs = _parse_consumable_lifetime(0, FILTER_MAX_HOURS, is_legacy_360=True)
+    assert pct == 0
+    assert hrs == 0.0
+
 def test_map_card_service_call_schema():
     """Verify generated map card includes both service and action, service_data and data."""
     import yaml
