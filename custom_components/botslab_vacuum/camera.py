@@ -68,13 +68,6 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
         self._attr_translation_key = "cleaning_map"
         self._attr_entity_registry_enabled_default = coordinator.enable_map
 
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator, rotating token during cleaning."""
-        device = self.device
-        if device and (device.is_cleaning or device.cleaning_path):
-            self.async_update_token()
-        super()._handle_coordinator_update()
-
     @property
     def _map_info(self):  # noqa: ANN202 - BotslabMapInfo | None
         """Return map geometry for this robot, if one has been fetched."""
@@ -118,6 +111,9 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
             attrs["path"] = device.cleaning_path
         if info.no_go_zones:
             attrs["no_go_zones"] = info.no_go_zones
+        if info.clean_zones:
+            attrs["clean_zones"] = info.clean_zones
+            attrs["zones"] = info.clean_zones
         if info.scale > 1:
             attrs["crop"] = {
                 "cmin": info.cmin,

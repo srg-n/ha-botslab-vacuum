@@ -29,6 +29,8 @@ C_FLOOR = (24, 26, 30, 140)
 C_WALL = (75, 90, 120, 255)
 C_NOGO_FILL = (235, 60, 60, 90)
 C_NOGO_LINE = (235, 60, 60, 230)
+C_ZONE_FILL = (41, 140, 255, 60)
+C_ZONE_LINE = (41, 140, 255, 220)
 C_DOCK = (46, 196, 110, 255)
 C_ROBOT = (255, 140, 0, 255)
 C_PATH = (255, 255, 255, 240)
@@ -288,6 +290,7 @@ def render_map_advanced(
     y_min: float,
     rooms: list[Any] | None = None,
     no_go_zones: list[dict[str, Any]] | None = None,
+    clean_zones: list[dict[str, Any]] | None = None,
     dock_pos: tuple[float, float] | None = None,
     robot_pose: list[float] | tuple[float, ...] | None = None,
     cleaning_path: list[list[int]] | None = None,
@@ -374,15 +377,23 @@ def render_map_advanced(
         draw.polygon(poly, fill=(col[0], col[1], col[2], 180))
         draw.line(poly + [poly[0]], fill=(col[0], col[1], col[2], 255), width=max(1, scale // 2))
 
-    # 5. Draw No-Go Zones
+    # 5. Draw Active Cleaning Zones (Area Clean)
+    for zone in clean_zones or []:
+        v = zone.get("vertexs") or zone.get("points") or []
+        if len(v) >= 3:
+            poly = [w2p(pt[0], pt[1]) for pt in v]
+            draw.polygon(poly, fill=C_ZONE_FILL)
+            draw.line(poly + [poly[0]], fill=C_ZONE_LINE, width=max(1, scale // 2))
+
+    # 6. Draw No-Go Zones (Forbidden Areas)
     for zone in no_go_zones or []:
-        v = zone.get("vertexs") or []
+        v = zone.get("vertexs") or zone.get("points") or []
         if len(v) >= 3:
             poly = [w2p(pt[0], pt[1]) for pt in v]
             draw.polygon(poly, fill=C_NOGO_FILL)
             draw.line(poly + [poly[0]], fill=C_NOGO_LINE, width=max(1, scale // 2))
 
-    # 6. Draw Charging Dock Station
+    # 7. Draw Charging Dock Station
     if dock_pos and len(dock_pos) >= 2:
         dx, dy = w2p(dock_pos[0], dock_pos[1])
         s = max(6, scale * 2)

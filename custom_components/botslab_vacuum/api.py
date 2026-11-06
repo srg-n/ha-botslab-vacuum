@@ -192,6 +192,7 @@ class BotslabVacuumApi:
         self._cached_upload_id: str = ""
         self._cached_map_bytes: bytes | None = None
         self._cached_robot_pose: list[float] | None = None
+        self._cached_is_active: bool = False
         self._cached_rooms: dict[str, list[BotslabRoom]] = {}
         self._cached_map_info: dict[str, BotslabMapInfo | None] = {}
 
@@ -1136,17 +1137,16 @@ class BotslabVacuumApi:
             if isinstance(dock, (list, tuple)) and len(dock) >= 2
             else None
         )
-        raw_area = map_json.get("area") or []
+        raw_area = map_json.get("area") or map_json.get("zones") or []
         no_go = [
             a
             for a in raw_area
-            if isinstance(a, dict)
-            and (
-                a.get("active") == "forbid"
-                or a.get("forbidType") in ("all", "mop", "sweep")
-                or a.get("mode") == "forbid"
-                or a.get("type") in ("forbid", "no_go")
-            )
+            if isinstance(a, dict) and a.get("active") == "forbid"
+        ]
+        clean_zones = [
+            a
+            for a in raw_area
+            if isinstance(a, dict) and a.get("active") != "forbid"
         ]
 
         return BotslabMapInfo(
@@ -1157,7 +1157,8 @@ class BotslabVacuumApi:
             resolution=resolution,
             rooms=self._parse_rooms(map_json),
             dock_position=dock_pos,
-            no_go_zones=no_go if isinstance(no_go, list) else [],
+            no_go_zones=no_go,
+            clean_zones=clean_zones,
         )
 
     async def fetch_rooms(self, sn: str, product_key: str) -> list[BotslabRoom]:
@@ -1183,6 +1184,7 @@ class BotslabVacuumApi:
         self._cached_upload_id = None
         self._cached_map_bytes = None
         self._cached_robot_pose = None
+        self._cached_is_active = False
         if sn:
             self._cached_map_info.pop(sn, None)
             self._cached_rooms.pop(sn, None)
@@ -1196,6 +1198,7 @@ class BotslabVacuumApi:
         product_key: str,
         robot_pose: list[float] | tuple[float, ...] | None = None,
         cleaning_path: list[list[int]] | None = None,
+        is_active: bool = False,
     ) -> bytes | None:
         """Fetch, decompress and render high-resolution map with live overlays."""
         map_json, props = await self.get_map_json(sn, product_key)
@@ -1229,6 +1232,7 @@ class BotslabVacuumApi:
             and upload_id == self._cached_upload_id
             and self._cached_map_bytes
             and curr_pose_tuple == cached_pose_tuple
+            and is_active == self._cached_is_active
             and not cleaning_path
         ):
             return self._cached_map_bytes
@@ -1243,6 +1247,13 @@ class BotslabVacuumApi:
                     f"decompressed size {len(pixels)} != expected {width * height}"
                 )
 
+            # Clean zones (custom area clean) are temporary targets: only render them
+            # while cleaning is actively in progress. When docked, charging or idle, do
+            # not stamp stale clean zones onto the map.
+            active_clean_zones = (
+                map_info.clean_zones if (map_info and is_active) else []
+            )
+
             png_bytes, geom = render_map_advanced(
                 width=width,
                 height=height,
@@ -1252,6 +1263,7 @@ class BotslabVacuumApi:
                 y_min=map_info.y_min if map_info else 0.0,
                 rooms=map_info.rooms if map_info else [],
                 no_go_zones=map_info.no_go_zones if map_info else [],
+                clean_zones=active_clean_zones,
                 dock_pos=map_info.dock_position if map_info else None,
                 robot_pose=robot_pose,
                 cleaning_path=cleaning_path,
@@ -1267,6 +1279,7 @@ class BotslabVacuumApi:
             self._cached_upload_id = upload_id
             self._cached_map_bytes = png_bytes
             self._cached_robot_pose = list(robot_pose) if robot_pose else None
+            self._cached_is_active = is_active
             return png_bytes
         except Exception as err:
             _LOGGER.warning("Map decoding failed: %s", err)

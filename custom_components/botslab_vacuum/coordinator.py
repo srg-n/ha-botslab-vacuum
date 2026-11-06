@@ -412,7 +412,11 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 ):
                     try:
                         map_bytes = await self.api.get_live_map(
-                            sn, pk, robot_pose=robot_pose, cleaning_path=cleaning_path
+                            sn,
+                            pk,
+                            robot_pose=robot_pose,
+                            cleaning_path=cleaning_path,
+                            is_active=dev_is_active,
                         )
                         if map_bytes:
                             self._map_cache[sn] = map_bytes
@@ -573,8 +577,8 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self,
         sn: str,
         initial_status: str | None = None,
-        max_attempts: int = 8,
-        interval: float = 1.5,
+        max_attempts: int = 15,
+        interval: float = 2.0,
     ) -> None:
         """Rapidly poll coordinator until robot status genuinely changes in the cloud."""
         old_task = self._burst_poll_tasks.get(sn)

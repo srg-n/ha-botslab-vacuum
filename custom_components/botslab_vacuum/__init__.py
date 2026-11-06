@@ -513,6 +513,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 water_level=water,
                 rooms_config=rooms_config,
             )
+            coordinator.clear_map_cache(dev.device_name)
             await coordinator.async_request_refresh()
             coordinator.watch_state_transition(dev.device_name, initial_status=initial_status)
 
@@ -555,6 +556,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 fan_speed=speed,
                 water_level=water,
             )
+            coordinator.clear_map_cache(dev.device_name)
             await coordinator.async_request_refresh()
             coordinator.watch_state_transition(dev.device_name, initial_status=initial_status)
 

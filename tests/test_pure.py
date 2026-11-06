@@ -1489,6 +1489,52 @@ def test_r4_vacuum_attributes_and_camera():
     assert cam_attrs["vacuum_position"] == {"x": 1420.0, "y": -510.0, "a": 90.0}
 
 
+def test_clean_zones_vs_no_go_zones():
+    """Verify area cleaning zones with active='normal' are not treated as no-go zones."""
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    api = BotslabVacuumApi(None, "eu", "m2", "q", "t", "qid")
+    map_doc = {
+        "width": 100,
+        "height": 100,
+        "resolution": 0.05,
+        "origin": [0.0, 0.0],
+        "zones": [
+            {
+                "id": 1,
+                "name": "CleanBox",
+                "active": "normal",
+                "forbidType": None,
+                "vertexs": [[1000, 1000], [2000, 1000], [2000, 2000], [1000, 2000]],
+            },
+            {
+                "id": 2,
+                "name": "ForbiddenWall",
+                "active": "forbid",
+                "forbidType": "all",
+                "vertexs": [[3000, 3000], [4000, 3000], [4000, 4000], [3000, 4000]],
+            },
+        ],
+    }
+    info = api._build_map_info(map_doc)
+    assert info is not None
+    assert len(info.no_go_zones) == 1
+    assert info.no_go_zones[0]["name"] == "ForbiddenWall"
+    assert len(info.clean_zones) == 1
+    assert info.clean_zones[0]["name"] == "CleanBox"
+
+
+def test_watch_state_transition_timing():
+    """Verify watch_state_transition defaults to interval=2.0s and max_attempts=15."""
+    import inspect
+    from custom_components.botslab_vacuum.coordinator import BotslabVacuumCoordinator
+
+    sig = inspect.signature(BotslabVacuumCoordinator.watch_state_transition)
+    assert sig.parameters["interval"].default == 2.0
+    assert sig.parameters["max_attempts"].default == 15
+
+
+
 
 
 

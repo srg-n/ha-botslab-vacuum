@@ -83,6 +83,7 @@ class BotslabMapInfo:
     scale: int = 1
     dock_position: tuple[float, float] | None = None
     no_go_zones: list[dict[str, Any]] = field(default_factory=list)
+    clean_zones: list[dict[str, Any]] = field(default_factory=list)
 
     def robot_to_pixel(self, x_mm: float, y_mm: float) -> tuple[float, float]:
         """Convert a robot coordinate (mm) to a pixel on the rendered grid.
@@ -199,6 +200,7 @@ class BotslabVacuumDevice:
     current_location: list[int] | None = None
     dock_position: tuple[float, float] | None = None
     no_go_zones: list[dict[str, Any]] = field(default_factory=list)
+    clean_zones: list[dict[str, Any]] = field(default_factory=list)
     cleaning_path: list[list[int]] = field(default_factory=list)
     robot_pose: list[float] | None = None
     map_image_bytes: bytes | None = None
