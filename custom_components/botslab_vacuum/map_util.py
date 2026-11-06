@@ -293,6 +293,7 @@ def render_map_advanced(
     cleaning_path: list[list[int]] | None = None,
     scale: int = 4,
     margin_cells: int = 4,
+    draw_robot: bool = False,
 ) -> tuple[bytes, tuple[int, int, int, int, int]]:
     """Render high-resolution map with Pillow.
 
@@ -396,8 +397,8 @@ def render_map_advanced(
         if len(path_pts) >= 2:
             draw.line(path_pts, fill=C_PATH, width=max(2, scale // 2), joint="curve")
 
-    # 8. Draw Live Robot Position & Directional Arrow
-    if robot_pose and len(robot_pose) >= 2:
+    # 8. Draw Live Robot Position & Directional Arrow (optional, disabled by default to let card render vector marker)
+    if draw_robot and robot_pose and len(robot_pose) >= 2:
         rx, ry = float(robot_pose[0]), float(robot_pose[1])
         ang = float(robot_pose[2]) if len(robot_pose) >= 3 else 0.0
         rcx, rcy = w2p(rx, ry)

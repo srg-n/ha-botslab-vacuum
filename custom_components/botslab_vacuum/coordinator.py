@@ -446,9 +446,9 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 props=props,
                 battery_level=battery,
                 cleaning_time_minutes=(
-                    round(clean_time / 60)
-                    if self.api.is_legacy_360 and clean_time > 0
-                    else clean_time
+                    int(clean_time // 60)
+                    if clean_time > 0
+                    else 0
                 ),
                 cleaned_area_sqm=round(clean_area / 100.0 if clean_area > 500 else clean_area, 1),
                 status=status,
