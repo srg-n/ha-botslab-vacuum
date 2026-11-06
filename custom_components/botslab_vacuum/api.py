@@ -1481,6 +1481,9 @@ class BotslabVacuumApi:
                 or "-"
             )
 
+        if self.session is None or getattr(self.session, "closed", False):
+            return "-"
+
         ts, nonce, sig = self._sign()
         url = f"{self.base_url}/v1/iot/ota/check_upgrade_version"
         params = self._base_query(ts, nonce, sig)

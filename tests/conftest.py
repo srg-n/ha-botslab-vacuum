@@ -375,6 +375,7 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
         "set_collision_protection": AsyncMock(),
         "set_volume_level": AsyncMock(),
         "reset_consumable": AsyncMock(),
+        "get_firmware_version": AsyncMock(return_value="1.8.9.2976"),
         "start_map_sync": AsyncMock(),
         "stop_map_sync": AsyncMock(),
         "start_sync_map_to_oss": AsyncMock(),
