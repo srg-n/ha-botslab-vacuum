@@ -25,7 +25,7 @@ from typing import Any
 
 # Color Palette (RGB / RGBA) - Modern sleek transparent dark-mode palette
 C_UNKNOWN = (0, 0, 0, 0)
-C_FLOOR = (35, 42, 54, 200)
+C_FLOOR = (24, 26, 30, 140)
 C_WALL = (75, 90, 120, 255)
 C_NOGO_FILL = (235, 60, 60, 90)
 C_NOGO_LINE = (235, 60, 60, 230)
@@ -249,7 +249,7 @@ def render_map_png(
             if val == 0:  # Wall / Obstacle
                 raw_rows.extend((75, 90, 120, 255))
             elif val == 127:  # Floor
-                raw_rows.extend((35, 42, 54, 200))
+                raw_rows.extend((24, 26, 30, 140))
             else:  # Unexplored background - fully transparent
                 raw_rows.extend((0, 0, 0, 0))
 

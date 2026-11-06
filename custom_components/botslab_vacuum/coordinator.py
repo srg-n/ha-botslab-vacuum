@@ -136,6 +136,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self.enable_map = enable_map
         self._rooms_cache: dict[str, list[BotslabRoom]] = {}
         self._map_cache: dict[str, bytes] = {}
+        self._last_rendered_pose: dict[str, list[float] | None] = {}
         self._last_active_state: bool | None = None
         self._burst_poll_tasks: dict[str, asyncio.Task] = {}
         self._last_map_sync_time: dict[str, float] = {}
@@ -392,14 +393,24 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 except Exception as err:
                     _LOGGER.debug("Cleaning track fetch error for %s: %s", sn, err)
 
+            pose_changed = False
+            last_pose = self._last_rendered_pose.get(sn)
+            if robot_pose is not None:
+                if last_pose is None or any(
+                    abs(a - b) > 5 for a, b in zip(robot_pose[:2], last_pose[:2])
+                ):
+                    pose_changed = True
+
             if self.enable_map:
-                if dev_is_active or (sn not in self._map_cache):
+                if dev_is_active or pose_changed or (sn not in self._map_cache):
                     try:
                         map_bytes = await self.api.get_live_map(
                             sn, pk, robot_pose=robot_pose, cleaning_path=cleaning_path
                         )
                         if map_bytes:
                             self._map_cache[sn] = map_bytes
+                            if robot_pose:
+                                self._last_rendered_pose[sn] = list(robot_pose)
                         else:
                             map_bytes = self._map_cache.get(sn)
                     except Exception as err:

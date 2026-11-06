@@ -191,6 +191,7 @@ class BotslabVacuumApi:
         self.cached_s3_signs: dict[str, str] = {}
         self._cached_upload_id: str = ""
         self._cached_map_bytes: bytes | None = None
+        self._cached_robot_pose: list[float] | None = None
         self._cached_rooms: dict[str, list[BotslabRoom]] = {}
         self._cached_map_info: dict[str, BotslabMapInfo | None] = {}
 
@@ -1135,7 +1136,18 @@ class BotslabVacuumApi:
             if isinstance(dock, (list, tuple)) and len(dock) >= 2
             else None
         )
-        no_go = map_json.get("area") or []
+        raw_area = map_json.get("area") or []
+        no_go = [
+            a
+            for a in raw_area
+            if isinstance(a, dict)
+            and (
+                a.get("active") == "forbid"
+                or a.get("forbidType") in ("all", "mop", "sweep")
+                or a.get("mode") == "forbid"
+                or a.get("type") in ("forbid", "no_go")
+            )
+        ]
 
         return BotslabMapInfo(
             width=int(width),
@@ -1170,6 +1182,7 @@ class BotslabVacuumApi:
         """Invalidate map caches so the next poll fetches a fresh map."""
         self._cached_upload_id = None
         self._cached_map_bytes = None
+        self._cached_robot_pose = None
         if sn:
             self._cached_map_info.pop(sn, None)
             self._cached_rooms.pop(sn, None)
@@ -1208,11 +1221,14 @@ class BotslabVacuumApi:
             cleaning_path = map_json["posArray"]
 
         # Re-use cached map only if neither layout, robot pose, nor path changed
+        curr_pose_tuple = tuple(round(x, 1) for x in robot_pose[:2]) if robot_pose and len(robot_pose) >= 2 else None
+        cached_pose_tuple = tuple(round(x, 1) for x in self._cached_robot_pose[:2]) if self._cached_robot_pose and len(self._cached_robot_pose) >= 2 else None
+
         if (
             upload_id
             and upload_id == self._cached_upload_id
             and self._cached_map_bytes
-            and not robot_pose
+            and curr_pose_tuple == cached_pose_tuple
             and not cleaning_path
         ):
             return self._cached_map_bytes
@@ -1250,6 +1266,7 @@ class BotslabVacuumApi:
 
             self._cached_upload_id = upload_id
             self._cached_map_bytes = png_bytes
+            self._cached_robot_pose = list(robot_pose) if robot_pose else None
             return png_bytes
         except Exception as err:
             _LOGGER.warning("Map decoding failed: %s", err)
