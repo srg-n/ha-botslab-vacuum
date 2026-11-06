@@ -50,7 +50,17 @@ Production-ready Home Assistant integration for **Botslab** and **Qihoo 360** ro
 - 🗺️ **High-Resolution Map Rendering & Zero-Config Frontend:**
   - Dynamic Pillow auto-crop eliminating black void borders
   - Dock station glyph, live cleaning path polyline, and robot heading orientation arrow
-  - Zero-config bundled Lovelace cards (`xiaomi-vacuum-map-card` and `botslab-routines-card`) automatically served
+  - Zero-config bundled Lovelace cards:
+    - **`botslab-vacuum-map-card`**: Modern interactive card with visual UI editor, per-room suction/water customization, and spot/zone cleaning (adapted from *noambergauz/dreame-vacuum-map-card*)
+    - **`botslab-routines-card`**: Full cleaning schedule and routines manager
+    - **`xiaomi-vacuum-map-card`**: Universal calibration-based map viewer
+- 📡 **Dynamic QPush Gateway & Real-time Live Telemetry:**
+  - Dynamic GSLB push gateway resolution via `dp.push.dc.360.cn` supporting raw binary TCP on Port 443 (primary) and Port 80 (fallback)
+  - Real-time millimeter Cartesian coordinates $[x, y, \theta]$ and live cleaning path exposed in camera and vacuum attributes
+- ⏱️ **Two-Stage Polling & Safety Watchdog Engine:**
+  - **Active Cleaning (5s):** Rapid 5-second polling with prioritized Alibaba OSS `1days` live map streaming
+  - **Firmware Safety Watchdog:** Automatic 50s keepalive loop with 60s safety timeout (`StartSyncMapPkgToOss`), instantly terminated (`StopSyncMapPkgToOss`) when cleaning ends to preserve robot CPU and Wi-Fi bandwidth
+  - **Idle / Docked (5 minutes):** 300-second idle polling interval, instantly awakened by the persistent QPush TCP daemon upon any state transition or error
 - ⏱️ **HA-Driven Routine & Schedule Engine:**
   - Multi-room, suction-customizable scheduled cleaning routines
   - Persisted in Home Assistant storage (survives restarts)
@@ -145,13 +155,13 @@ The vacuum cloud communication runs over a 3-tier proprietary architecture:
                │                                   │
                ▼ (2. Alink Downlink)               ▼ (3. QPUSH Gateway)
         [ Robot Vacuum ]                    [ Home Assistant Listener ]
-  (Aliyun MQTT, Frankfurt broker)        (dp.push.dc.360.cn -> 8.211.52.133)
+  (Aliyun MQTT, Frankfurt broker)        (Dynamic GSLB dp.push.dc.360.cn -> Port 443/80)
 ```
 
 ### 1. What is Qihoo QPUSH?
-* **Protocol:** A proprietary binary TCP push protocol developed by Qihoo and Botslab for client push notifications (`dp.push.dc.360.cn` -> `8.211.52.133`).
+* **Protocol:** A proprietary binary TCP push protocol developed by Qihoo and Botslab for client push notifications. The integration dynamically resolves regional push gateway IPs via `dp.push.dc.360.cn?appId=gqrwex6nq54m` and connects via raw binary TCP on Port 443 (primary, no TLS) or Port 80 (fallback), with Frankfurt (`8.211.52.133`) as a safe fallback.
 * **Function:** QPUSH is **not** used to send commands to the robot. Instead, when the vacuum begins cleaning, uploads a map file, or throws an error, the cloud pushes an `OP_PUSH` frame to the client so UI state updates in real-time.
-* **Optional:** The integration polls every 30s while cleaning and 120s when idle, so it works fully without QPUSH.
+* **Two-Stage Dynamic Polling:** The integration polls every **5 seconds** during active cleaning (`STATUS_CLEANING`) and switches to **5 minutes (300s)** when docked or idle to conserve robot CPU and Wi-Fi airtime. Any push frame or state change wakes the coordinator immediately.
 
 ### 2. Alibaba Cloud (Aliyun) Alink & Downlink Commands
 * Botslab S8 hardware runs on the **Alibaba Cloud IoT (Alink)** platform (`ProductKey: 7347e727042a`).
@@ -208,23 +218,24 @@ Entities are keyed by the robot's serial number, so the Jinja above resolves the
 ### Zero-Config Bundled Frontend Cards
 
 The integration automatically serves and registers the required Lovelace cards upon startup:
-- `/botslab_vacuum/www/xiaomi-vacuum-map-card.js` (Pre-bundled map viewer with room tap, zone cleaning, and point navigation)
+- `/botslab_vacuum/www/botslab-vacuum-map-card.js` (⭐ **Recommended** — Interactive visual card with graphical UI editor, customized per-room suction and water settings, live pose orientation, and spot cleaning)
 - `/botslab_vacuum/www/botslab-routines-card.js` (Pre-bundled routine & schedule manager card with automatic EN/TR localization)
+- `/botslab_vacuum/www/xiaomi-vacuum-map-card.js` (Calibration-based map viewer with room tap and zone cleaning)
 
 No manual HACS frontend installation or resource configuration is required.
 
-### 🗺️ Generating a Map Card and Adding It to Your Dashboard
+### 🗺️ Generating Map and Routine Cards in One Click
 
-Room outlines and polygon boundaries are specific to your home and change whenever rooms are split, merged, or renamed in the Botslab app. Rather than calculating coordinates manually, the integration generates a ready-to-paste card in one click:
+Room outlines and polygon boundaries are specific to your home and change whenever rooms are split, merged, or renamed in the Botslab app. Rather than calculating coordinates manually, the integration generates ready-to-paste configurations in one click:
 
-1. Press the **Sync Live Map** button in Home Assistant so the robot uploads its latest floor plan.
-2. Press **Generate Map Card Config**.
-3. The integration writes a complete, pre-configured card with all room outlines to **`/config/botslab_map_card.yaml`** in your Home Assistant config directory, and posts a notification in your Home Assistant sidebar.
+1. Press the **Sync Map** (`sync_map`) button in Home Assistant so the robot uploads its latest floor plan.
+2. Press **Generate Map Card** (`generate_map_card`).
+3. The integration writes complete, pre-configured cards (`botslab-vacuum-map-card`, `botslab-routines-card`, and `xiaomi-vacuum-map-card`) with all your room configurations to **`/config/botslab_map_card.yaml`** in your Home Assistant config directory, and posts a notification in your Home Assistant sidebar.
 
 #### 📌 Step-by-Step Dashboard Setup:
 
 1. **Copy the File Contents:**  
-   Open `/config/botslab_map_card.yaml` using the **File Editor** (or Studio Code Server / Samba) add-on and copy all text (`Ctrl+A`, `Ctrl+C`).
+   Open `/config/botslab_map_card.yaml` using the **File Editor** (or Studio Code Server / Samba) add-on and copy the YAML snippet for the card you want.
 2. **Open Your Dashboard:**  
    Navigate to the dashboard where you want to place the vacuum map card.
 3. **Enter Edit Mode:**  
@@ -236,22 +247,15 @@ Room outlines and polygon boundaries are specific to your home and change whenev
 
 > [!WARNING]
 > **Avoid Raw Editor Error:**  
-> This YAML is a **single-card configuration**. Do **NOT** paste it into the dashboard's top-level **"Raw configuration editor"**, as doing so will corrupt your dashboard structure and produce `At path: views -- Expected an array value`. Always use **+ Add Card ➔ Manual**.
+> This YAML contains card configurations. Do **NOT** paste it into the dashboard's top-level **"Raw configuration editor"**, as doing so will corrupt your dashboard structure and produce `At path: views -- Expected an array value`. Always use **+ Add Card ➔ Manual**.
 
-> [!TIP]
-> If you ever repartition or rename rooms in the Botslab mobile app, simply press the two buttons again and replace your manual card's YAML with the freshly generated `/config/botslab_map_card.yaml`.
+---
 
-### Scheduled Routines Card Example
+## 👏 Credits & Acknowledgments
 
-Add a custom routine manager card to your dashboard:
-
-```yaml
-type: custom:botslab-routines-card
-entity: sensor.botslab_schedules_YOUR_DEVICE_ID
-vacuum_entity: vacuum.botslab_vacuum_YOUR_DEVICE_ID
-```
-
-Repeat steps 2 and 3 after changing rooms.
+- **[Noam Bergauz](https://github.com/noambergauz)** — The bundled `botslab-vacuum-map-card` is adapted from the exceptional [noambergauz/dreame-vacuum-map-card](https://github.com/noambergauz/dreame-vacuum-map-card), tailored with custom room segmentation, live pose calibration, per-room controls, and Botslab backend services.
+- **[Piotr Machowski](https://github.com/PiotrMachowski)** — Creator of the widely celebrated [lovelace-xiaomi-vacuum-map-card](https://github.com/PiotrMachowski/lovelace-xiaomi-vacuum-map-card).
+- **Qihoo 360 / Botslab Community** — Community members who helped reverse-engineer and test legacy 360 S6 / S7 protocols.
 
 ---
 

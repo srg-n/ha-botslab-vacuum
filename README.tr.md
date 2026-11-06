@@ -49,8 +49,18 @@
   - **Yasaklı Alanlar (`SetFbdPlaces`):** Home Assistant servis çağrısıyla doğrudan haritaya sanal duvar ve girilmez alanlar tanımlayabilme
 - 🗺️ **Gelişmiş Yüksek Çözünürlüklü Harita & Sıfır Yapılandırmalı Kartlar:**
   - Pillow tabanlı dinamik kenar kırpma (auto-crop) ile gereksiz siyah boşlukları yok etme
-  - Yeşil şarj istasyonu ikonu, camgöbeği (cyan) anlık temizlik rotası ve robotun baktığı yönü gösteren yön oku
-  - Harici HACS indirmesi gerektirmeyen, otomatik yüklenen hazır Lovelace kartları (`xiaomi-vacuum-map-card` ve `botslab-routines-card`)
+  - Yeşil şarj istasyonu ikonu, camgöbeği anlık temizlik rotası ve robotun baktığı yönü gösteren yön oku
+  - **Otomatik Yüklenen Dahili Kartlar:**
+    - **`botslab-vacuum-map-card`**: Görsel arayüz düzenleyicisi (UI Editor), odaya özel emiş gücü / su debisi ayarı, nokta temizliği ve serbest bölge seçimi sunan modern harita kartı (*noambergauz/dreame-vacuum-map-card* baz alınarak uyarlanmıştır)
+    - **`botslab-routines-card`**: Tam teşekküllü Türkçe/İngilizce destekli temizlik rutin ve zamanlama yönetim kartı
+    - **`xiaomi-vacuum-map-card`**: Kalibrasyon tabanlı harita kartı desteği
+- 📡 **Dinamik QPush Ağ Geçidi & Canlı Telemetri:**
+  - `dp.push.dc.360.cn` üzerinden dinamik IP çözümü, ham binary TCP Port 443 (öncelikli) ve Port 80 (yedek) bağlantısı
+  - Milimetre hassasiyetinde kartezyen konum $[x, y, \theta]$ ve anlık temizlik rotası takibi
+- ⏱️ **Çift Kademeli Dinamik Polling & Watchdog Güvenlik Motoru:**
+  - **Aktif Temizlik (5s):** 5 saniyelik seri telemetri ve Alibaba OSS `1days` canlı harita akışı
+  - **Firmware Güvenlik Watchdog:** 60 saniyelik donanım güvenlik zaman aşımı ve 50 saniyelik keepalive döngüsü (`StartSyncMapPkgToOss`); temizlik bittiğinde derhal sonlandırma (`StopSyncMapPkgToOss`)
+  - **Boşta / Şarjda (5 dakika):** Ev Wi-Fi ağını ve robot işlemcisini yormamak için 300 saniyelik rölanti modu; QPush arka plan TCP soketi durum değişiminde Home Assistant'ı anında uyandırır
 - ⏱️ **HA Tabanlı Rutin & Zamanlayıcı Motoru:**
   - İstenen günlerde, saatlerde, seçili odalarda ve farklı emiş güçlerinde otomatik temizlik rutinleri
   - Home Assistant dahili hafızasında saklanır (yeniden başlatmalardan etkilenmez)
@@ -129,13 +139,13 @@ Robot süpürgelerimizin bulut iletişimi 3 katmanlı tescilli bir altyapı üze
                │                                   │
                ▼ (2. Alink Downlink)               ▼ (3. QPUSH Gateway)
         [ Robot Süpürge ]                    [ Home Assistant Dinleyici ]
-  (Aliyun MQTT, Frankfurt broker)        (dp.push.dc.360.cn -> 8.211.52.133)
+  (Aliyun MQTT, Frankfurt broker)        (Dinamik GSLB dp.push.dc.360.cn -> Port 443/80)
 ```
 
 ### 1. Qihoo QPUSH Nedir?
-* **Protokol:** Qihoo ve Botslab'ın mobil uygulamalara anlık bildirim göndermek için geliştirdiği tescilli ikili TCP bildirim protokolüdür (`dp.push.dc.360.cn` -> `8.211.52.133`).
+* **Protokol:** Qihoo ve Botslab'ın anlık bildirim göndermek için geliştirdiği tescilli ikili TCP bildirim protokolüdür. Entegrasyon, `dp.push.dc.360.cn?appId=gqrwex6nq54m` üzerinden en uygun ağ geçidi IP'sini dinamik olarak çözer ve Port 443 (öncelikli, TLS'siz ham TCP) veya Port 80 (yedek) üzerinden bağlanır; erişilemezse güvenli Frankfurt IP'si (`8.211.52.133`) devreye girer.
 * **İşlevi:** QPUSH robota komut göndermek için **kullanılmaz**. Robot temizliğe başladığında, harita dosyası ürettiğinde veya bir hata verdiğinde sunucunun istemciye "durum güncellendi" sinyali fırlatması (`OP_PUSH`) için kullanılır.
-* **İsteğe bağlıdır:** Entegrasyon temizlik sırasında 30sn, boştayken 120sn aralıklarla zaten sorgulama yapar; QPUSH olmasa da tam çalışır.
+* **Çift Kademeli Dinamik Polling:** Entegrasyon aktif temizlik esnasında (`STATUS_CLEANING`) **5 saniyede bir** sorgular ve harita/konum telemetrisini canlı günceller. Robot şarjdayken veya boştayken ise ev Wi-Fi ağını meşgul etmemek için **5 dakikada bir (300sn)** rölanti moduna geçer. Herhangi bir bildirim geldiğinde QPush soketi koordinatörü anında uyandırır.
 
 ### 2. Alibaba Cloud (Aliyun) Alink ve Robota Komut İletimi
 * Botslab S8, donanımsal olarak **Alibaba Cloud IoT (Alink)** protokolünü kullanır (`ProductKey: 7347e727042a`).
@@ -192,23 +202,24 @@ Entity'ler robotun seri numarasına göre adlandırıldığı için, yukarıdaki
 ### Sıfır Yapılandırmalı Dahili Kartlar
 
 Gerekli Lovelace kartları entegrasyonla birlikte gelir ve başlatma sırasında otomatik olarak Home Assistant'a kaydedilir:
-- `/botslab_vacuum/www/xiaomi-vacuum-map-card.js` (Oda seçimi, bölge temizliği ve nokta navigasyonu sunan harita kartı)
+- `/botslab_vacuum/www/botslab-vacuum-map-card.js` (⭐ **Önerilen** — Görsel kart düzenleyicisi, odaya özel çekim gücü/su seviyesi, anlık yön oku ve nokta temizliği sunan modern harita kartı)
 - `/botslab_vacuum/www/botslab-routines-card.js` (Otomatik Türkçe/İngilizce dil destekli rutin ve zamanlama yönetim kartı)
+- `/botslab_vacuum/www/xiaomi-vacuum-map-card.js` (Oda seçimi ve serbest dikdörtgen bölge temizliği sunan harita kartı)
 
 Harici olarak HACS üzerinden kart aramanıza veya kaynak eklemenize gerek yoktur.
 
-### 🗺️ Eviniz İçin Harita Kartı Üretme ve Panoya Ekleme Rehberi
+### 🗺️ Eviniz İçin Harita ve Rutin Kartlarını Tek Tıkla Üretme
 
 Oda konturları ve poligon sınırları evinize özeldir; Botslab uygulamasında oda böldüğünüzde veya adını değiştirdiğinizde güncellenir. Bu koordinatları elle tek tek çıkarmak yerine entegrasyon tek tıkla üretir:
 
 1. Robot en son haritayı sunucuya göndersin diye Home Assistant'ta **Haritayı Senkronize Et** (`Sync Map`) butonuna basın.
 2. Ardından **Harita Kartı Yapılandırması Üret** (`Generate Map Card Config`) butonuna basın.
-3. Entegrasyon, evinizin tüm oda sınırlarını ve kalibrasyonunu içeren hazır kart kodunu Home Assistant ana dizinindeki **`/config/botslab_map_card.yaml`** dosyasına yazar ve sol menüdeki **Bildirimler (Notifications)** alanına bir bilgi mesajı bırakır.
+3. Entegrasyon, evinizin tüm oda sınırlarını ve yapılandırmasını içeren hazır kart kodlarını (`botslab-vacuum-map-card`, `botslab-routines-card` ve `xiaomi-vacuum-map-card`) Home Assistant ana dizinindeki **`/config/botslab_map_card.yaml`** dosyasına yazar ve sol menüdeki **Bildirimler (Notifications)** alanına bir bilgi mesajı bırakır.
 
 #### 📌 Dosyayı Panonuza (Dashboard) Ekleme Adımları:
 
 1. **Dosya İçeriğini Kopyalayın:**  
-   Home Assistant içindeki **File Editor** (veya Studio Code Server / Samba) eklentisiyle `/config/botslab_map_card.yaml` dosyasını açıp içindeki tüm metni kopyalayın (`Ctrl+A`, `Ctrl+C`).
+   Home Assistant içindeki **File Editor** (veya Studio Code Server / Samba) eklentisiyle `/config/botslab_map_card.yaml` dosyasını açıp eklemek istediğiniz kartın YAML bloğunu kopyalayın.
 2. **Panonuzu Açın:**  
    Home Assistant sol menüsünden süpürgenizi eklemek istediğiniz **Panoya (Dashboard)** gidin.
 3. **Düzenleme Moduna Geçin:**  
@@ -220,22 +231,15 @@ Oda konturları ve poligon sınırları evinize özeldir; Botslab uygulamasında
 
 > [!WARNING]
 > **Önemli Hata Uyarısı:**  
-> Kopyaladığınız kod **tek bir karta** aittir. Bu kodu panonun en üstündeki **"Ham Yapılandırma Düzenleyicisi" (Raw configuration editor)** içine **YAPIŞTIRMAYIN**. Aksi halde Home Assistant panonun tamamını bozup `At path: views -- Expected an array value` hatası verecektir. Her zaman **+ Kart Ekle ➔ Manuel** adımını kullanın.
+> Kopyaladığınız kod kart konfigürasyonudur. Bu kodu panonun en üstündeki **"Ham Yapılandırma Düzenleyicisi" (Raw configuration editor)** içine **YAPIŞTIRMAYIN**. Aksi halde Home Assistant panonun tamamını bozup `At path: views -- Expected an array value` hatası verecektir. Her zaman **+ Kart Ekle ➔ Manuel** adımını kullanın.
 
-> [!TIP]
-> Botslab uygulamasından odaları yeniden bölerseniz veya haritanız değişirse; sadece yukarıdaki iki butona tekrar basıp üretilen yeni YAML'ı kart düzenleyicisine yapıştırmanız yeterlidir.
+---
 
-### Zamanlanmış Rutinler Kart Örneği
+## 👏 Teşekkür & Krediler (Credits)
 
-Dashboard'unuza Türkçe destekli rutin yönetim kartını eklemek için:
-
-```yaml
-type: custom:botslab-routines-card
-entity: sensor.botslab_schedules_CIHAZ_ID
-vacuum_entity: vacuum.botslab_vacuum_CIHAZ_ID
-```
-
-Odaları değiştirdikten sonra 2. ve 3. adımları tekrarlayın.
+- **[Noam Bergauz](https://github.com/noambergauz)** — Entegrasyonla birlikte gelen `botslab-vacuum-map-card`, Noam Bergauz'un harika [noambergauz/dreame-vacuum-map-card](https://github.com/noambergauz/dreame-vacuum-map-card) projesinden uyarlanmış; Botslab oda bölümlemeleri, canlı yön kalibrasyonu ve servislerine entegre edilmiştir.
+- **[Piotr Machowski](https://github.com/PiotrMachowski)** — Geniş çapta kabul gören [lovelace-xiaomi-vacuum-map-card](https://github.com/PiotrMachowski/lovelace-xiaomi-vacuum-map-card) projesinin geliştiricisi.
+- **Qihoo 360 & Botslab Topluluğu** — Eski 360 S6 / S7 protokollerinin test edilmesinde ve geliştirilmesinde katkı sunan tüm topluluk üyelerine teşekkürler.
 
 ---
 
