@@ -68,9 +68,40 @@
       "total_clean_time": { "name": "Toplam Temizlik Süresi" },
       "tasks_count": { "name": "Toplam Temizlik Görevi" },
       "clean_id": { "name": "Temizlik Kimliği" },
-      "error_code": { "name": "Hata Kodu" },
-      "mop_installed": { "name": "Mop Bezi Durumu" },
-      "water_tank_installed": { "name": "Su Tankı Durumu" },
+      "error_code": {
+        "name": "Hata Kodu",
+        "state": {
+          "0": "Normal",
+          "1": "Radar / LiDAR tıkandı veya önü kapalı",
+          "2": "Çarpışma tamponu sıkıştı",
+          "3": "Tekerlekler havada / boşlukta kaldı",
+          "4": "Uçurum düşme sensörleri kirli veya önü kapalı",
+          "5": "Ana rulo fırça sıkıştı veya saç dolandı",
+          "6": "Yan fırça sıkıştı",
+          "7": "Ana sürüş tekerleği sıkıştı",
+          "8": "Toz haznesi çıkarıldı veya takılı değil",
+          "9": "Filtre tıkandı veya kirli",
+          "10": "Batarya kritik seviyede düşük",
+          "11": "Şarj istasyonu temas noktaları kirli veya şarj olmuyor",
+          "12": "Robot engeller arasında sıkıştı",
+          "13": "Su haznesi boş",
+          "14": "Paspas plakası takılı değil"
+        }
+      },
+      "mop_installed": {
+        "name": "Mop Bezi Durumu",
+        "state": {
+          "installed": "Takılı",
+          "removed": "Çıkarıldı"
+        }
+      },
+      "water_tank_installed": {
+        "name": "Su Tankı Durumu",
+        "state": {
+          "installed": "Takılı",
+          "removed": "Çıkarıldı"
+        }
+      },
       "filter_life": { "name": "Filtre Ömrü" },
       "main_brush_life": { "name": "Ana Fırça Ömrü" },
       "side_brush_life": { "name": "Yan Fırça Ömrü" },

@@ -11,9 +11,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ERROR_CODE_DESCRIPTIONS, ERROR_CODE_DESCRIPTIONS_TR, STATUS_ERROR
+from .const import STATUS_ERROR
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
+from .i18n import translate_error_code
 from .models import BotslabVacuumDevice
 
 PARALLEL_UPDATES: Final = 0
@@ -71,11 +72,10 @@ class BotslabProblemBinarySensor(BotslabVacuumEntity, BinarySensorEntity):
 
         lang = getattr(getattr(self, "hass", None), "config", None)
         lang_code = getattr(lang, "language", "en") or "en"
-        is_tr = str(lang_code).lower().startswith("tr")
 
-        desc_en = ERROR_CODE_DESCRIPTIONS.get(code, f"Error {code}" if code else "Normal")
-        desc_tr = ERROR_CODE_DESCRIPTIONS_TR.get(code, f"Hata {code}" if code else "Normal")
-        active_desc = desc_tr if is_tr else desc_en
+        desc_en = translate_error_code(code, lang="en")
+        desc_tr = translate_error_code(code, lang="tr")
+        active_desc = translate_error_code(code, lang=lang_code)
 
         return {
             "error_code": code,

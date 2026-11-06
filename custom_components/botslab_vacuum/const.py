@@ -104,7 +104,7 @@ INFO_360_RESET_CONSUMABLE: Final = "21016"
 AUTH_EXPIRED_ERRNOS_360: Final = (102, 103, 401, 403, -2, 10001, 10002)
 BATTERY_KEYS_360: Final = ("elecReal", "elec", "battery", "batteryLevel", "power")
 
-# Human-readable robot hardware error code descriptions (English)
+# Human-readable robot hardware error code descriptions (English baseline)
 ERROR_CODE_DESCRIPTIONS: Final[dict[int, str]] = {
     0: "Normal",
     1: "Radar / LiDAR obstructed or trapped",
@@ -123,36 +123,11 @@ ERROR_CODE_DESCRIPTIONS: Final[dict[int, str]] = {
     14: "Mop bracket / pad missing",
 }
 
-# Human-readable robot hardware error code descriptions (Turkish)
-ERROR_CODE_DESCRIPTIONS_TR: Final[dict[int, str]] = {
-    0: "Normal",
-    1: "Radar / LiDAR tıkandı veya önü kapalı",
-    2: "Çarpışma tamponu sıkıştı",
-    3: "Tekerlekler havada / boşlukta kaldı",
-    4: "Uçurum düşme sensörleri kirli veya önü kapalı",
-    5: "Ana rulo fırça sıkıştı veya saç dolandı",
-    6: "Yan fırça sıkıştı",
-    7: "Ana sürüş tekerleği sıkıştı",
-    8: "Toz haznesi çıkarıldı veya takılı değil",
-    9: "Filtre tıkandı veya kirli",
-    10: "Batarya kritik seviyede düşük",
-    11: "Şarj istasyonu temas noktaları kirli veya şarj olmuyor",
-    12: "Robot engeller arasında sıkıştı",
-    13: "Su haznesi boş",
-    14: "Paspas plakası takılı değil",
-}
-
-# Clean sub-status descriptions
+# Clean sub-status descriptions (English baseline)
 CLEAN_SUB_STATUS_DESCRIPTIONS: Final[dict[int, str]] = {
     0: "Standard cleaning",
     1: "Edge / wall following",
     2: "Area completion",
-}
-
-CLEAN_SUB_STATUS_DESCRIPTIONS_TR: Final[dict[int, str]] = {
-    0: "Normal süpürme",
-    1: "Kenar takibi",
-    2: "Alan tamamlama",
 }
 
 # --- REST Endpoints ---
