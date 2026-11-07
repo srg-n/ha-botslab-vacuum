@@ -1933,7 +1933,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9")
 
 
 def test_parse_consumable_lifetime_legacy_vs_modern():
@@ -2153,3 +2153,110 @@ def test_map_camera_entity_picture_versioning_and_attribute_filtering():
 
 
 
+
+
+@pytest.mark.asyncio
+async def test_modern_clean_rooms_uses_fresh_clean_id():
+    """Verify clean_rooms always generates a fresh CleanID (never reuses old oss_info CleanID)."""
+    import time
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    api = BotslabVacuumApi(MagicMock(), "eu", "mk1", "q", "t")
+    api.is_legacy_360 = False
+
+    map_json = {
+        "smartArea": {
+            "value": [
+                {"id": 1, "name": "Room 1", "vertexs": [[0, 0], [100, 0], [100, 100], [0, 100]]},
+            ]
+        }
+    }
+    # Simulate old CleanID in oss_info (should NOT be used)
+    props = {
+        "MapPkgOssInfo": '{"MapID": 100, "CleanID": "OLD-STALE-CLEAN-ID"}'
+    }
+    upload_info = {"host": "https://oss.example.com", "accessKeyId": "k", "accessKeySecret": "s", "securityToken": "t", "dir": "d/"}
+
+    api.set_fan_speed = AsyncMock()
+    api.set_water_level = AsyncMock()
+    api.get_map_json = AsyncMock(return_value=(map_json, props))
+    api.get_upload_config = AsyncMock(return_value=upload_info)
+    api._upload_to_oss = AsyncMock(return_value="aliyun://bucket/sweep_areas123.txt")
+    api.wait_async_reply = AsyncMock(return_value=True)
+
+    captured_clean_ids: list[str] = []
+
+    async def fake_invoke_async(sn, pk, cmd, payload):
+        if cmd == "StartCleanInAreas":
+            captured_clean_ids.append(payload.get("CleanID", ""))
+        return {"code": 0, "data": {"request_id": "req-123"}}
+
+    api.invoke_async = fake_invoke_async
+
+    before = int(time.time())
+    await api.clean_rooms("SN_MOD", "pk_mod", ["1"])
+    after = int(time.time())
+
+    assert len(captured_clean_ids) == 1, "StartCleanInAreas must be called exactly once"
+    used_clean_id = captured_clean_ids[0]
+
+    assert used_clean_id != "OLD-STALE-CLEAN-ID", "Must NOT reuse stale CleanID from oss_info"
+    assert used_clean_id.startswith("SN_MOD-"), f"CleanID must start with SN, got: {used_clean_id}"
+
+    ts_part = int(used_clean_id.split("-", 1)[1])
+    assert before <= ts_part <= after + 2, f"CleanID timestamp {ts_part} must be fresh"
+
+
+@pytest.mark.asyncio
+async def test_modern_clean_rooms_no_fallback_to_clean_zone():
+    """Verify that if StartCleanInAreas fails, clean_zone is NOT called (no rect fallback)."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi, BotslabApiError
+
+    api = BotslabVacuumApi(MagicMock(), "eu", "mk1", "q", "t")
+    api.is_legacy_360 = False
+
+    map_json = {
+        "smartArea": {
+            "value": [
+                {"id": 2, "name": "Room 2", "vertexs": [[0, 0], [200, 0], [200, 200], [0, 200]]},
+            ]
+        }
+    }
+    props = {"MapPkgOssInfo": '{"MapID": 200}'}
+
+    api.set_fan_speed = AsyncMock()
+    api.set_water_level = AsyncMock()
+    api.get_map_json = AsyncMock(return_value=(map_json, props))
+    api.get_upload_config = AsyncMock(return_value=None)  # Upload will fail → raises BotslabApiError
+    api.clean_zone = AsyncMock()  # Must NOT be called
+
+    with pytest.raises(Exception):
+        await api.clean_rooms("SN_FAIL", "pk_fail", ["2"])
+
+    api.clean_zone.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_legacy_360_clean_rooms_unchanged():
+    """Verify that legacy 360 clean_rooms path still uses _clean_rooms_legacy_360 (not modern path)."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    api = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    # Mark as legacy 360
+    api.is_legacy_360 = True
+
+    # Setup _clean_rooms_legacy_360 as an async mock on the instance
+    api._clean_rooms_legacy_360 = AsyncMock()
+
+    # Modern path methods must NOT be called
+    api.get_map_json = AsyncMock()
+    api.invoke_async = AsyncMock()
+
+    await api.clean_rooms("SN_LEG", "pk_leg", ["3", "4"], repeat_times=1)
+
+    api._clean_rooms_legacy_360.assert_called_once_with("SN_LEG", ["3", "4"], 1, None, None)
+    api.get_map_json.assert_not_called()
+    api.invoke_async.assert_not_called()

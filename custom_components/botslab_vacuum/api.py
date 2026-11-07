@@ -61,7 +61,6 @@ from .exceptions import BotslabCommandError
 from .map_util import (
     decompress_lz4_block,
     render_map_advanced,
-    room_cover_rects,
 )
 from .models import BotslabMapInfo, BotslabRoom
 from .quc_login import BotslabApiError, BotslabAuthError, derive_qid
@@ -1782,12 +1781,8 @@ class BotslabVacuumApi:
         raw_oss = props.get("MapPkgOssInfo")
         oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
         map_id = int(oss_info.get("MapID", 28239))
-        clean_id = (
-            oss_info.get("CleanID")
-            or map_json.get("cleanId")
-            or props.get("CleanID")
-            or f"{sn}-{int(time.time())}"
-        )
+        # Always generate a fresh CleanID - never reuse a completed task ID from oss_info
+        clean_id = f"{sn}-{int(time.time())}"
 
         sa = map_json.get("smartArea") or {}
         room_list = copy.deepcopy(sa.get("value", []))
@@ -1943,41 +1938,14 @@ class BotslabVacuumApi:
             if req_id:
                 reply_ok = await self.wait_async_reply(req_id, timeout=12)
                 _LOGGER.debug("StartCleanInAreas reply for %s: ok=%s", sn, reply_ok)
-                if not reply_ok:
-                    raise BotslabCommandError(
-                        f"StartCleanInAreas not confirmed by robot {sn} (timeout or rejected)"
-                    )
             _LOGGER.info("Room cleaning started successfully on %s for rooms %s", sn, int_room_ids)
         except Exception as err:
-            _LOGGER.warning(
-                "Native StartCleanInAreas failed for %s (%s). Attempting room_cover_rects fallback...",
+            _LOGGER.error(
+                "StartCleanInAreas failed for %s (%s). No fallback available.",
                 sn,
                 err,
             )
-            fallback_zones: list[list[float]] = []
-            for r in room_list:
-                rid = r.get("id")
-                if (rid in int_room_ids or str(rid) in str_room_ids) and r.get("vertexs"):
-                    rects = room_cover_rects(r["vertexs"], cell=100, max_rects=6)
-                    for rect in rects:
-                        fallback_zones.append([float(c) for c in rect])
-
-            if not fallback_zones:
-                raise BotslabApiError(f"Room cleaning failed and no fallback zones found: {err}") from err
-
-            _LOGGER.info(
-                "Executing room cleaning fallback with %d tiled rectangles for %s",
-                len(fallback_zones),
-                sn,
-            )
-            await self.clean_zone(
-                sn=sn,
-                product_key=product_key,
-                zones=fallback_zones,
-                repeat_times=repeat_times,
-                fan_speed=fan_speed,
-                water_level=water_level,
-            )
+            raise
 
     async def _clean_zone_legacy_360(
         self,
