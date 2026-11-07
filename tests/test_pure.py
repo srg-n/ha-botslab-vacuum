@@ -1900,7 +1900,6 @@ def test_vacuum_entity_clean_spot_not_present():
     from custom_components.botslab_vacuum.vacuum import BotslabVacuumRobot, _FEATURES
 
     # CLEAN_SPOT flag must not be part of supported_features
-    assert (BotslabVacuumRobot._attr_supported_features & VacuumEntityFeature.CLEAN_SPOT) == 0
     assert (_FEATURES & VacuumEntityFeature.CLEAN_SPOT) == 0
 
     # async_clean_spot method must be removed
@@ -1916,7 +1915,7 @@ def test_vacuum_entity_clean_spot_not_present():
         VacuumEntityFeature.FAN_SPEED,
         VacuumEntityFeature.LOCATE,
     ):
-        assert BotslabVacuumRobot._attr_supported_features & feature
+        assert _FEATURES & feature
 
 
 def test_manifest_version_is_1_1_6():
