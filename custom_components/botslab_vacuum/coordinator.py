@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 import json
 import logging
+import math
 import time
 from typing import Any
 
@@ -34,6 +35,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     FAN_SPEEDS_360_TO_HA,
+    INFO_360_CONSUMABLES,
     INT_TO_MOP_MODE,
     MAP_SYNC_DURATION,
     MAP_SYNC_KEEPALIVE_INTERVAL,
@@ -59,27 +61,34 @@ def _parse_consumable_lifetime(
 ) -> tuple[int, float]:
     """Parse raw consumable value from robot into (life_pct, remaining_hours).
 
-    If raw_val is in seconds (> 100):
-      remaining_hours = round(val / 3600.0, 1)
-      life_pct = clamp(round((val / (max_hours * 3600.0)) * 100), 0, 100)
-    If raw_val is already a percentage (<= 100):
-      life_pct = clamp(round(val), 0, 100)
-      remaining_hours = round((life_pct / 100.0) * max_hours, 1)
+    Values > 100 represent elapsed (used) seconds since reset.
+    Values <= 100 represent percentage remaining (or 0 for freshly reset counters).
     """
     try:
         val = float(raw_val)
     except (ValueError, TypeError):
         return 100, max_hours
 
+    if math.isnan(val):
+        return 100, max_hours
+
     if val < 0:
         return 0, 0.0
 
+    # Fresh reset reports 0 used seconds or 0 counter -> 100% remaining
+    if val == 0:
+        return 100, max_hours
+
+    total_seconds = max_hours * 3600.0
+
     if val > 100:
-        remaining_hours = round(val / 3600.0, 1)
-        total_seconds = max_hours * 3600.0
-        life_pct = int(max(0, min(100, round((val / total_seconds) * 100))))
+        used_seconds = val
+        remaining_seconds = max(0.0, total_seconds - used_seconds)
+        life_pct = int(max(0, min(100, round((remaining_seconds / total_seconds) * 100))))
+        remaining_hours = round(remaining_seconds / 3600.0, 1)
         return life_pct, remaining_hours
 
+    # 0 < val <= 100: treated directly as percentage remaining
     life_pct = int(max(0, min(100, round(val))))
     remaining_hours = round((life_pct / 100.0) * max_hours, 1)
     return life_pct, remaining_hours
@@ -314,7 +323,23 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             water_level_int = int(props.get("PadWetness") or props.get("water_level") or 1)
             mop_mode_int = int(props.get("MopModeSwitching", 0) or 0)
             mop_mode_str = INT_TO_MOP_MODE.get(mop_mode_int, "vacuum_and_mop")
-            mop_installed = bool(props.get("MoppingPadInstalled", False))
+            if "MoppingPadInstalled" in props and props["MoppingPadInstalled"] is not None:
+                try:
+                    mop_installed: bool | None = bool(int(props["MoppingPadInstalled"]))
+                except (ValueError, TypeError):
+                    mop_installed = bool(props["MoppingPadInstalled"])
+            elif "mopStatus" in props and props["mopStatus"] is not None:
+                try:
+                    mop_installed = bool(int(props["mopStatus"]) != 0)
+                except (ValueError, TypeError):
+                    mop_installed = bool(props["mopStatus"])
+            elif "MopStatus" in props and props["MopStatus"] is not None:
+                try:
+                    mop_installed = bool(int(props["MopStatus"]) != 0)
+                except (ValueError, TypeError):
+                    mop_installed = bool(props["MopStatus"])
+            else:
+                mop_installed = None
             water_tank_installed = bool(props.get("WaterTankInstalled", True))
 
             # Hardware toggles
@@ -568,10 +593,52 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         if payload.get("is_legacy_360") and "sn" in payload and "status" in payload:
             sn = str(payload["sn"])
             status_data = payload["status"]
-            self.api._legacy_live_status[sn] = status_data
-            _LOGGER.debug("Legacy 360 push status stored for %s: %s", sn, status_data)
+            info_type = str(payload.get("info_type") or status_data.get("infoType") or "")
+
+            # Detect consumables frame (21015) vs status frame (20001)
+            is_consumables = (
+                info_type == INFO_360_CONSUMABLES
+                or any(k in status_data for k in ("filter", "main_brush", "side_brush", "sensor"))
+            ) and not any(k in status_data for k in ("mode", "workMode", "elec", "elecReal", "cleanTime"))
+
+            if is_consumables:
+                if not hasattr(self.api, "_legacy_consumables"):
+                    self.api._legacy_consumables = {}
+                self.api._legacy_consumables.setdefault(sn, {}).update(status_data)
+                _LOGGER.debug("Legacy 360 consumables frame stored for %s: %s", sn, status_data)
+            else:
+                self.api._legacy_live_status[sn] = status_data
+                _LOGGER.debug("Legacy 360 push status frame stored for %s: %s", sn, status_data)
+
         # When a push event arrives (status change, map update, etc.), immediately refresh coordinator
         await self.async_request_refresh()
+
+    async def reset_consumable(self, sn: str, consumable: str) -> None:
+        """Reset consumable counter and optimistically update local device state."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.reset_consumable(sn, pk, consumable)
+
+        # Optimistically update in-memory consumables
+        if dev and dev.consumables:
+            c_norm = str(consumable).lower().strip()
+            if c_norm in ("filter", "hepa", "filter_life"):
+                dev.consumables.filter_life_pct = 100
+                dev.consumables.filter_left_hours = FILTER_MAX_HOURS
+                dev.consumables.filter_used_hours = 0.0
+            elif c_norm in ("main_brush", "mainbrush", "roll_brush", "brush", "main_brush_life"):
+                dev.consumables.main_brush_life_pct = 100
+                dev.consumables.main_brush_left_hours = MAIN_BRUSH_MAX_HOURS
+                dev.consumables.main_brush_used_hours = 0.0
+            elif c_norm in ("side_brush", "sidebrush", "edge_brush", "side_brush_life"):
+                dev.consumables.side_brush_life_pct = 100
+                dev.consumables.side_brush_left_hours = SIDE_BRUSH_MAX_HOURS
+                dev.consumables.side_brush_used_hours = 0.0
+            elif c_norm in ("sensor", "sensors", "sensor_clean", "sensor_dirtiness", "sensor_life"):
+                dev.consumables.sensor_clean_pct = 100
+                dev.consumables.sensor_left_hours = SENSOR_MAX_HOURS
+                dev.consumables.sensor_used_hours = 0.0
+            self.async_set_updated_data(self.data)
 
     def watch_state_transition(
         self,

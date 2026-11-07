@@ -182,7 +182,7 @@ class BotslabVacuumDevice:
     cleaned_area_sqm: float = 0.0
     status: str = "docked"
     fan_speed: str = "standard"
-    mop_installed: bool = False
+    mop_installed: bool | None = None
     water_tank_installed: bool = True
     water_level: int = 1
     mop_mode: str = "vacuum_and_mop"

@@ -432,6 +432,14 @@ def decode_china_push(
             else body
         )
         if isinstance(status, dict):
+            info_type = str(
+                status.get("infoType")
+                or (body.get("infoType") if isinstance(body, dict) else None)
+                or frame.get("infoType")
+                or ""
+            )
+            if info_type:
+                status.setdefault("infoType", info_type)
             return str(frame["sn"]), status
     except Exception as err:
         _LOGGER.debug("Could not decrypt or parse China push frame: %s", err)
@@ -536,9 +544,15 @@ class BotslabChinaQPush:
                                 decoded = decode_china_push(body, push_key)
                                 if decoded:
                                     sn, status = decoded
+                                    info_type = str(status.get("infoType") or "")
                                     try:
                                         self._on_push(
-                                            {"sn": sn, "status": status, "is_legacy_360": True}
+                                            {
+                                                "sn": sn,
+                                                "status": status,
+                                                "info_type": info_type,
+                                                "is_legacy_360": True,
+                                            }
                                         )
                                     except Exception:
                                         _LOGGER.exception("Error in China QPush on_push callback")

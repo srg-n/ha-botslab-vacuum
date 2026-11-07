@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import random
 import time
 import urllib.parse
@@ -160,6 +161,36 @@ def working_status_to_state(status_code: Any) -> str:
     return STATUS_IDLE
 
 
+def _coerce_battery_level(val: Any) -> int | None:
+    """Safely coerce raw battery value (int, float, or string like '82' or '82%') to integer 0-100."""
+    if val is None or isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        try:
+            if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                return None
+            b_val = int(val)
+            return b_val if 0 <= b_val <= 100 else None
+        except (ValueError, OverflowError):
+            return None
+    if isinstance(val, str):
+        cleaned = val.strip().rstrip("%").strip()
+        if not cleaned:
+            return None
+        try:
+            b_val = int(cleaned)
+            return b_val if 0 <= b_val <= 100 else None
+        except (ValueError, TypeError):
+            try:
+                fb_val = float(cleaned)
+                if not math.isnan(fb_val) and not math.isinf(fb_val):
+                    b_val = int(fb_val)
+                    return b_val if 0 <= b_val <= 100 else None
+            except (ValueError, TypeError):
+                return None
+    return None
+
+
 class BotslabVacuumApi:
     """Async API client for Botslab IoT Cloud."""
 
@@ -182,6 +213,7 @@ class BotslabVacuumApi:
         self.qid: str | None = qid or derive_qid(q)
         self._legacy_cached_status: dict[str, str] = {}
         self._legacy_live_status: dict[str, dict[str, Any]] = {}
+        self._legacy_consumables: dict[str, dict[str, Any]] = {}
 
         reg_info = REGIONS.get(region, REGIONS["eu1"])
         self.base_url = f"https://{reg_info['api']}"
@@ -505,9 +537,29 @@ class BotslabVacuumApi:
         # 3. Default to docked (stationary on base) - NEVER STATUS_CLEANING!
         current_status = live.get("mode") or self._legacy_cached_status.get(sn, STATUS_DOCKED)
 
+        # Extract battery level: check live push first, then raw_dev cache across all BATTERY_KEYS_360
+        battery_level = None
+        for bkey in BATTERY_KEYS_360:
+            if bkey in live and live[bkey] is not None:
+                try:
+                    battery_level = int(live[bkey])
+                    break
+                except (ValueError, TypeError):
+                    continue
+        if battery_level is None:
+            for bkey in BATTERY_KEYS_360:
+                if bkey in raw_dev and raw_dev[bkey] is not None:
+                    try:
+                        battery_level = int(raw_dev[bkey])
+                        break
+                    except (ValueError, TypeError):
+                        continue
+        if battery_level is None:
+            battery_level = 100
+
         props: dict[str, Any] = {
             "WorkingStatus": current_status,
-            "BatteryLevel": live.get("elecReal") if live.get("elecReal") is not None else raw_dev.get("battery", 100),
+            "BatteryLevel": battery_level,
             "SuctionPowLevel": live.get("workNoisy") or raw_dev.get("fan_speed", 2),
             "TotalCleaningArea": live.get("allArea") if live.get("allArea") is not None else (raw_dev.get("allArea") or raw_dev.get("total_area") or raw_dev.get("all_area") or 0.0),
             "TotalCleaningTime": live.get("allTime") if live.get("allTime") is not None else (raw_dev.get("allTime") or raw_dev.get("total_time") or raw_dev.get("all_time") or 0),
@@ -532,13 +584,6 @@ class BotslabVacuumApi:
             "rssi": props["wifi_rssi"],
             "ip": props["ip"],
         }
-
-        # Check raw device for battery keys if not provided by live push
-        if "BatteryLevel" not in props or props["BatteryLevel"] is None:
-            for bkey in BATTERY_KEYS_360:
-                if bkey in raw_dev and raw_dev[bkey] is not None:
-                    props["BatteryLevel"] = raw_dev[bkey]
-                    break
 
         # Fan speed
         if "workNoisy" in live:
@@ -598,8 +643,10 @@ class BotslabVacuumApi:
             if isinstance(cmd_data, dict):
                 for bkey in BATTERY_KEYS_360:
                     if bkey in cmd_data and cmd_data[bkey] is not None:
-                        props["BatteryLevel"] = cmd_data[bkey]
-                        break
+                        b_val = _coerce_battery_level(cmd_data[bkey])
+                        if b_val is not None:
+                            props["BatteryLevel"] = b_val
+                            break
                 for skey in ("mode", "workMode", "runStatus", "cleanMode"):
                     if skey in cmd_data and cmd_data[skey] is not None:
                         props["WorkingStatus"] = cmd_data[skey]
@@ -640,17 +687,31 @@ class BotslabVacuumApi:
         except Exception as err:
             _LOGGER.debug("Legacy 360 status poll (20001) error: %s", err)
 
+        # Map cached legacy consumables (from 21015 push frames)
+        consumables = self._legacy_consumables.get(sn, {})
+        if "filter" in consumables:
+            props["FilterLifeTime"] = consumables["filter"]
+        if "main_brush" in consumables:
+            props["RollBrushLifeTime"] = consumables["main_brush"]
+        if "side_brush" in consumables:
+            props["EdgeBrushLifeTime"] = consumables["side_brush"]
+        if "sensor" in consumables:
+            props["SensorLifeTime"] = consumables["sensor"]
+
         # Trigger consumables poll (infoType 21015)
         try:
             res_c = await self.send_legacy_360_cmd(sn, INFO_360_CONSUMABLES, "")
             c_data = res_c.get("data")
             if isinstance(c_data, dict):
+                self._legacy_consumables.setdefault(sn, {}).update(c_data)
                 if "filter" in c_data:
                     props["FilterLifeTime"] = c_data["filter"]
                 if "main_brush" in c_data:
                     props["RollBrushLifeTime"] = c_data["main_brush"]
                 if "side_brush" in c_data:
                     props["EdgeBrushLifeTime"] = c_data["side_brush"]
+                if "sensor" in c_data:
+                    props["SensorLifeTime"] = c_data["sensor"]
         except BotslabAuthError:
             raise
         except Exception:
@@ -1486,18 +1547,49 @@ class BotslabVacuumApi:
 
     async def reset_consumable(self, sn: str, product_key: str, consumable: str) -> None:
         """Reset consumable life counter."""
+        c_norm = str(consumable).lower().strip()
+
+        # Normalize aliases
+        if c_norm in ("filter", "hepa", "filter_life"):
+            canonical = "filter"
+        elif c_norm in ("main_brush", "mainbrush", "roll_brush", "brush", "main_brush_life"):
+            canonical = "main_brush"
+        elif c_norm in ("side_brush", "sidebrush", "edge_brush", "side_brush_life"):
+            canonical = "side_brush"
+        elif c_norm in ("sensor", "sensors", "sensor_clean", "sensor_dirtiness", "sensor_life"):
+            canonical = "sensor"
+        else:
+            canonical = c_norm
+
         if self.is_legacy_360:
-            await self.send_legacy_360_cmd(sn, INFO_360_RESET_CONSUMABLE, {"cmd": consumable})
+            await self.send_legacy_360_cmd(sn, INFO_360_RESET_CONSUMABLE, {"cmd": canonical})
+            self._legacy_consumables.setdefault(sn, {})[canonical] = 0
             return
-        cmd_map = {
-            "filter": "ResetFilterLife",
-            "main_brush": "ResetMainBrushLife",
-            "side_brush": "ResetSideBrushLife",
-            "sensor": "ResetSensorCleanLife",
+
+        # Modern Botslab backend action mapping with fallback for sensors
+        cmd_actions: dict[str, list[str]] = {
+            "filter": ["ResetFilterLife"],
+            "main_brush": ["ResetMainBrushLife"],
+            "side_brush": ["ResetSideBrushLife"],
+            "sensor": ["ResetSensorLife", "ResetSensorCleanLife"],
         }
-        action = cmd_map.get(consumable)
-        if action:
-            await self.invoke_sync(sn, product_key, action, {})
+        actions = cmd_actions.get(canonical, [])
+        last_err: Exception | None = None
+        for action in actions:
+            try:
+                res = await self.invoke_sync(sn, product_key, action, {})
+                if isinstance(res, dict) and res.get("code") not in (0, "0", None):
+                    code = res.get("code")
+                    msg = res.get("msg") or res.get("message") or "Unknown error"
+                    raise BotslabCommandError(f"{action} failed with code {code}: {msg}")
+                last_err = None
+                break
+            except Exception as err:
+                last_err = err
+                _LOGGER.debug("Reset consumable action %s failed: %s", action, err)
+
+        if last_err is not None:
+            raise last_err
 
     async def get_firmware_version(self, sn: str, product_key: str) -> str:
         """Fetch firmware version from Botslab OTA check."""

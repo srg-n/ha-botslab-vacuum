@@ -202,28 +202,28 @@ BUTTON_DESCRIPTIONS: tuple[BotslabButtonEntityDescription, ...] = (
         translation_key="reset_filter",
         icon="mdi:restore",
         entity_category=EntityCategory.CONFIG,
-        press_fn=lambda _hass, coord, dev: coord.api.reset_consumable(dev.device_name, dev.product_key, "filter"),
+        press_fn=lambda _hass, coord, dev: coord.reset_consumable(dev.device_name, "filter"),
     ),
     BotslabButtonEntityDescription(
         key="reset_main_brush",
         translation_key="reset_main_brush",
         icon="mdi:restore",
         entity_category=EntityCategory.CONFIG,
-        press_fn=lambda _hass, coord, dev: coord.api.reset_consumable(dev.device_name, dev.product_key, "main_brush"),
+        press_fn=lambda _hass, coord, dev: coord.reset_consumable(dev.device_name, "main_brush"),
     ),
     BotslabButtonEntityDescription(
         key="reset_side_brush",
         translation_key="reset_side_brush",
         icon="mdi:restore",
         entity_category=EntityCategory.CONFIG,
-        press_fn=lambda _hass, coord, dev: coord.api.reset_consumable(dev.device_name, dev.product_key, "side_brush"),
+        press_fn=lambda _hass, coord, dev: coord.reset_consumable(dev.device_name, "side_brush"),
     ),
     BotslabButtonEntityDescription(
         key="reset_sensors",
         translation_key="reset_sensors",
         icon="mdi:restore",
         entity_category=EntityCategory.CONFIG,
-        press_fn=lambda _hass, coord, dev: coord.api.reset_consumable(dev.device_name, dev.product_key, "sensor"),
+        press_fn=lambda _hass, coord, dev: coord.reset_consumable(dev.device_name, "sensor"),
     ),
     BotslabButtonEntityDescription(
         key="generate_map_card",
@@ -269,4 +269,5 @@ class BotslabButton(BotslabVacuumEntity, ButtonEntity):
         if not self.device:
             return
         await self.entity_description.press_fn(self.hass, self.coordinator, self.device)
-        await self.coordinator.async_request_refresh()
+        if not self.entity_description.key.startswith("reset_"):
+            await self.coordinator.async_request_refresh()

@@ -612,8 +612,7 @@ def _register_services(hass: HomeAssistant) -> None:
         if not consumable:
             return
         for coordinator, dev in _targets(call):
-            await coordinator.api.reset_consumable(dev.device_name, dev.product_key, consumable)
-            await coordinator.async_request_refresh()
+            await coordinator.reset_consumable(dev.device_name, consumable)
 
     async def handle_set_no_go_zones(call: ServiceCall) -> None:
         zones = call.data.get(ATTR_ZONES, [])

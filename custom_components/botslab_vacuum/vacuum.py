@@ -44,7 +44,6 @@ _FEATURES = (
     | VacuumEntityFeature.RETURN_HOME
     | VacuumEntityFeature.STATE
     | VacuumEntityFeature.FAN_SPEED
-    | VacuumEntityFeature.CLEAN_SPOT
     | VacuumEntityFeature.LOCATE
 )
 
@@ -204,15 +203,6 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             return
         initial_status = self.device.status
         await self.coordinator.api.return_to_dock(self.device.device_name, self.device.product_key)
-        await self.coordinator.async_request_refresh()
-        self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
-
-    async def async_clean_spot(self, **kwargs: Any) -> None:
-        """Spot clean."""
-        if not self.device:
-            return
-        initial_status = self.device.status
-        await self.coordinator.api.start_clean(self.device.device_name, self.device.product_key)
         await self.coordinator.async_request_refresh()
         self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)
 

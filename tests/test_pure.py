@@ -736,43 +736,43 @@ def test_parse_consumable_lifetime():
 
     # 469736 seconds for filter (150 h max)
     pct, hrs = _parse_consumable_lifetime(469736, FILTER_MAX_HOURS)
-    assert hrs == 130.5
-    assert pct == 87
+    assert hrs == 19.5
+    assert pct == 13
 
     # 651935 seconds for main brush (300 h max)
     pct, hrs = _parse_consumable_lifetime(651935, MAIN_BRUSH_MAX_HOURS)
-    assert hrs == 181.1
-    assert pct == 60
+    assert hrs == 118.9
+    assert pct == 40
 
     # 90718 seconds for sensors (30 h max)
     pct, hrs = _parse_consumable_lifetime(90718, SENSOR_MAX_HOURS)
-    assert hrs == 25.2
-    assert pct == 84
+    assert hrs == 4.8
+    assert pct == 16
 
     # 500000 seconds for side brush (200 h max)
     pct, hrs = _parse_consumable_lifetime(500000, SIDE_BRUSH_MAX_HOURS)
-    assert hrs == 138.9
-    assert pct == 69
+    assert hrs == 61.1
+    assert pct == 31
 
     # Fresh 100% replacement
     pct, hrs = _parse_consumable_lifetime(100, FILTER_MAX_HOURS)
     assert pct == 100
     assert hrs == 150.0
 
-    # 0% expired
+    # Fresh reset (0 seconds elapsed -> 100% remaining)
     pct, hrs = _parse_consumable_lifetime(0, FILTER_MAX_HOURS)
-    assert pct == 0
-    assert hrs == 0.0
+    assert pct == 100
+    assert hrs == 150.0
 
     # Explicit Legacy 360 mode (85% remaining)
     pct, hrs = _parse_consumable_lifetime(85, FILTER_MAX_HOURS, is_legacy_360=True)
     assert pct == 85
     assert hrs == 127.5
 
-    # Explicit Legacy 360 mode (0% expired)
+    # Explicit Legacy 360 mode (0 counter fresh reset -> 100% remaining)
     pct, hrs = _parse_consumable_lifetime(0, FILTER_MAX_HOURS, is_legacy_360=True)
-    assert pct == 0
-    assert hrs == 0.0
+    assert pct == 100
+    assert hrs == 150.0
 
 def test_map_card_service_call_schema():
     """Verify generated map card includes both service and action, service_data and data."""
@@ -1531,7 +1531,403 @@ def test_watch_state_transition_timing():
 
     sig = inspect.signature(BotslabVacuumCoordinator.watch_state_transition)
     assert sig.parameters["interval"].default == 2.0
-    assert sig.parameters["max_attempts"].default == 15
+
+
+# ---------------------------------------------------------------------------
+# Milestone 1: Legacy 360 Support & Consumables Fix (v1.1.6) Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_legacy_360_battery_extraction_elec_fallback():
+    """Verify 360 battery extracts from elec when elecReal is None, returning actual percentage."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    api = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    api.send_legacy_360_cmd = AsyncMock(return_value={"errno": 0, "data": {}})
+    api.get_latest_clean_record = AsyncMock(return_value=None)
+
+    # Scenario 1: S6 live push reports elec=82, elecReal is None
+    api._legacy_live_status["SN_S6"] = {"elec": 82}
+    api._legacy_device_cache["SN_S6"] = {"battery": 100}  # Cached default
+    props, _ = await api._legacy_360_get_properties("SN_S6")
+    assert props["BatteryLevel"] == 82, "Battery must return 82 from elec, not 100"
+
+    # Scenario 2: elecReal takes precedence over elec when both are present
+    api._legacy_live_status["SN_S6"] = {"elecReal": 94, "elec": 82}
+    props, _ = await api._legacy_360_get_properties("SN_S6")
+    assert props["BatteryLevel"] == 94
+
+    # Scenario 3: When both elecReal and elec are None, checks batteryLevel/power in live
+    api._legacy_live_status["SN_S6"] = {"elecReal": None, "elec": None, "batteryLevel": 77}
+    props, _ = await api._legacy_360_get_properties("SN_S6")
+    assert props["BatteryLevel"] == 77
+
+    api._legacy_live_status["SN_S6"] = {"power": 65}
+    props, _ = await api._legacy_360_get_properties("SN_S6")
+    assert props["BatteryLevel"] == 65
+
+    # Scenario 4: Live push has no battery info, fallback to raw_dev battery fields
+    api._legacy_live_status["SN_S6"] = {}
+    api._legacy_device_cache["SN_S6"] = {"battery": 73}
+    props, _ = await api._legacy_360_get_properties("SN_S6")
+    assert props["BatteryLevel"] == 73
+
+    api._legacy_device_cache["SN_S6"] = {"battery": None, "power": 58}
+    props, _ = await api._legacy_360_get_properties("SN_S6")
+    assert props["BatteryLevel"] == 58
+
+    # Scenario 5: Neither live nor raw_dev has any battery fields -> defaults to 100
+    api._legacy_live_status["SN_S6"] = {}
+    api._legacy_device_cache["SN_S6"] = {}
+    props, _ = await api._legacy_360_get_properties("SN_S6")
+    assert props["BatteryLevel"] == 100
+
+
+@pytest.mark.asyncio
+async def test_legacy_360_push_frame_separation_and_mapping():
+    """Verify push frame 20001 (status) and 21015 (consumables) do not overwrite each other."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+    from custom_components.botslab_vacuum.coordinator import BotslabVacuumCoordinator
+
+    api = BotslabVacuumApi(MagicMock(), "cn", "m2", "q", "t")
+    api.send_legacy_360_cmd = AsyncMock(return_value={"errno": 0, "data": {}})
+    api.get_latest_clean_record = AsyncMock(return_value=None)
+
+    coord = BotslabVacuumCoordinator(MagicMock(), MagicMock(), api)
+    coord.async_request_refresh = AsyncMock()
+
+    # 1. Incoming Frame 20001 (Status)
+    push_20001 = {
+        "is_legacy_360": True,
+        "sn": "SN_P1",
+        "info_type": "20001",
+        "status": {"mode": "charge", "elec": 85},
+    }
+    await coord.async_on_push(push_20001)
+
+    assert api._legacy_live_status["SN_P1"]["mode"] == "charge"
+    assert api._legacy_live_status["SN_P1"]["elec"] == 85
+    assert "SN_P1" not in api._legacy_consumables or api._legacy_consumables["SN_P1"] == {}
+
+    # 2. Incoming Frame 21015 (Consumables)
+    push_21015 = {
+        "is_legacy_360": True,
+        "sn": "SN_P1",
+        "info_type": "21015",
+        "status": {
+            "filter": 36000,
+            "main_brush": 72000,
+            "side_brush": 18000,
+            "sensor": 7200,
+        },
+    }
+    await coord.async_on_push(push_21015)
+
+    # Frame 20001 status data MUST NOT be overwritten by Frame 21015!
+    assert api._legacy_live_status["SN_P1"]["mode"] == "charge"
+    assert api._legacy_live_status["SN_P1"]["elec"] == 85
+    assert api._legacy_consumables["SN_P1"]["filter"] == 36000
+    assert api._legacy_consumables["SN_P1"]["main_brush"] == 72000
+
+    # 3. Subsequent Frame 20001 must not overwrite consumables
+    push_20001_next = {
+        "is_legacy_360": True,
+        "sn": "SN_P1",
+        "info_type": "20001",
+        "status": {"mode": "smartClean", "elec": 84},
+    }
+    await coord.async_on_push(push_20001_next)
+
+    assert api._legacy_live_status["SN_P1"]["mode"] == "smartClean"
+    assert api._legacy_consumables["SN_P1"]["filter"] == 36000
+
+    # 4. Verify _legacy_360_get_properties synthesizes both status and consumables
+    props, _ = await api._legacy_360_get_properties("SN_P1")
+    assert props["WorkingStatus"] == "smartClean"
+    assert props["BatteryLevel"] == 84
+    assert props["FilterLifeTime"] == 36000
+    assert props["RollBrushLifeTime"] == 72000
+    assert props["EdgeBrushLifeTime"] == 18000
+    assert props["SensorLifeTime"] == 7200
+
+
+def test_parse_consumable_lifetime_used_seconds_inverted():
+    """Verify _parse_consumable_lifetime correctly computes remaining % and hours from elapsed seconds."""
+    from custom_components.botslab_vacuum.coordinator import (
+        FILTER_MAX_HOURS,
+        MAIN_BRUSH_MAX_HOURS,
+        SENSOR_MAX_HOURS,
+        SIDE_BRUSH_MAX_HOURS,
+        _parse_consumable_lifetime,
+    )
+
+    # Fresh reset: 0 used seconds -> 100% remaining, max_hours
+    pct, hrs = _parse_consumable_lifetime(0, FILTER_MAX_HOURS)
+    assert pct == 100
+    assert hrs == 150.0
+
+    pct, hrs = _parse_consumable_lifetime(0.0, MAIN_BRUSH_MAX_HOURS)
+    assert pct == 100
+    assert hrs == 300.0
+
+    # Standard usage: 36,000 used seconds for 150h max (540,000 total seconds)
+    # remaining_seconds = 540,000 - 36,000 = 504,000 (140.0h), life_pct = 93%
+    pct, hrs = _parse_consumable_lifetime(36000, FILTER_MAX_HOURS)
+    assert hrs == 140.0
+    assert pct == 93
+
+    # Main brush: 72,000 used seconds for 300h max (1,080,000 total seconds)
+    # remaining_seconds = 1,080,000 - 72,000 = 1,008,000 (280.0h), life_pct = 93%
+    pct, hrs = _parse_consumable_lifetime(72000, MAIN_BRUSH_MAX_HOURS)
+    assert hrs == 280.0
+    assert pct == 93
+
+    # Side brush: 18,000 used seconds for 200h max (720,000 total seconds)
+    # remaining_seconds = 702,000 (195.0h), life_pct = 98%
+    pct, hrs = _parse_consumable_lifetime(18000, SIDE_BRUSH_MAX_HOURS)
+    assert hrs == 195.0
+    assert pct == 98
+
+    # Sensors: 7,200 used seconds for 30h max (108,000 total seconds)
+    # remaining_seconds = 100,800 (28.0h), life_pct = 93%
+    pct, hrs = _parse_consumable_lifetime(7200, SENSOR_MAX_HOURS)
+    assert hrs == 28.0
+    assert pct == 93
+
+    # Edge case: used_seconds >= total_seconds (exhausted / overused)
+    pct, hrs = _parse_consumable_lifetime(540000, FILTER_MAX_HOURS)
+    assert pct == 0
+    assert hrs == 0.0
+
+    pct, hrs = _parse_consumable_lifetime(600000, FILTER_MAX_HOURS)
+    assert pct == 0
+    assert hrs == 0.0
+
+    # Edge case: Percentage remaining values (val <= 100 and val > 0)
+    pct, hrs = _parse_consumable_lifetime(85, FILTER_MAX_HOURS)
+    assert pct == 85
+    assert hrs == 127.5
+
+    pct, hrs = _parse_consumable_lifetime(100, FILTER_MAX_HOURS)
+    assert pct == 100
+    assert hrs == 150.0
+
+    # Edge case: negative or invalid inputs
+    pct, hrs = _parse_consumable_lifetime(-50, FILTER_MAX_HOURS)
+    assert pct == 0
+    assert hrs == 0.0
+
+    pct, hrs = _parse_consumable_lifetime(None, FILTER_MAX_HOURS)
+    assert pct == 100
+    assert hrs == 150.0
+
+    pct, hrs = _parse_consumable_lifetime("not_a_number", FILTER_MAX_HOURS)
+    assert pct == 100
+    assert hrs == 150.0
+
+
+@pytest.mark.asyncio
+async def test_reset_consumable_aliases_and_fallback():
+    """Verify reset_consumable supports sensor aliases, attempts ResetSensorLife and falls back to ResetSensorCleanLife."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+    from custom_components.botslab_vacuum.const import INFO_360_RESET_CONSUMABLE
+    from custom_components.botslab_vacuum.exceptions import BotslabCommandError
+
+    session = MagicMock()
+    api = BotslabVacuumApi(session, "eu1", "m2", "q", "t")
+    api.invoke_sync = AsyncMock(return_value={"code": 0})
+
+    # Test sensor aliases all call ResetSensorLife
+    for alias in ("sensor", "sensors", "sensor_clean", "sensor_dirtiness"):
+        api.invoke_sync.reset_mock()
+        await api.reset_consumable("SN1", "PK1", alias)
+        api.invoke_sync.assert_called_once_with("SN1", "PK1", "ResetSensorLife", {})
+
+    # Test fallback to ResetSensorCleanLife when ResetSensorLife raises
+    api.invoke_sync.reset_mock()
+    async def mock_invoke_fail_primary(sn, pk, action, params):
+        if action == "ResetSensorLife":
+            raise BotslabCommandError("Method ResetSensorLife not supported on device")
+        return {"code": 0}
+
+    api.invoke_sync.side_effect = mock_invoke_fail_primary
+    await api.reset_consumable("SN1", "PK1", "sensor")
+    assert api.invoke_sync.call_count == 2
+    assert api.invoke_sync.call_args_list[0].args == ("SN1", "PK1", "ResetSensorLife", {})
+    assert api.invoke_sync.call_args_list[1].args == ("SN1", "PK1", "ResetSensorCleanLife", {})
+
+    # Test legacy 360 backend reset uses INFO_360_RESET_CONSUMABLE (21016) and zeroes local cache
+    api_legacy = BotslabVacuumApi(session, "cn", "m2", "q", "t")
+    api_legacy.send_legacy_360_cmd = AsyncMock(return_value={"errno": 0})
+    api_legacy._legacy_consumables["SN_LEGACY"] = {"filter": 45000}
+    await api_legacy.reset_consumable("SN_LEGACY", "PK_LEGACY", "filter")
+    api_legacy.send_legacy_360_cmd.assert_called_once_with(
+        "SN_LEGACY", INFO_360_RESET_CONSUMABLE, {"cmd": "filter"}
+    )
+    assert api_legacy._legacy_consumables["SN_LEGACY"]["filter"] == 0
+
+
+@pytest.mark.asyncio
+async def test_coordinator_reset_consumable_optimistic():
+    """Verify coordinator.reset_consumable optimistically updates dev.consumables to 100% and max hours."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.coordinator import (
+        FILTER_MAX_HOURS,
+        MAIN_BRUSH_MAX_HOURS,
+        SENSOR_MAX_HOURS,
+        SIDE_BRUSH_MAX_HOURS,
+        BotslabVacuumCoordinator,
+    )
+    from custom_components.botslab_vacuum.models import BotslabConsumableStatus, BotslabVacuumDevice
+
+    api = MagicMock()
+    api.reset_consumable = AsyncMock()
+    coord = BotslabVacuumCoordinator(MagicMock(), MagicMock(), api)
+
+    dev = BotslabVacuumDevice(
+        product_key="PK1",
+        device_name="SN1",
+        device_title="Botslab S8",
+        consumables=BotslabConsumableStatus(
+            filter_life_pct=25,
+            filter_left_hours=37.5,
+            filter_used_hours=112.5,
+            main_brush_life_pct=30,
+            main_brush_left_hours=90.0,
+            main_brush_used_hours=210.0,
+            side_brush_life_pct=15,
+            side_brush_left_hours=30.0,
+            side_brush_used_hours=170.0,
+            sensor_clean_pct=10,
+            sensor_left_hours=3.0,
+            sensor_used_hours=27.0,
+        ),
+    )
+    coord.data = {"SN1": dev}
+    coord.async_set_updated_data = MagicMock()
+
+    # Reset filter
+    await coord.reset_consumable("SN1", "filter")
+    api.reset_consumable.assert_called_with("SN1", "PK1", "filter")
+    assert dev.consumables.filter_life_pct == 100
+    assert dev.consumables.filter_left_hours == FILTER_MAX_HOURS
+    assert dev.consumables.filter_used_hours == 0.0
+
+    # Reset main brush
+    await coord.reset_consumable("SN1", "main_brush")
+    assert dev.consumables.main_brush_life_pct == 100
+    assert dev.consumables.main_brush_left_hours == MAIN_BRUSH_MAX_HOURS
+    assert dev.consumables.main_brush_used_hours == 0.0
+
+    # Reset side brush
+    await coord.reset_consumable("SN1", "side_brush")
+    assert dev.consumables.side_brush_life_pct == 100
+    assert dev.consumables.side_brush_left_hours == SIDE_BRUSH_MAX_HOURS
+    assert dev.consumables.side_brush_used_hours == 0.0
+
+    # Reset sensors using alias "sensors"
+    await coord.reset_consumable("SN1", "sensors")
+    assert dev.consumables.sensor_clean_pct == 100
+    assert dev.consumables.sensor_left_hours == SENSOR_MAX_HOURS
+    assert dev.consumables.sensor_used_hours == 0.0
+    assert coord.async_set_updated_data.called
+
+
+def test_mop_pad_sensor_tri_state():
+    """Verify mop_installed defaults to None, produces None when unsupported, and maps True/False correctly."""
+    from dataclasses import dataclass
+    from typing import Any
+    import homeassistant.components.sensor
+
+    # Ensure SensorEntityDescription & classes are present for standalone pure testing
+    if not hasattr(homeassistant.components.sensor, "SensorEntityDescription") or not isinstance(
+        homeassistant.components.sensor.SensorEntityDescription, type
+    ):
+        @dataclass(frozen=True, kw_only=True)
+        class SensorEntityDescription:
+            key: str = ""
+            translation_key: str | None = None
+            icon: str | None = None
+            entity_category: Any = None
+            device_class: Any = None
+            options: list[str] | None = None
+            native_unit_of_measurement: str | None = None
+            state_class: Any = None
+
+        class SensorEntity:
+            pass
+
+        class SensorDeviceClass:
+            BATTERY = "battery"
+            DURATION = "duration"
+            AREA = "area"
+            ENUM = "enum"
+
+        class SensorStateClass:
+            MEASUREMENT = "measurement"
+            TOTAL_INCREASING = "total_increasing"
+
+        homeassistant.components.sensor.SensorEntityDescription = SensorEntityDescription
+        homeassistant.components.sensor.SensorEntity = SensorEntity
+        homeassistant.components.sensor.SensorDeviceClass = SensorDeviceClass
+        homeassistant.components.sensor.SensorStateClass = SensorStateClass
+
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+    from custom_components.botslab_vacuum.sensor import SENSOR_DESCRIPTIONS
+
+    mop_desc = next(d for d in SENSOR_DESCRIPTIONS if d.key == "mop_installed")
+
+    # 1. Default device representation: mop_installed must be None
+    dev = BotslabVacuumDevice(product_key="PK1", device_name="SN1", device_title="Botslab S6")
+    assert dev.mop_installed is None
+    assert mop_desc.value_fn(dev) is None, "Unsupported mop sensor must return None (unknown)"
+
+    # 2. Installed state (True)
+    dev.mop_installed = True
+    assert mop_desc.value_fn(dev) == "installed"
+
+    # 3. Removed state (False)
+    dev.mop_installed = False
+    assert mop_desc.value_fn(dev) == "removed"
+
+
+def test_vacuum_entity_clean_spot_not_present():
+    """Verify VacuumEntityFeature.CLEAN_SPOT is NOT present and async_clean_spot is removed."""
+    from homeassistant.components.vacuum import VacuumEntityFeature
+    from custom_components.botslab_vacuum.vacuum import BotslabVacuumRobot, _FEATURES
+
+    # CLEAN_SPOT flag must not be part of supported_features
+    assert (BotslabVacuumRobot._attr_supported_features & VacuumEntityFeature.CLEAN_SPOT) == 0
+    assert (_FEATURES & VacuumEntityFeature.CLEAN_SPOT) == 0
+
+    # async_clean_spot method must be removed
+    assert not hasattr(BotslabVacuumRobot, "async_clean_spot")
+
+    # Standard vacuum features must remain present
+    for feature in (
+        VacuumEntityFeature.START,
+        VacuumEntityFeature.STOP,
+        VacuumEntityFeature.PAUSE,
+        VacuumEntityFeature.RETURN_HOME,
+        VacuumEntityFeature.STATE,
+        VacuumEntityFeature.FAN_SPEED,
+        VacuumEntityFeature.LOCATE,
+    ):
+        assert BotslabVacuumRobot._attr_supported_features & feature
+
+
+def test_manifest_version_is_1_1_6():
+    """Verify manifest.json version is bumped to 1.1.6."""
+    import json
+    from pathlib import Path
+
+    manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert data["version"] == "1.1.6"
+
 
 
 

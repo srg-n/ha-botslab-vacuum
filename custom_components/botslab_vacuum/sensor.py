@@ -139,7 +139,10 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
         icon="mdi:water-check",
         device_class=SensorDeviceClass.ENUM,
         options=["installed", "removed"],
-        value_fn=lambda dev: "installed" if dev.mop_installed else "removed",
+        value_fn=lambda dev: (
+            None if dev.mop_installed is None
+            else ("installed" if dev.mop_installed else "removed")
+        ),
     ),
     BotslabSensorEntityDescription(
         key="water_tank_installed",
