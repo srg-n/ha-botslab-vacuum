@@ -1902,8 +1902,9 @@ def test_vacuum_entity_clean_spot_not_present():
     # CLEAN_SPOT flag must not be part of supported_features
     assert (_FEATURES & VacuumEntityFeature.CLEAN_SPOT) == 0
 
-    # async_clean_spot method must be removed
-    assert not hasattr(BotslabVacuumRobot, "async_clean_spot")
+    # async_clean_spot method must not be implemented on BotslabVacuumRobot subclass
+    assert "async_clean_spot" not in BotslabVacuumRobot.__dict__
+    assert "clean_spot" not in BotslabVacuumRobot.__dict__
 
     # Standard vacuum features must remain present
     for feature in (
