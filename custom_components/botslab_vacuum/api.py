@@ -1782,7 +1782,12 @@ class BotslabVacuumApi:
         raw_oss = props.get("MapPkgOssInfo")
         oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
         map_id = int(oss_info.get("MapID", 28239))
-        clean_id = f"{sn}-{int(time.time())}"
+        session_clean_id = (
+            oss_info.get("CleanID")
+            or map_json.get("CleanID")
+            or map_json.get("cleanId")
+        )
+        clean_id = str(session_clean_id) if session_clean_id else f"{sn}-{int(time.time())}"
 
         sa = map_json.get("smartArea") or {}
         room_list = copy.deepcopy(sa.get("value", []))
@@ -1836,6 +1841,7 @@ class BotslabVacuumApi:
                 r_speed = rcfg.get("fan_speed", fan_speed)
                 r_water = rcfg.get("water_level", water_level)
 
+                r["active"] = "normal"
                 r["cleanTimes"] = int(r_repeats)
                 if r_speed:
                     r["windMode"] = FAN_SPEEDS_HA_TO_360.get(str(r_speed).lower(), "auto")

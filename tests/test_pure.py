@@ -1933,7 +1933,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11")
 
 
 def test_parse_consumable_lifetime_legacy_vs_modern():
@@ -2174,7 +2174,7 @@ async def test_modern_clean_rooms_protocol_sequence():
         }
     }
     props = {
-        "MapPkgOssInfo": '{"MapID": 100, "CleanID": 104}'
+        "MapPkgOssInfo": '{"MapID": 100, "CleanID": "360TY860103035420-1794070278"}'
     }
     upload_info = {"host": "https://oss.example.com", "accessKeyId": "k", "accessKeySecret": "s", "securityToken": "t", "dir": "d/"}
 
@@ -2215,11 +2215,11 @@ async def test_modern_clean_rooms_protocol_sequence():
     assert uploaded_sweep_payload["cleanTimes"] == 2
     assert uploaded_sweep_payload["mapId"] == 100
 
-    # 3. StartCleanInAreas must be called with fresh timestamped CleanID
+    # 3. StartCleanInAreas must be called with session CleanID from oss_info
     start_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "StartCleanInAreas"]
     assert len(start_calls) == 1
     _, payload = start_calls[0]
-    assert payload["CleanID"].startswith("360TY860103035420-"), "CleanID must be fresh timestamped ID"
+    assert payload["CleanID"] == "360TY860103035420-1794070278", "CleanID must match active session CleanID"
     assert payload["MapID"] == 100
     assert payload["Url"] == "aliyun://bucket/sweep_areas123.txt"
 
@@ -2270,6 +2270,11 @@ async def test_modern_clean_rooms_auto_order_flag():
     # And autoOrder in sweep_payload must be True
     _, uploaded_sweep_payload = api._upload_to_oss.call_args[0]
     assert uploaded_sweep_payload["autoOrder"] is True
+
+    # Fallback CleanID generated when MapPkgOssInfo has no CleanID
+    start_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "StartCleanInAreas"]
+    assert len(start_calls) == 1
+    assert start_calls[0][1]["CleanID"].startswith("360TY860103035420-")
 
 
 @pytest.mark.asyncio

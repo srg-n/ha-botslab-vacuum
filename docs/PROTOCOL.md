@@ -130,4 +130,4 @@ When an `OP_PUSH` frame arrives (signaling status changes, map package uploads, 
      - Fetches temporary STS upload credentials from `POST /v1/user/get_upload_config`.
      - Constructs the room partition JSON (`sweep_areas.txt`) with `activeIds` in ordered sequence, `autoOrder: false` (or `true` if `auto_order` requested), and per-room fan/water settings.
      - Uploads directly to Alibaba Cloud OSS (`PUT /...`).
-     - Calls `StartCleanInAreas` with the uploaded OSS URL and a fresh unique timestamped session ID (`CleanID: {sn}-{timestamp}`).
+     - Calls `StartCleanInAreas` with the uploaded OSS URL and the active session `CleanID` from `MapPkgOssInfo` (with fallback to `{sn}-{timestamp}`). The robot validates `CleanID` against its active map state; passing an arbitrary unassociated timestamp causes the robot to reject the command with `ErrorNO: -1`.
