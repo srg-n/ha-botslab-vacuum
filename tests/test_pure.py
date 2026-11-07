@@ -2159,7 +2159,7 @@ def test_map_camera_entity_picture_versioning_and_attribute_filtering():
 async def test_modern_clean_rooms_uses_fresh_clean_id():
     """Verify clean_rooms always generates a fresh CleanID (never reuses old oss_info CleanID)."""
     import time
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, MagicMock
     from custom_components.botslab_vacuum.api import BotslabVacuumApi
 
     api = BotslabVacuumApi(MagicMock(), "eu", "mk1", "q", "t")
@@ -2212,7 +2212,7 @@ async def test_modern_clean_rooms_uses_fresh_clean_id():
 async def test_modern_clean_rooms_no_fallback_to_clean_zone():
     """Verify that if StartCleanInAreas fails, clean_zone is NOT called (no rect fallback)."""
     from unittest.mock import AsyncMock, MagicMock
-    from custom_components.botslab_vacuum.api import BotslabVacuumApi, BotslabApiError
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
 
     api = BotslabVacuumApi(MagicMock(), "eu", "mk1", "q", "t")
     api.is_legacy_360 = False
