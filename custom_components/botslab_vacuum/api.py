@@ -21,6 +21,7 @@ from .const import (
     APP_KEY,
     APP_SECRET,
     APP_VER,
+    AUTH_EXPIRED_CODES,
     AUTH_EXPIRED_ERRNOS_360,
     BATTERY_KEYS_360,
     COOKIE_Q_360,
@@ -226,6 +227,7 @@ class BotslabVacuumApi:
         self._cached_is_active: bool = False
         self._cached_rooms: dict[str, list[BotslabRoom]] = {}
         self._cached_map_info: dict[str, BotslabMapInfo | None] = {}
+        self._auth_lock: asyncio.Lock = asyncio.Lock()
 
     def _sign(self) -> tuple[str, str, str]:
         """Generate timestamp, nonce, and MD5 signature for API requests."""
@@ -781,29 +783,42 @@ class BotslabVacuumApi:
         _LOGGER.debug("app_login successful. sid: %s..., push_alias: %s", sid[:8], self.push_alias)
         return result
 
+    async def _handle_auth_retry(self) -> None:
+        """Refresh session when auth token expires."""
+        async with self._auth_lock:
+            _LOGGER.info("Session expired, automatically re-authenticating with cloud...")
+            await self.app_login()
+
     async def get_devices(self) -> list[dict[str, Any]]:
         """Fetch all user devices from IoT Device List."""
         if self.is_legacy_360:
             return await self._legacy_360_get_devices()
 
-        ts, nonce, sig = self._sign()
         url = f"{self.base_url}/v1/iot/device/list"
-        params = self._base_query(ts, nonce, sig)
+        for attempt in range(2):
+            ts, nonce, sig = self._sign()
+            params = self._base_query(ts, nonce, sig)
 
-        try:
-            async with self.session.get(
-                url,
-                params=params,
-                headers=self._headers(),
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
-            ) as resp:
-                data = await resp.json(content_type=None)
-        except Exception as err:
-            raise BotslabApiError(f"get_devices failed: {err}") from err
+            try:
+                async with self.session.get(
+                    url,
+                    params=params,
+                    headers=self._headers(),
+                    timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                ) as resp:
+                    data = await resp.json(content_type=None)
+            except Exception as err:
+                raise BotslabApiError(f"get_devices failed: {err}") from err
 
-        code = data.get("code")
-        if code != 0:
-            raise BotslabApiError(f"get_devices code {code}: {data.get('message')}")
+            code = data.get("code")
+            if code in AUTH_EXPIRED_CODES:
+                if attempt == 0 and self.q and self.t:
+                    await self._handle_auth_retry()
+                    continue
+                raise BotslabAuthError(f"Auth expired: code {code}")
+            if code != 0:
+                raise BotslabApiError(f"get_devices code {code}: {data.get('message')}")
+            break
 
         _LOGGER.debug("get_devices raw response from %s: %s", url, data)
 
@@ -839,28 +854,33 @@ class BotslabVacuumApi:
         if self.is_legacy_360:
             return await self._legacy_360_get_properties(sn)
 
-        ts, nonce, sig = self._sign()
         url = f"{self.base_url}/v1/iot/device/get_property"
-        params = self._base_query(ts, nonce, sig)
-        params.update({"product_key": product_key, "device_name": sn, "extend": "1"})
+        for attempt in range(2):
+            ts, nonce, sig = self._sign()
+            params = self._base_query(ts, nonce, sig)
+            params.update({"product_key": product_key, "device_name": sn, "extend": "1"})
 
-        try:
-            async with self.session.get(
-                url,
-                params=params,
-                headers=self._headers(),
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
-            ) as resp:
-                data = await resp.json(content_type=None)
-        except Exception as err:
-            raise BotslabApiError(f"get_property failed: {err}") from err
+            try:
+                async with self.session.get(
+                    url,
+                    params=params,
+                    headers=self._headers(),
+                    timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                ) as resp:
+                    data = await resp.json(content_type=None)
+            except Exception as err:
+                raise BotslabApiError(f"get_property failed: {err}") from err
 
-        code = data.get("code")
-        if code in (100003, 102008, 102003, 1002, 1003, 401):
-            raise BotslabAuthError(f"Auth expired: code {code}")
-        if code != 0:
-            # Fallback to get_desired_property if get_property is rejected
-            return await self._get_desired_property_fallback(sn, product_key)
+            code = data.get("code")
+            if code in AUTH_EXPIRED_CODES:
+                if attempt == 0 and self.q and self.t:
+                    await self._handle_auth_retry()
+                    continue
+                raise BotslabAuthError(f"Auth expired: code {code}")
+            if code != 0:
+                # Fallback to get_desired_property if get_property is rejected
+                return await self._get_desired_property_fallback(sn, product_key)
+            break
 
         inner = data.get("data") or data.get("result") or {}
         signs = inner.get("extend", {}).get("s3_signs", {})
@@ -922,28 +942,38 @@ class BotslabVacuumApi:
 
     async def get_upload_config(self, sn: str, product_key: str) -> dict[str, Any] | None:
         """Fetch OSS upload configuration and STS tokens for sweep_areas."""
-        ts, nonce, sig = self._sign()
         url = f"{self.base_url}/v1/user/get_upload_config"
-        q = self._base_query(ts, nonce, sig)
-        q.update({
-            "product_key": product_key,
-            "device_name": sn,
-            "file_type": "txt",
-            "scene_id": "robot_config",
-            "scene_info": json.dumps({"id": "sweep_areas"}, separators=(",", ":")),
-        })
-        try:
-            async with self.session.get(
-                url,
-                params=q,
-                headers=self._headers(),
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
-            ) as resp:
-                data = await resp.json(content_type=None)
-                if data.get("code") == 0:
-                    return data.get("data", {}).get("upload_info")
-        except Exception as err:
-            _LOGGER.error("Failed to get upload config: %s", err)
+        for attempt in range(2):
+            ts, nonce, sig = self._sign()
+            q = self._base_query(ts, nonce, sig)
+            q.update({
+                "product_key": product_key,
+                "device_name": sn,
+                "file_type": "txt",
+                "scene_id": "robot_config",
+                "scene_info": json.dumps({"id": "sweep_areas"}, separators=(",", ":")),
+            })
+            try:
+                async with self.session.get(
+                    url,
+                    params=q,
+                    headers=self._headers(),
+                    timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                ) as resp:
+                    data = await resp.json(content_type=None)
+                    code = data.get("code")
+                    if code in AUTH_EXPIRED_CODES:
+                        if attempt == 0 and self.q and self.t:
+                            await self._handle_auth_retry()
+                            continue
+                        raise BotslabAuthError(f"Auth expired: code {code}")
+                    if code == 0:
+                        return data.get("data", {}).get("upload_info")
+            except BotslabAuthError:
+                raise
+            except Exception as err:
+                _LOGGER.error("Failed to get upload config: %s", err)
+            break
         return None
 
     async def _upload_to_oss(self, upload_info: dict[str, Any], payload: dict[str, Any]) -> str | None:
@@ -1380,26 +1410,36 @@ class BotslabVacuumApi:
         self, sn: str, product_key: str, action: str, params: dict[str, Any]
     ) -> dict[str, Any]:
         """Invoke synchronous device action."""
-        ts, nonce, sig = self._sign()
         url = f"{self.base_url}/v1/iot/device/invoke_service"
-        q = self._base_query(ts, nonce, sig)
         body = {
             "product_key": product_key,
             "device_name": sn,
             "identifier": action,
             "input": json.dumps(params, separators=(",", ":")),
         }
-        try:
-            async with self.session.post(
-                url,
-                params=q,
-                headers=self._headers("application/x-www-form-urlencoded"),
-                data=body,
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
-            ) as resp:
-                return await resp.json(content_type=None)
-        except Exception as err:
-            raise BotslabApiError(f"invoke_sync {action} failed: {err}") from err
+        for attempt in range(2):
+            ts, nonce, sig = self._sign()
+            q = self._base_query(ts, nonce, sig)
+            try:
+                async with self.session.post(
+                    url,
+                    params=q,
+                    headers=self._headers("application/x-www-form-urlencoded"),
+                    data=body,
+                    timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                ) as resp:
+                    data = await resp.json(content_type=None)
+            except Exception as err:
+                raise BotslabApiError(f"invoke_sync {action} failed: {err}") from err
+
+            code = data.get("code")
+            if code in AUTH_EXPIRED_CODES:
+                if attempt == 0 and self.q and self.t:
+                    await self._handle_auth_retry()
+                    continue
+                raise BotslabAuthError(f"Auth expired: code {code}")
+            return data
+        return {}
 
     async def set_desired_property(
         self, sn: str, product_key: str, identifier: str, value: Any
@@ -1407,63 +1447,82 @@ class BotslabVacuumApi:
         """Set desired property on device shadow (for modern Botslab IoT cloud)."""
         if self.is_legacy_360:
             return {}
-        ts, nonce, sig = self._sign()
         url = f"{self.base_url}/v1/iot/device/set_desired_property"
-        q = self._base_query(ts, nonce, sig)
         body = {
             "product_key": product_key,
             "device_name": sn,
             "items": json.dumps({identifier: value}, separators=(",", ":")),
         }
-        try:
-            async with self.session.post(
-                url,
-                params=q,
-                headers=self._headers("application/x-www-form-urlencoded"),
-                data=body,
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
-            ) as resp:
-                data = await resp.json(content_type=None)
-                code = data.get("code")
-                if code != 0:
-                    raise BotslabCommandError(
-                        f"set_desired_property {identifier} failed: code {code} {data.get('msg')}"
-                    )
-                return data
-        except Exception as err:
-            _LOGGER.error(
-                "Failed to set desired property %s=%s on %s: %s",
-                identifier,
-                value,
-                sn,
-                err,
-            )
-            raise
+        for attempt in range(2):
+            ts, nonce, sig = self._sign()
+            q = self._base_query(ts, nonce, sig)
+            try:
+                async with self.session.post(
+                    url,
+                    params=q,
+                    headers=self._headers("application/x-www-form-urlencoded"),
+                    data=body,
+                    timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                ) as resp:
+                    data = await resp.json(content_type=None)
+                    code = data.get("code")
+                    if code in AUTH_EXPIRED_CODES:
+                        if attempt == 0 and self.q and self.t:
+                            await self._handle_auth_retry()
+                            continue
+                        raise BotslabAuthError(f"Auth expired: code {code}")
+                    if code != 0:
+                        raise BotslabCommandError(
+                            f"set_desired_property {identifier} failed: code {code} {data.get('msg')}"
+                        )
+                    return data
+            except BotslabAuthError:
+                raise
+            except Exception as err:
+                _LOGGER.error(
+                    "Failed to set desired property %s=%s on %s: %s",
+                    identifier,
+                    value,
+                    sn,
+                    err,
+                )
+                raise
+        return {}
 
     async def invoke_async(
         self, sn: str, product_key: str, action: str, params: dict[str, Any]
     ) -> dict[str, Any]:
         """Invoke asynchronous device action."""
-        ts, nonce, sig = self._sign()
         url = f"{self.base_url}/v1/iot/device/invoke_service_async"
-        q = self._base_query(ts, nonce, sig)
         body = {
             "product_key": product_key,
             "device_name": sn,
             "identifier": action,
             "input": json.dumps(params, separators=(",", ":")),
         }
-        try:
-            async with self.session.post(
-                url,
-                params=q,
-                headers=self._headers("application/x-www-form-urlencoded"),
-                data=body,
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
-            ) as resp:
-                return await resp.json(content_type=None)
-        except Exception as err:
-            raise BotslabApiError(f"invoke_async {action} failed: {err}") from err
+        for attempt in range(2):
+            ts, nonce, sig = self._sign()
+            q = self._base_query(ts, nonce, sig)
+            try:
+                async with self.session.post(
+                    url,
+                    params=q,
+                    headers=self._headers("application/x-www-form-urlencoded"),
+                    data=body,
+                    timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                ) as resp:
+                    data = await resp.json(content_type=None)
+            except Exception as err:
+                raise BotslabApiError(f"invoke_async {action} failed: {err}") from err
+
+            code = data.get("code")
+            if code in AUTH_EXPIRED_CODES:
+                if attempt == 0 and self.q and self.t:
+                    await self._handle_auth_retry()
+                    continue
+                raise BotslabAuthError(f"Auth expired: code {code}")
+            return data
+        return {}
 
     async def wait_async_reply(self, request_id: str, timeout: int = 12) -> bool:
         """Wait for asynchronous command confirmation. Re-signs on every poll iteration."""
@@ -1482,6 +1541,9 @@ class BotslabVacuumApi:
                 ) as resp:
                     data = await resp.json(content_type=None)
                     code = data.get("code")
+                    if code in AUTH_EXPIRED_CODES and self.q and self.t:
+                        await self._handle_auth_retry()
+                        continue
                     if code == 0:
                         res_str = data.get("data", {}).get("result", "")
                         if isinstance(res_str, str) and res_str:
@@ -1499,7 +1561,7 @@ class BotslabVacuumApi:
                     else:
                         _LOGGER.debug("wait_async_reply status code=%s: %s", code, data.get("msg"))
             except Exception as err:
-                _LOGGER.debug("wait_async_reply request error: %s", err)
+                _LOGGER.debug("wait_async_reply error: %s", err)
             await asyncio.sleep(1)
         return False
 
@@ -1774,6 +1836,18 @@ class BotslabVacuumApi:
             await self.set_fan_speed(sn, product_key, fan_speed)
         if water_level:
             await self.set_water_level(sn, product_key, water_level)
+
+        # Step 0: Wake robot SLAM and sync fresh map package to OSS (standard Botslab protocol)
+        try:
+            res_sync = await self.invoke_async(
+                sn, product_key, "StartSyncMapPkgToOss", {"SyncDuration": 60}
+            )
+            req_sync = res_sync.get("data", {}).get("request_id")
+            if req_sync:
+                await self.wait_async_reply(req_sync, timeout=5)
+            await asyncio.sleep(0.5)
+        except Exception as sync_err:
+            _LOGGER.debug("StartSyncMapPkgToOss handshake skipped/failed for %s: %s", sn, sync_err)
 
         map_json, props = await self.get_map_json(sn, product_key)
         if not map_json:

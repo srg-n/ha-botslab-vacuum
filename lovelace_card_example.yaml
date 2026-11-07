@@ -53,6 +53,7 @@ map_entity: >
   {{ cams | first if cams else 'camera.botslab_map_camera' }}
 title: Botslab Vacuum
 default_mode: room
+# auto_order: false   # false (varsayılan): Robot odaları tam olarak arayüzde seçtiğiniz sırada temizler (1. Salon -> 2. Mutfak). true: En kısa rotayı otomatik seçer.
 
 ---
 # ==============================================================================
@@ -106,6 +107,7 @@ map_modes:
         room_ids: "[[selection]]"
         repeat_times: "[[repeats]]"
         entity_id: "[[entity_id]]"
+        auto_order: false
     predefined_selections:
       # Generated from the robot's own map. Regenerate after adding or
       # renaming rooms in the Botslab app - the values below are a

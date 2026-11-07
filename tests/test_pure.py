@@ -1933,7 +1933,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12")
 
 
 def test_parse_consumable_lifetime_legacy_vs_modern():
@@ -2197,7 +2197,12 @@ async def test_modern_clean_rooms_protocol_sequence():
     # Dispatch ordered room clean: Room 2 first, then Room 1
     await api.clean_rooms("360TY860103035420", "pk_mod", ["2", "1"], repeat_times=2)
 
-    # 1. SetCleanPolicyList MUST be invoked first
+    # 0. StartSyncMapPkgToOss MUST be invoked first to wake SLAM & refresh CleanID
+    sync_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "StartSyncMapPkgToOss"]
+    assert len(sync_calls) == 1, "StartSyncMapPkgToOss must be invoked first"
+    assert sync_calls[0][1] == {"SyncDuration": 60}
+
+    # 1. SetCleanPolicyList MUST be invoked after sync
     policy_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "SetCleanPolicyList"]
     assert len(policy_calls) == 1, "SetCleanPolicyList must be invoked before StartCleanInAreas"
     _, policy_payload = policy_calls[0]
@@ -2330,3 +2335,35 @@ async def test_legacy_360_clean_rooms_unchanged():
     api._clean_rooms_legacy_360.assert_called_once_with("SN_LEG", ["3", "4"], 1, None, None)
     api.get_map_json.assert_not_called()
     api.invoke_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_reauth_on_token_expiration():
+    """Verify that when API receives code 102008, it automatically calls app_login and retries."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    api = BotslabVacuumApi(MagicMock(), "eu", "mk1", "q_test", "t_test")
+    api.is_legacy_360 = False
+    api.app_login = AsyncMock(return_value={"sid": "new_sid"})
+
+    # Mock session.post for invoke_async: first call returns 102008, second call returns success 0
+    resp1 = MagicMock()
+    resp1.json = AsyncMock(return_value={"code": 102008, "msg": "auth expired"})
+    ctx1 = MagicMock()
+    ctx1.__aenter__ = AsyncMock(return_value=resp1)
+    ctx1.__aexit__ = AsyncMock(return_value=None)
+
+    resp2 = MagicMock()
+    resp2.json = AsyncMock(return_value={"code": 0, "data": {"request_id": "req-ok"}})
+    ctx2 = MagicMock()
+    ctx2.__aenter__ = AsyncMock(return_value=resp2)
+    ctx2.__aexit__ = AsyncMock(return_value=None)
+
+    api.session.post = MagicMock(side_effect=[ctx1, ctx2])
+
+    res = await api.invoke_async("SN123", "pk1", "TestCmd", {})
+    assert res.get("code") == 0
+    assert res.get("data", {}).get("request_id") == "req-ok"
+    api.app_login.assert_called_once()
+

@@ -102,6 +102,7 @@ INFO_360_CONSUMABLES: Final = "21015"
 INFO_360_RESET_CONSUMABLE: Final = "21016"
 
 AUTH_EXPIRED_ERRNOS_360: Final = (102, 103, 401, 403, -2, 10001, 10002)
+AUTH_EXPIRED_CODES: Final = (100003, 102008, 102003, 1002, 1003, 401)
 BATTERY_KEYS_360: Final = ("elecReal", "elec", "battery", "batteryLevel", "power")
 
 # Human-readable robot hardware error code descriptions (English baseline)

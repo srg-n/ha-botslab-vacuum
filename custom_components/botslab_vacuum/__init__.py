@@ -734,6 +734,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 vol.Optional(ATTR_FAN_SPEED): cv.string,
                 vol.Optional(ATTR_WATER_LEVEL): cv.string,
                 vol.Optional("rooms_config"): vol.Any(dict, list),
+                vol.Optional("auto_order", default=False): cv.boolean,
             },
             extra=vol.ALLOW_EXTRA,
         ),

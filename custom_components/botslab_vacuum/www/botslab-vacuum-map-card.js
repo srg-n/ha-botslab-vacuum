@@ -21352,6 +21352,7 @@ async function hn(a, i, o, s, l, d) {
 function tw({
   hass: a,
   entityId: i,
+  autoOrder: ao = false,
   mapEntityId: o,
   mapTransform: s,
   onSuccess: l,
@@ -21412,7 +21413,7 @@ function tw({
         entity_id: i,
         room_ids: R,
         repeat_times: L,
-        auto_order: !1
+        auto_order: Boolean(ao)
       };
       V && Object.keys(V).length > 0 && (H.rooms_config = V), await hn(
         a,
@@ -28756,11 +28757,11 @@ function dN({ opened: a, onClose: i }) {
     ] }) })
   ] }) });
 }
-function _N({ selectedRooms: a }) {
+function _N({ selectedRooms: a, autoOrder: ao = false }) {
   const { t: i } = Oe();
   if (a.size === 0)
     return null;
-  const vals = Array.from(a.values()), o = vals.length > 1 ? vals.map((n, idx) => `${idx + 1}. ${n}`).join("  →  ") : (vals[0] || "");
+  const vals = Array.from(a.values()), o = ao ? vals.join(", ") : (vals.length > 1 ? vals.map((n, idx) => `${idx + 1}. ${n}`).join("  →  ") : (vals[0] || ""));
   return /* @__PURE__ */ f.jsxs("div", { className: "room-selection-display", children: [
     /* @__PURE__ */ f.jsx("span", { className: "room-selection-display__label", children: i("room_display.selected_label") }),
     /* @__PURE__ */ f.jsx("span", { className: "room-selection-display__rooms", children: o })
@@ -28854,6 +28855,7 @@ function pN({ hass: a, config: i }) {
   const { toast: ve, showToast: De, hideToast: Ne } = aw(), { handlePause: yt, handleResume: Lt, handleStop: ua, handleDock: ha, handleClean: st, handleCleanSpots: Ye } = tw({
     hass: a,
     entityId: i.entity,
+    autoOrder: Boolean(i.auto_order),
     mapEntityId: Q,
     mapTransform: F.transform,
     onSuccess: De,
@@ -28978,7 +28980,7 @@ function pN({ hass: a, config: i }) {
               }
             ),
             /* @__PURE__ */ f.jsxs("div", { className: "dreame-vacuum-card__controls", children: [
-              z === "room" && /* @__PURE__ */ f.jsx(_N, { selectedRooms: A }),
+              z === "room" && /* @__PURE__ */ f.jsx(_N, { selectedRooms: A, autoOrder: Boolean(i.auto_order) }),
               /* @__PURE__ */ f.jsx(
                 vx,
                 {
