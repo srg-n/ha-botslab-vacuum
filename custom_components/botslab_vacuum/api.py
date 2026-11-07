@@ -876,7 +876,17 @@ class BotslabVacuumApi:
             except ValueError:
                 props = {}
         elif isinstance(result_raw, dict):
-            props = result_raw
+            props = dict(result_raw)
+
+        # Extract items from properties array (TSL shadow format)
+        for item in inner.get("properties") or []:
+            if isinstance(item, dict) and "identifier" in item:
+                props.setdefault(item["identifier"], item.get("value"))
+
+        # Merge direct keys from inner
+        for k, v in inner.items():
+            if k not in ("result", "extend", "s3_signs", "properties"):
+                props.setdefault(k, v)
 
         return props, signs
 
@@ -1280,13 +1290,19 @@ class BotslabVacuumApi:
             or ""
         )
 
-        # In legacy 360 maps, cleaning path is stored in record posArray
-        if not cleaning_path and isinstance(map_json.get("posArray"), list):
-            cleaning_path = map_json["posArray"]
+        # Check if map_json contains cleaning path (posArray in 360, cleanPath in Botslab, etc.)
+        if not cleaning_path:
+            for pk in ("posArray", "PosArray", "cleanPath", "clean_path", "track", "path"):
+                cand = map_json.get(pk)
+                if isinstance(cand, list) and len(cand) >= 2:
+                    cleaning_path = cand
+                    break
 
         # Re-use cached map only if neither layout, robot pose, nor path changed
         curr_pose_tuple = tuple(round(x, 1) for x in robot_pose[:2]) if robot_pose and len(robot_pose) >= 2 else None
         cached_pose_tuple = tuple(round(x, 1) for x in self._cached_robot_pose[:2]) if self._cached_robot_pose and len(self._cached_robot_pose) >= 2 else None
+        path_len = len(cleaning_path) if cleaning_path else 0
+        cached_path_len = getattr(self, "_cached_path_len", 0)
 
         if (
             upload_id
@@ -1294,7 +1310,7 @@ class BotslabVacuumApi:
             and self._cached_map_bytes
             and curr_pose_tuple == cached_pose_tuple
             and is_active == self._cached_is_active
-            and not cleaning_path
+            and path_len == cached_path_len
         ):
             return self._cached_map_bytes
 
@@ -1341,6 +1357,7 @@ class BotslabVacuumApi:
             self._cached_map_bytes = png_bytes
             self._cached_robot_pose = list(robot_pose) if robot_pose else None
             self._cached_is_active = is_active
+            self._cached_path_len = path_len
             return png_bytes
         except Exception as err:
             _LOGGER.warning("Map decoding failed: %s", err)
@@ -1566,30 +1583,39 @@ class BotslabVacuumApi:
             self._legacy_consumables.setdefault(sn, {})[canonical] = 0
             return
 
-        # Modern Botslab backend action mapping with fallback for sensors
-        cmd_actions: dict[str, list[str]] = {
-            "filter": ["ResetFilterLife"],
-            "main_brush": ["ResetMainBrushLife"],
-            "side_brush": ["ResetSideBrushLife"],
-            "sensor": ["ResetSensorLife", "ResetSensorCleanLife"],
+        # Official Botslab TSL service action mapping from specification
+        tsl_action_map: dict[str, str] = {
+            "filter": "ResetFilterLife",
+            "main_brush": "ResetRollBrushLife",
+            "side_brush": "ResetSideBrushLife",
+            "sensor": "ResetSensorCleanLife",
         }
-        actions = cmd_actions.get(canonical, [])
-        last_err: Exception | None = None
-        for action in actions:
-            try:
-                res = await self.invoke_sync(sn, product_key, action, {})
-                if isinstance(res, dict) and res.get("code") not in (0, "0", None):
-                    code = res.get("code")
-                    msg = res.get("msg") or res.get("message") or "Unknown error"
-                    raise BotslabCommandError(f"{action} failed with code {code}: {msg}")
-                last_err = None
-                break
-            except Exception as err:
-                last_err = err
-                _LOGGER.debug("Reset consumable action %s failed: %s", action, err)
+        action = tsl_action_map.get(canonical, canonical)
 
-        if last_err is not None:
-            raise last_err
+        # Botslab IoT cloud executes commands asynchronously (invoke_service_async)
+        res = await self.invoke_async(sn, product_key, action, {})
+        code = res.get("code") if isinstance(res, dict) else None
+        if code not in (0, "0", 202016, None):
+            # Fallback to invoke_sync if async endpoint was rejected
+            res_sync = await self.invoke_sync(sn, product_key, action, {})
+            code_sync = res_sync.get("code") if isinstance(res_sync, dict) else None
+            if code_sync not in (0, "0", 202016, None):
+                msg = res.get("msg") or res_sync.get("msg") or "Command failed"
+                raise BotslabCommandError(f"{action} failed with code {code}: {msg}")
+
+        # Update desired shadow property on modern IoT cloud
+        shadow_prop_map = {
+            "filter": "FilterLifeTime",
+            "main_brush": "RollBrushLifeTime",
+            "side_brush": "EdgeBrushLifeTime",
+            "sensor": "SensorLifeTime",
+        }
+        prop_name = shadow_prop_map.get(canonical)
+        if prop_name:
+            try:
+                await self.set_desired_property(sn, product_key, prop_name, 100)
+            except Exception as shadow_err:
+                _LOGGER.debug("Setting desired shadow property %s failed: %s", prop_name, shadow_err)
 
     async def get_firmware_version(self, sn: str, product_key: str) -> str:
         """Fetch firmware version from Botslab OTA check."""

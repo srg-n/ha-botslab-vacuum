@@ -404,9 +404,22 @@ def render_map_advanced(
 
     # 7. Draw Live Cleaning Trajectory / Path
     if cleaning_path and len(cleaning_path) >= 2:
-        path_pts = [w2p(p[0], p[1]) for p in cleaning_path if len(p) >= 2]
-        if len(path_pts) >= 2:
-            draw.line(path_pts, fill=C_PATH, width=max(2, scale // 2), joint="curve")
+        seg: list[tuple[float, float]] = []
+        last_pt: tuple[float, float] | None = None
+        for p in cleaning_path:
+            if not isinstance(p, (list, tuple)) or len(p) < 2:
+                continue
+            px, py = float(p[0]), float(p[1])
+            if last_pt is not None:
+                # If distance > 4000mm (4 meters) between consecutive points, break segment
+                if (px - last_pt[0]) ** 2 + (py - last_pt[1]) ** 2 > 16_000_000:
+                    if len(seg) >= 2:
+                        draw.line(seg, fill=C_PATH, width=max(2, scale // 2), joint="curve")
+                    seg = []
+            seg.append(w2p(px, py))
+            last_pt = (px, py)
+        if len(seg) >= 2:
+            draw.line(seg, fill=C_PATH, width=max(2, scale // 2), joint="curve")
 
     # 8. Draw Live Robot Position & Directional Arrow (optional, disabled by default to let card render vector marker)
     if draw_robot and robot_pose and len(robot_pose) >= 2:

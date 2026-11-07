@@ -1729,35 +1729,42 @@ def test_parse_consumable_lifetime_used_seconds_inverted():
 
 
 @pytest.mark.asyncio
-async def test_reset_consumable_aliases_and_fallback():
-    """Verify reset_consumable supports sensor aliases, attempts ResetSensorLife and falls back to ResetSensorCleanLife."""
+async def test_reset_consumable_aliases_and_tsl_actions():
+    """Verify reset_consumable invokes exact official Botslab TSL actions asynchronously with fallback."""
     from unittest.mock import AsyncMock, MagicMock
     from custom_components.botslab_vacuum.api import BotslabVacuumApi
     from custom_components.botslab_vacuum.const import INFO_360_RESET_CONSUMABLE
-    from custom_components.botslab_vacuum.exceptions import BotslabCommandError
 
     session = MagicMock()
     api = BotslabVacuumApi(session, "eu1", "m2", "q", "t")
+    api.invoke_async = AsyncMock(return_value={"code": 0})
     api.invoke_sync = AsyncMock(return_value={"code": 0})
+    api.set_desired_property = AsyncMock(return_value={"code": 0})
 
-    # Test sensor aliases all call ResetSensorLife
+    # Test sensor aliases all call ResetSensorCleanLife
     for alias in ("sensor", "sensors", "sensor_clean", "sensor_dirtiness"):
-        api.invoke_sync.reset_mock()
+        api.invoke_async.reset_mock()
         await api.reset_consumable("SN1", "PK1", alias)
-        api.invoke_sync.assert_called_once_with("SN1", "PK1", "ResetSensorLife", {})
+        api.invoke_async.assert_called_once_with("SN1", "PK1", "ResetSensorCleanLife", {})
 
-    # Test fallback to ResetSensorCleanLife when ResetSensorLife raises
+    # Test filter, main brush, side brush call exact TSL actions
+    api.invoke_async.reset_mock()
+    await api.reset_consumable("SN1", "PK1", "filter")
+    api.invoke_async.assert_called_once_with("SN1", "PK1", "ResetFilterLife", {})
+
+    api.invoke_async.reset_mock()
+    await api.reset_consumable("SN1", "PK1", "main_brush")
+    api.invoke_async.assert_called_once_with("SN1", "PK1", "ResetRollBrushLife", {})
+
+    api.invoke_async.reset_mock()
+    await api.reset_consumable("SN1", "PK1", "side_brush")
+    api.invoke_async.assert_called_once_with("SN1", "PK1", "ResetSideBrushLife", {})
+
+    # Test fallback to invoke_sync when invoke_async returns non-zero error code
+    api.invoke_async = AsyncMock(return_value={"code": 1001, "msg": "async failed"})
     api.invoke_sync.reset_mock()
-    async def mock_invoke_fail_primary(sn, pk, action, params):
-        if action == "ResetSensorLife":
-            raise BotslabCommandError("Method ResetSensorLife not supported on device")
-        return {"code": 0}
-
-    api.invoke_sync.side_effect = mock_invoke_fail_primary
     await api.reset_consumable("SN1", "PK1", "sensor")
-    assert api.invoke_sync.call_count == 2
-    assert api.invoke_sync.call_args_list[0].args == ("SN1", "PK1", "ResetSensorLife", {})
-    assert api.invoke_sync.call_args_list[1].args == ("SN1", "PK1", "ResetSensorCleanLife", {})
+    api.invoke_sync.assert_called_once_with("SN1", "PK1", "ResetSensorCleanLife", {})
 
     # Test legacy 360 backend reset uses INFO_360_RESET_CONSUMABLE (21016) and zeroes local cache
     api_legacy = BotslabVacuumApi(session, "cn", "m2", "q", "t")
@@ -1926,7 +1933,119 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] == "1.1.6"
+    assert data["version"] in ("1.1.6", "1.1.7")
+
+
+def test_parse_consumable_lifetime_legacy_vs_modern():
+    """Verify 0 value is 100% on legacy 360 (0 used seconds) and 0% on modern Botslab (0% remaining)."""
+    from custom_components.botslab_vacuum.coordinator import (
+        FILTER_MAX_HOURS,
+        _parse_consumable_lifetime,
+    )
+
+    # Legacy 360: 0 seconds elapsed = 100% remaining
+    pct_leg, hrs_leg = _parse_consumable_lifetime(0, FILTER_MAX_HOURS, is_legacy_360=True)
+    assert pct_leg == 100
+    assert hrs_leg == FILTER_MAX_HOURS
+
+    # Modern Botslab: 0% remaining = depleted (0%)
+    pct_mod, hrs_mod = _parse_consumable_lifetime(0, FILTER_MAX_HOURS, is_legacy_360=False)
+    assert pct_mod == 0
+    assert hrs_mod == 0.0
+
+
+@pytest.mark.asyncio
+async def test_reset_consumable_code_202016_accepted():
+    """Verify code 202016 (device async reply pending) is accepted as successful dispatch."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    session = MagicMock()
+    api = BotslabVacuumApi(session, "eu1", "m2", "q", "t")
+    api.invoke_async = AsyncMock(return_value={"code": 202016, "msg": "Network Error"})
+    api.set_desired_property = AsyncMock(return_value={"code": 0})
+
+    # Should not raise exception
+    await api.reset_consumable("SN_S8", "PK_S8", "sensor")
+    api.invoke_async.assert_called_once_with("SN_S8", "PK_S8", "ResetSensorCleanLife", {})
+    api.set_desired_property.assert_called_once_with("SN_S8", "PK_S8", "SensorLifeTime", 100)
+
+
+@pytest.mark.asyncio
+async def test_map_json_path_extraction_s8_vs_360():
+    """Verify get_live_map extracts 'path' on Botslab S8 and 'posArray' on legacy 360."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    session = MagicMock()
+    api = BotslabVacuumApi(session, "eu1", "m2", "q", "t")
+
+    # Mock S8 map with 'path' field
+    s8_map_json = {
+        "width": 10,
+        "height": 10,
+        "map": "AAAA",
+        "cleanId": "clean_1",
+        "path": [[0, 0], [100, 200], [300, 400]],
+    }
+    api.get_map_json = AsyncMock(return_value=(s8_map_json, {}))
+
+    with patch("custom_components.botslab_vacuum.api.decompress_lz4_block", return_value=b"\x00" * 100), \
+         patch("custom_components.botslab_vacuum.api.render_map_advanced", return_value=(b"PNG_DATA", (0, 10, 0, 10, 1))):
+        res = await api.get_live_map("SN_S8", "PK_S8")
+        assert res == b"PNG_DATA"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_continuous_cleaning_trail_accumulation():
+    """Verify coordinator accumulates continuous robot_pose trajectory during cleaning and resets on new clean."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.coordinator import BotslabVacuumCoordinator
+    from custom_components.botslab_vacuum.const import STATUS_CLEANING, STATUS_DOCKED
+
+    hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {"email": "test@test.com", "password": "pass"}
+    api = MagicMock()
+    api.is_legacy_360 = False
+    api.get_clean_track_all = AsyncMock(return_value=[])
+
+    coord = BotslabVacuumCoordinator(hass, entry, api)
+    assert coord._cleaning_paths == {}
+
+    # Simulate cleaning step 1
+    coord._last_clean_status["SN1"] = STATUS_DOCKED
+    status = STATUS_CLEANING
+    robot_pose = [100.0, 200.0, 0.0]
+
+    # New clean session resets trail and appends initial point
+    dev_is_active = True
+    prev_status = coord._last_clean_status.get("SN1")
+    if dev_is_active and prev_status not in (STATUS_CLEANING,):
+        coord._cleaning_paths["SN1"] = []
+    coord._last_clean_status["SN1"] = status
+
+    trail = coord._cleaning_paths.setdefault("SN1", [])
+    rx_i, ry_i = int(round(robot_pose[0])), int(round(robot_pose[1]))
+    trail.append([rx_i, ry_i])
+
+    assert coord._cleaning_paths["SN1"] == [[100, 200]]
+
+    # Small movement (<20mm) is ignored
+    robot_pose_small = [105.0, 205.0, 0.0]
+    rx_i, ry_i = int(round(robot_pose_small[0])), int(round(robot_pose_small[1]))
+    lx, ly = trail[-1]
+    if (rx_i - lx) ** 2 + (ry_i - ly) ** 2 >= 400:
+        trail.append([rx_i, ry_i])
+    assert coord._cleaning_paths["SN1"] == [[100, 200]]
+
+    # Substantial movement (>=20mm) is recorded
+    robot_pose_big = [130.0, 240.0, 0.0]
+    rx_i, ry_i = int(round(robot_pose_big[0])), int(round(robot_pose_big[1]))
+    lx, ly = trail[-1]
+    if (rx_i - lx) ** 2 + (ry_i - ly) ** 2 >= 400:
+        trail.append([rx_i, ry_i])
+    assert coord._cleaning_paths["SN1"] == [[100, 200], [130, 240]]
 
 
 

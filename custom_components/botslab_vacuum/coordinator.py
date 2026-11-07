@@ -56,13 +56,23 @@ SIDE_BRUSH_MAX_HOURS = 200.0
 SENSOR_MAX_HOURS = 30.0
 
 
+def _find_first_prop(
+    props: dict[str, Any], keys: tuple[str, ...], default: Any = 100
+) -> Any:
+    """Return the first non-None property matching any candidate key."""
+    for k in keys:
+        if k in props and props[k] is not None:
+            return props[k]
+    return default
+
+
 def _parse_consumable_lifetime(
-    raw_val: Any, max_hours: float, is_legacy_360: bool = False
+    raw_val: Any, max_hours: float, is_legacy_360: bool | None = None
 ) -> tuple[int, float]:
     """Parse raw consumable value from robot into (life_pct, remaining_hours).
 
     Values > 100 represent elapsed (used) seconds since reset.
-    Values <= 100 represent percentage remaining (or 0 for freshly reset counters).
+    Values <= 100 represent percentage remaining (or 0 for freshly reset counters in legacy 360).
     """
     try:
         val = float(raw_val)
@@ -75,8 +85,11 @@ def _parse_consumable_lifetime(
     if val < 0:
         return 0, 0.0
 
-    # Fresh reset reports 0 used seconds or 0 counter -> 100% remaining
+    # 0 handling: in legacy 360, 0 means 0 used seconds (freshly reset -> 100% remaining).
+    # In modern Botslab, 0 means 0% life remaining (depleted).
     if val == 0:
+        if is_legacy_360 is False:
+            return 0, 0.0
         return 100, max_hours
 
     total_seconds = max_hours * 3600.0
@@ -150,6 +163,8 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self._burst_poll_tasks: dict[str, asyncio.Task] = {}
         self._last_map_sync_time: dict[str, float] = {}
         self._firmware_cache: dict[str, str] = {}
+        self._cleaning_paths: dict[str, list[list[int]]] = {}
+        self._last_clean_status: dict[str, str] = {}
 
     async def ensure_valid_session(self) -> None:
         """Ensure API has a valid session id and push alias, re-authenticating if necessary."""
@@ -381,10 +396,58 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             clean_id = str(oss_dict.get("CleanID", ""))
 
             # Consumables
-            raw_filter = props.get("FilterLifeTime", props.get("filter_life", 100))
-            raw_main = props.get("RollBrushLifeTime", props.get("main_brush_life", 100))
-            raw_side = props.get("EdgeBrushLifeTime", props.get("side_brush_life", 100))
-            raw_sensor = props.get("SensorLifeTime", props.get("sensor_life", 100))
+            raw_filter = _find_first_prop(
+                props,
+                ("FilterLifeTime", "FilterLife", "filter_life", "filter_lifetime", "filter", "Filter"),
+                100,
+            )
+            raw_main = _find_first_prop(
+                props,
+                (
+                    "RollBrushLifeTime",
+                    "MainBrushLifeTime",
+                    "RollBrushLife",
+                    "MainBrushLife",
+                    "roll_brush_life",
+                    "main_brush_life",
+                    "main_brush",
+                    "roll_brush",
+                    "RollBrush",
+                    "MainBrush",
+                    "brush",
+                ),
+                100,
+            )
+            raw_side = _find_first_prop(
+                props,
+                (
+                    "EdgeBrushLifeTime",
+                    "SideBrushLifeTime",
+                    "EdgeBrushLife",
+                    "SideBrushLife",
+                    "edge_brush_life",
+                    "side_brush_life",
+                    "side_brush",
+                    "edge_brush",
+                    "EdgeBrush",
+                    "SideBrush",
+                ),
+                100,
+            )
+            raw_sensor = _find_first_prop(
+                props,
+                (
+                    "SensorLifeTime",
+                    "SensorCleanLife",
+                    "SensorLife",
+                    "sensor_life",
+                    "sensor_clean_life",
+                    "sensor",
+                    "sensors",
+                    "Sensor",
+                ),
+                100,
+            )
 
             f_pct, f_hrs = _parse_consumable_lifetime(raw_filter, FILTER_MAX_HOURS, self.api.is_legacy_360)
             m_pct, m_hrs = _parse_consumable_lifetime(raw_main, MAIN_BRUSH_MAX_HOURS, self.api.is_legacy_360)
@@ -410,11 +473,36 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             map_bytes: bytes | None = None
             dev_map_info: BotslabMapInfo | None = None
             dev_is_active = status in ACTIVE_STATUSES
-            cleaning_path: list[list[int]] = []
+
+            # Manage continuous live cleaning path accumulation (Dreame/Roborock style)
+            prev_status = self._last_clean_status.get(sn)
+            if dev_is_active and prev_status not in ACTIVE_STATUSES:
+                # Started a fresh cleaning session: reset accumulated trail
+                self._cleaning_paths[sn] = []
+            self._last_clean_status[sn] = status
+
+            # Accumulate current robot pose into running trail
+            trail = self._cleaning_paths.setdefault(sn, [])
+            if robot_pose and len(robot_pose) >= 2 and dev_is_active:
+                rx_i, ry_i = int(round(robot_pose[0])), int(round(robot_pose[1]))
+                if not trail:
+                    trail.append([rx_i, ry_i])
+                else:
+                    lx, ly = trail[-1]
+                    # Append if moved at least 20mm (2cm)
+                    if (rx_i - lx) ** 2 + (ry_i - ly) ** 2 >= 400:
+                        trail.append([rx_i, ry_i])
+                        if len(trail) > 50000:
+                            trail.pop(0)
+
+            cleaning_path: list[list[int]] = list(trail)
 
             if dev_is_active:
                 try:
-                    cleaning_path = await self.api.get_clean_track_all(sn, pk)
+                    cloud_track = await self.api.get_clean_track_all(sn, pk)
+                    if cloud_track and len(cloud_track) > len(cleaning_path):
+                        cleaning_path = cloud_track
+                        self._cleaning_paths[sn] = list(cloud_track)
                 except Exception as err:
                     _LOGGER.debug("Cleaning track fetch error for %s: %s", sn, err)
 
