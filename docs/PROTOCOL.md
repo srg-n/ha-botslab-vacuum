@@ -124,8 +124,10 @@ When an `OP_PUSH` frame arrives (signaling status changes, map package uploads, 
      - `chargeHandlePos`: Charging dock coordinate `[x, y]`.
      - `area`: Forbidden (no-go) zones.
      - `posArray`: Robot position trajectory.
-2. **Area Clean Upload (`sweep_areas`):**
-   - Fetches temporary STS upload credentials from `POST /v1/user/get_upload_config`.
-   - Constructs the room partition JSON with clean repetitions and water level.
-   - Uploads directly to Alibaba Cloud OSS with MD5 verification (`PUT /...`).
-   - Calls `StartCleanInAreas` with the uploaded OSS URL.
+2. **Room Cleaning (`SetCleanPolicyList` + `StartCleanInAreas`):**
+   - The robot requires a two-step handshake to establish the active room policy before execution:
+     - Calls `SetCleanPolicyList` with `smartAreaIds` preserving user room order, `orderClean: true` (or `false` if `auto_order` requested), `cleanTimes`, and active `mapId`.
+     - Fetches temporary STS upload credentials from `POST /v1/user/get_upload_config`.
+     - Constructs the room partition JSON (`sweep_areas.txt`) with `activeIds` in ordered sequence, `autoOrder: false` (or `true` if `auto_order` requested), and per-room fan/water settings.
+     - Uploads directly to Alibaba Cloud OSS (`PUT /...`).
+     - Calls `StartCleanInAreas` with the uploaded OSS URL and a fresh unique timestamped session ID (`CleanID: {sn}-{timestamp}`).

@@ -229,6 +229,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         fan_speed: str | None = None,
         water_level: str | None = None,
         rooms_config: dict[int | str, dict[str, Any]] | list[dict[str, Any]] | None = None,
+        auto_order: bool = False,
     ) -> None:
         """Clean specific room(s) by ID or name with optional water level."""
         if not self.device:
@@ -253,6 +254,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             fan_speed or self.fan_speed,
             water_level,
             rooms_config=rooms_config,
+            auto_order=auto_order,
         )
         await self.coordinator.async_request_refresh()
         self.coordinator.watch_state_transition(self.device.device_name, initial_status=initial_status)

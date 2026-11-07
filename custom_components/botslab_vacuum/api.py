@@ -1762,6 +1762,7 @@ class BotslabVacuumApi:
         fan_speed: str | None = None,
         water_level: str | None = None,
         rooms_config: dict[int | str, dict[str, Any]] | list[dict[str, Any]] | None = None,
+        auto_order: bool = False,
     ) -> None:
         """Clean specific room(s) by ID via StartCleanInAreas or setAreaAndCleaning."""
         if self.is_legacy_360:
@@ -1781,12 +1782,7 @@ class BotslabVacuumApi:
         raw_oss = props.get("MapPkgOssInfo")
         oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
         map_id = int(oss_info.get("MapID", 28239))
-        clean_id = (
-            oss_info.get("CleanID")
-            or map_json.get("cleanId")
-            or props.get("CleanID")
-            or f"{sn}-{int(time.time())}"
-        )
+        clean_id = f"{sn}-{int(time.time())}"
 
         sa = map_json.get("smartArea") or {}
         room_list = copy.deepcopy(sa.get("value", []))
@@ -1854,10 +1850,71 @@ class BotslabVacuumApi:
             "value": room_list,
             "activeIds": int_room_ids,
             "areaCleanActiveId": None,
-            "autoOrder": False,
+            "autoOrder": bool(auto_order),
             "cleanTimes": repeat_times,
             "isAttrOn": 1,
         }
+
+        # Step 1: Establish room order policy on device (SetCleanPolicyList)
+        policy_noisy = (
+            FAN_SPEEDS_HA_TO_360.get(str(fan_speed).lower(), "auto")
+            if fan_speed
+            else "auto"
+        )
+        policy = {
+            "value": [
+                {
+                    "workNoisy": policy_noisy,
+                    "active": False,
+                    "unlock": False,
+                    "period": [],
+                    "smartAreaIds": int_room_ids,
+                    "cleanWater": None,
+                    "index": None,
+                    "cleanWorkType": None,
+                    "cleanTimeType": None,
+                    "cleanTimeTypeCustomStr": None,
+                    "strWorkMode": None,
+                    "strSweepType": None,
+                    "cleaningPreference": None,
+                    "hour": None,
+                    "minute": None,
+                    "endHour": None,
+                    "endMinute": None,
+                    "isMorning": None,
+                    "isNotDisturb": None,
+                    "isTomorrow": None,
+                    "isSelectCleanTime": None,
+                    "cleanMode": 0,
+                    "priority": 1,
+                    "orderClean": not auto_order,
+                    "endTime": 28800,
+                    "mapId": map_id,
+                    "cleanAreas": [],
+                    "activeIdAttr": None,
+                    "cleanTimes": repeat_times,
+                    "startTime": 79200,
+                    "alternateStartTime": 79200,
+                    "isAttrOn": None,
+                    "msgID": None,
+                }
+            ],
+            "timeZone": 3.0,
+            "appendMode": False,
+        }
+
+        try:
+            res_policy = await self.invoke_async(
+                sn,
+                product_key,
+                "SetCleanPolicyList",
+                {"CleanPolicyList": json.dumps(policy, separators=(",", ":"))},
+            )
+            policy_req = res_policy.get("data", {}).get("request_id")
+            if policy_req:
+                await self.wait_async_reply(policy_req, timeout=3)
+        except Exception as policy_err:
+            _LOGGER.debug("SetCleanPolicyList error for %s: %s", sn, policy_err)
 
         try:
             upload_info = await self.get_upload_config(sn, product_key)

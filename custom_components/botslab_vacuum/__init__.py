@@ -468,6 +468,7 @@ def _register_services(hass: HomeAssistant) -> None:
         speed = call.data.get(ATTR_FAN_SPEED)
         water = call.data.get(ATTR_WATER_LEVEL)
         rooms_config = call.data.get("rooms_config")
+        auto_order = bool(call.data.get("auto_order", False))
 
         room_ids = _parse_room_ids(raw_rooms)
         wanted_names = [n.strip().lower() for n in (room_names or []) if n and n.strip()]
@@ -512,6 +513,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 fan_speed=speed,
                 water_level=water,
                 rooms_config=rooms_config,
+                auto_order=auto_order,
             )
             coordinator.clear_map_cache(dev.device_name)
             await coordinator.async_request_refresh()

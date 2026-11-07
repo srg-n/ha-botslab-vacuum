@@ -21411,7 +21411,8 @@ function tw({
       const H = {
         entity_id: i,
         room_ids: R,
-        repeat_times: L
+        repeat_times: L,
+        auto_order: !1
       };
       V && Object.keys(V).length > 0 && (H.rooms_config = V), await hn(
         a,
@@ -26657,7 +26658,7 @@ function ox({ rooms: a, selectedRooms: i, onRoomToggle: o }) {
           onClick: () => o(l.id, l.name),
           children: [
             /* @__PURE__ */ f.jsx("span", { className: "room-list-view__item-name", children: l.name }),
-            /* @__PURE__ */ f.jsx("span", { className: "room-list-view__item-check", children: d && /* @__PURE__ */ f.jsx(Ag, { size: 18 }) })
+            /* @__PURE__ */ f.jsx("span", { className: "room-list-view__item-check", children: d && (i.size > 1 ? /* @__PURE__ */ f.jsx("span", { style: { fontWeight: "bold", fontSize: ".8125rem", color: "var(--accent-color, #d4af37)", borderRadius: "50%", border: "1.5px solid var(--accent-color, #d4af37)", width: "1.375rem", height: "1.375rem", display: "inline-flex", alignItems: "center", justifyContent: "center" }, children: Array.from(i.keys()).indexOf(l.id) + 1 }) : /* @__PURE__ */ f.jsx(Ag, { size: 18 })) })
           ]
         },
         l.id
@@ -28759,7 +28760,7 @@ function _N({ selectedRooms: a }) {
   const { t: i } = Oe();
   if (a.size === 0)
     return null;
-  const o = Array.from(a.values()).join(", ");
+  const vals = Array.from(a.values()), o = vals.length > 1 ? vals.map((n, idx) => `${idx + 1}. ${n}`).join("  →  ") : (vals[0] || "");
   return /* @__PURE__ */ f.jsxs("div", { className: "room-selection-display", children: [
     /* @__PURE__ */ f.jsx("span", { className: "room-selection-display__label", children: i("room_display.selected_label") }),
     /* @__PURE__ */ f.jsx("span", { className: "room-selection-display__rooms", children: o })

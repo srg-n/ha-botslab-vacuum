@@ -52,6 +52,12 @@ clean_rooms:
       example: '{"0": {"fan_speed": "powerful", "water_level": "high", "repeat_times": 2}}'
       selector:
         object:
+    auto_order:
+      name: Automatic Room Order
+      description: "When true, robot decides optimal room cleaning path. When false (default), robot strictly follows user selection order."
+      default: false
+      selector:
+        boolean:
 
 clean_zone:
   name: Clean Zone

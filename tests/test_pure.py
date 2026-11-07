@@ -1933,7 +1933,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10")
 
 
 def test_parse_consumable_lifetime_legacy_vs_modern():
@@ -2156,9 +2156,79 @@ def test_map_camera_entity_picture_versioning_and_attribute_filtering():
 
 
 @pytest.mark.asyncio
-async def test_modern_clean_rooms_uses_session_clean_id():
-    """Verify clean_rooms uses session CleanID from oss_info/map_json (matching robot state)."""
+async def test_modern_clean_rooms_protocol_sequence():
+    """Verify clean_rooms invokes SetCleanPolicyList with ordered rooms before StartCleanInAreas with fresh CleanID."""
     from unittest.mock import AsyncMock, MagicMock
+    import json
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    api = BotslabVacuumApi(MagicMock(), "eu", "mk1", "q", "t")
+    api.is_legacy_360 = False
+
+    map_json = {
+        "smartArea": {
+            "value": [
+                {"id": 1, "name": "Room 1", "vertexs": [[0, 0], [100, 0], [100, 100], [0, 100]]},
+                {"id": 2, "name": "Room 2", "vertexs": [[100, 0], [200, 0], [200, 100], [100, 100]]},
+            ]
+        }
+    }
+    props = {
+        "MapPkgOssInfo": '{"MapID": 100, "CleanID": 104}'
+    }
+    upload_info = {"host": "https://oss.example.com", "accessKeyId": "k", "accessKeySecret": "s", "securityToken": "t", "dir": "d/"}
+
+    api.set_fan_speed = AsyncMock()
+    api.set_water_level = AsyncMock()
+    api.invoke_async = AsyncMock(return_value={"code": 0, "data": {}})
+    api.get_map_json = AsyncMock(return_value=(map_json, props))
+    api.get_upload_config = AsyncMock(return_value=upload_info)
+    api._upload_to_oss = AsyncMock(return_value="aliyun://bucket/sweep_areas123.txt")
+    api.wait_async_reply = AsyncMock(return_value=True)
+
+    captured_cmds: list[tuple[str, dict]] = []
+
+    async def fake_invoke_async(sn, pk, cmd, payload):
+        captured_cmds.append((cmd, payload))
+        return {"code": 0, "data": {"request_id": "req-123"}}
+
+    api.invoke_async = fake_invoke_async
+
+    # Dispatch ordered room clean: Room 2 first, then Room 1
+    await api.clean_rooms("360TY860103035420", "pk_mod", ["2", "1"], repeat_times=2)
+
+    # 1. SetCleanPolicyList MUST be invoked first
+    policy_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "SetCleanPolicyList"]
+    assert len(policy_calls) == 1, "SetCleanPolicyList must be invoked before StartCleanInAreas"
+    _, policy_payload = policy_calls[0]
+    clean_policy_list = json.loads(policy_payload["CleanPolicyList"])
+    assert clean_policy_list["value"][0]["smartAreaIds"] == [2, 1], "smartAreaIds must preserve user room order"
+    assert clean_policy_list["value"][0]["orderClean"] is True, "orderClean must be True for ordered cleaning"
+    assert clean_policy_list["value"][0]["cleanTimes"] == 2
+    assert clean_policy_list["value"][0]["mapId"] == 100
+
+    # 2. OSS upload payload must also preserve order
+    api._upload_to_oss.assert_called_once()
+    _, uploaded_sweep_payload = api._upload_to_oss.call_args[0]
+    assert uploaded_sweep_payload["activeIds"] == [2, 1], "activeIds in sweep_payload must preserve user room order"
+    assert uploaded_sweep_payload["autoOrder"] is False
+    assert uploaded_sweep_payload["cleanTimes"] == 2
+    assert uploaded_sweep_payload["mapId"] == 100
+
+    # 3. StartCleanInAreas must be called with fresh timestamped CleanID
+    start_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "StartCleanInAreas"]
+    assert len(start_calls) == 1
+    _, payload = start_calls[0]
+    assert payload["CleanID"].startswith("360TY860103035420-"), "CleanID must be fresh timestamped ID"
+    assert payload["MapID"] == 100
+    assert payload["Url"] == "aliyun://bucket/sweep_areas123.txt"
+
+
+@pytest.mark.asyncio
+async def test_modern_clean_rooms_auto_order_flag():
+    """Verify clean_rooms auto_order=True configures orderClean=False and autoOrder=True."""
+    from unittest.mock import AsyncMock, MagicMock
+    import json
     from custom_components.botslab_vacuum.api import BotslabVacuumApi
 
     api = BotslabVacuumApi(MagicMock(), "eu", "mk1", "q", "t")
@@ -2171,9 +2241,7 @@ async def test_modern_clean_rooms_uses_session_clean_id():
             ]
         }
     }
-    props = {
-        "MapPkgOssInfo": '{"MapID": 100, "CleanID": "360TY860103035420-1781644752"}'
-    }
+    props = {"MapPkgOssInfo": '{"MapID": 100}'}
     upload_info = {"host": "https://oss.example.com", "accessKeyId": "k", "accessKeySecret": "s", "securityToken": "t", "dir": "d/"}
 
     api.set_fan_speed = AsyncMock()
@@ -2191,17 +2259,17 @@ async def test_modern_clean_rooms_uses_session_clean_id():
 
     api.invoke_async = fake_invoke_async
 
-    await api.clean_rooms("360TY860103035420", "pk_mod", ["1"], repeat_times=2)
+    await api.clean_rooms("360TY860103035420", "pk_mod", ["1"], auto_order=True)
 
-    # SetCleanPolicyList should NOT be invoked
-    assert not any(cmd == "SetCleanPolicyList" for cmd, _ in captured_cmds)
+    # When auto_order is True, orderClean in SetCleanPolicyList must be False
+    policy_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "SetCleanPolicyList"]
+    assert len(policy_calls) == 1
+    clean_policy_list = json.loads(policy_calls[0][1]["CleanPolicyList"])
+    assert clean_policy_list["value"][0]["orderClean"] is False
 
-    # StartCleanInAreas must be called with session CleanID
-    start_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "StartCleanInAreas"]
-    assert len(start_calls) == 1
-    _, payload = start_calls[0]
-    assert payload["CleanID"] == "360TY860103035420-1781644752"
-    assert payload["MapID"] == 100
+    # And autoOrder in sweep_payload must be True
+    _, uploaded_sweep_payload = api._upload_to_oss.call_args[0]
+    assert uploaded_sweep_payload["autoOrder"] is True
 
 
 @pytest.mark.asyncio
@@ -2224,6 +2292,7 @@ async def test_modern_clean_rooms_no_fallback_to_clean_zone():
 
     api.set_fan_speed = AsyncMock()
     api.set_water_level = AsyncMock()
+    api.invoke_async = AsyncMock(return_value={"code": 0, "data": {}})
     api.get_map_json = AsyncMock(return_value=(map_json, props))
     api.get_upload_config = AsyncMock(return_value=None)  # Upload will fail → raises BotslabApiError
     api.clean_zone = AsyncMock()  # Must NOT be called
