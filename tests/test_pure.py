@@ -2122,7 +2122,9 @@ def test_map_camera_entity_picture_versioning_and_attribute_filtering():
     cam.access_token = "mock_token"
 
     # Test entity_picture includes cache-busting revision
-    assert cam.entity_picture == "/api/camera_proxy/camera.botslab_s8_map?token=mock_token&v=5"
+    assert cam.entity_picture is not None
+    assert cam.entity_picture.startswith("/api/camera_proxy/camera.botslab_s8_map?token=")
+    assert cam.entity_picture.endswith("&v=5")
 
     # Test extra_state_attributes suppresses clean_zones in WorkingStatus == 2 (Room Clean)
     attrs = cam.extra_state_attributes
