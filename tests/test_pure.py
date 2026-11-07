@@ -1933,7 +1933,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13")
 
 
 def test_parse_consumable_lifetime_legacy_vs_modern():
@@ -2202,15 +2202,23 @@ async def test_modern_clean_rooms_protocol_sequence():
     assert len(sync_calls) == 1, "StartSyncMapPkgToOss must be invoked first"
     assert sync_calls[0][1] == {"SyncDuration": 60}
 
-    # 1. SetCleanPolicyList MUST be invoked after sync
+    # 1. SetCleanPolicyList MUST be invoked after sync with one policy per room in order
     policy_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "SetCleanPolicyList"]
     assert len(policy_calls) == 1, "SetCleanPolicyList must be invoked before StartCleanInAreas"
     _, policy_payload = policy_calls[0]
     clean_policy_list = json.loads(policy_payload["CleanPolicyList"])
-    assert clean_policy_list["value"][0]["smartAreaIds"] == [2, 1], "smartAreaIds must preserve user room order"
+    assert len(clean_policy_list["value"]) == 2, "Must create an individual policy per room"
+    assert clean_policy_list["value"][0]["smartAreaIds"] == [2], "First policy must target room 2"
+    assert clean_policy_list["value"][0]["priority"] == 1
     assert clean_policy_list["value"][0]["orderClean"] is True, "orderClean must be True for ordered cleaning"
     assert clean_policy_list["value"][0]["cleanTimes"] == 2
     assert clean_policy_list["value"][0]["mapId"] == 100
+
+    assert clean_policy_list["value"][1]["smartAreaIds"] == [1], "Second policy must target room 1"
+    assert clean_policy_list["value"][1]["priority"] == 2
+    assert clean_policy_list["value"][1]["orderClean"] is True
+    assert clean_policy_list["value"][1]["cleanTimes"] == 2
+    assert clean_policy_list["value"][1]["mapId"] == 100
 
     # 2. OSS upload payload must also preserve order
     api._upload_to_oss.assert_called_once()

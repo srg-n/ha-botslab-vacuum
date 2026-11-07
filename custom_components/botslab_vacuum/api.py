@@ -1924,6 +1924,8 @@ class BotslabVacuumApi:
                         r["waterPump"] = r_water
                     elif str(r_water).lower() in WATER_LEVEL_TO_INT:
                         r["waterPump"] = WATER_LEVEL_TO_INT[str(r_water).lower()]
+            else:
+                r["active"] = None
 
         sweep_payload = {
             "mapId": map_id,
@@ -1936,19 +1938,24 @@ class BotslabVacuumApi:
         }
 
         # Step 1: Establish room order policy on device (SetCleanPolicyList)
-        policy_noisy = (
-            FAN_SPEEDS_HA_TO_360.get(str(fan_speed).lower(), "auto")
-            if fan_speed
-            else "auto"
-        )
-        policy = {
-            "value": [
+        policies: list[dict[str, Any]] = []
+        for idx, rid in enumerate(int_room_ids, start=1):
+            str_rid = str(rid)
+            rcfg = norm_room_cfg.get(str_rid, {})
+            r_repeats = rcfg.get("repeat_times", repeat_times)
+            r_speed = rcfg.get("fan_speed", fan_speed)
+            r_noisy = (
+                FAN_SPEEDS_HA_TO_360.get(str(r_speed).lower(), "auto")
+                if r_speed
+                else "auto"
+            )
+            policies.append(
                 {
-                    "workNoisy": policy_noisy,
+                    "workNoisy": r_noisy,
                     "active": False,
                     "unlock": False,
                     "period": [],
-                    "smartAreaIds": int_room_ids,
+                    "smartAreaIds": [rid],
                     "cleanWater": None,
                     "index": None,
                     "cleanWorkType": None,
@@ -1966,19 +1973,22 @@ class BotslabVacuumApi:
                     "isTomorrow": None,
                     "isSelectCleanTime": None,
                     "cleanMode": 0,
-                    "priority": 1,
+                    "priority": idx,
                     "orderClean": not auto_order,
                     "endTime": 28800,
                     "mapId": map_id,
                     "cleanAreas": [],
                     "activeIdAttr": None,
-                    "cleanTimes": repeat_times,
+                    "cleanTimes": int(r_repeats),
                     "startTime": 79200,
                     "alternateStartTime": 79200,
                     "isAttrOn": None,
                     "msgID": None,
                 }
-            ],
+            )
+
+        policy = {
+            "value": policies,
             "timeZone": 3.0,
             "appendMode": False,
         }
