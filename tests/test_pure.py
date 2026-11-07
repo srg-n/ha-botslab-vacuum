@@ -2156,9 +2156,8 @@ def test_map_camera_entity_picture_versioning_and_attribute_filtering():
 
 
 @pytest.mark.asyncio
-async def test_modern_clean_rooms_uses_fresh_clean_id():
-    """Verify clean_rooms always generates a fresh CleanID (never reuses old oss_info CleanID)."""
-    import time
+async def test_modern_clean_rooms_uses_session_clean_id():
+    """Verify clean_rooms uses session CleanID from oss_info/map_json (matching robot state)."""
     from unittest.mock import AsyncMock, MagicMock
     from custom_components.botslab_vacuum.api import BotslabVacuumApi
 
@@ -2172,9 +2171,8 @@ async def test_modern_clean_rooms_uses_fresh_clean_id():
             ]
         }
     }
-    # Simulate old CleanID in oss_info (should NOT be used)
     props = {
-        "MapPkgOssInfo": '{"MapID": 100, "CleanID": "OLD-STALE-CLEAN-ID"}'
+        "MapPkgOssInfo": '{"MapID": 100, "CleanID": "360TY860103035420-1781644752"}'
     }
     upload_info = {"host": "https://oss.example.com", "accessKeyId": "k", "accessKeySecret": "s", "securityToken": "t", "dir": "d/"}
 
@@ -2185,27 +2183,25 @@ async def test_modern_clean_rooms_uses_fresh_clean_id():
     api._upload_to_oss = AsyncMock(return_value="aliyun://bucket/sweep_areas123.txt")
     api.wait_async_reply = AsyncMock(return_value=True)
 
-    captured_clean_ids: list[str] = []
+    captured_cmds: list[tuple[str, dict]] = []
 
     async def fake_invoke_async(sn, pk, cmd, payload):
-        if cmd == "StartCleanInAreas":
-            captured_clean_ids.append(payload.get("CleanID", ""))
+        captured_cmds.append((cmd, payload))
         return {"code": 0, "data": {"request_id": "req-123"}}
 
     api.invoke_async = fake_invoke_async
 
-    before = int(time.time())
-    await api.clean_rooms("SN_MOD", "pk_mod", ["1"])
-    after = int(time.time())
+    await api.clean_rooms("360TY860103035420", "pk_mod", ["1"], repeat_times=2)
 
-    assert len(captured_clean_ids) == 1, "StartCleanInAreas must be called exactly once"
-    used_clean_id = captured_clean_ids[0]
+    # SetCleanPolicyList should NOT be invoked
+    assert not any(cmd == "SetCleanPolicyList" for cmd, _ in captured_cmds)
 
-    assert used_clean_id != "OLD-STALE-CLEAN-ID", "Must NOT reuse stale CleanID from oss_info"
-    assert used_clean_id.startswith("SN_MOD-"), f"CleanID must start with SN, got: {used_clean_id}"
-
-    ts_part = int(used_clean_id.split("-", 1)[1])
-    assert before <= ts_part <= after + 2, f"CleanID timestamp {ts_part} must be fresh"
+    # StartCleanInAreas must be called with session CleanID
+    start_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "StartCleanInAreas"]
+    assert len(start_calls) == 1
+    _, payload = start_calls[0]
+    assert payload["CleanID"] == "360TY860103035420-1781644752"
+    assert payload["MapID"] == 100
 
 
 @pytest.mark.asyncio

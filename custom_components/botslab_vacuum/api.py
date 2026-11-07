@@ -1781,8 +1781,12 @@ class BotslabVacuumApi:
         raw_oss = props.get("MapPkgOssInfo")
         oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
         map_id = int(oss_info.get("MapID", 28239))
-        # Always generate a fresh CleanID - never reuse a completed task ID from oss_info
-        clean_id = f"{sn}-{int(time.time())}"
+        clean_id = (
+            oss_info.get("CleanID")
+            or map_json.get("cleanId")
+            or props.get("CleanID")
+            or f"{sn}-{int(time.time())}"
+        )
 
         sa = map_json.get("smartArea") or {}
         room_list = copy.deepcopy(sa.get("value", []))
@@ -1845,72 +1849,13 @@ class BotslabVacuumApi:
                     elif str(r_water).lower() in WATER_LEVEL_TO_INT:
                         r["waterPump"] = WATER_LEVEL_TO_INT[str(r_water).lower()]
 
-        # 1. Invoke SetCleanPolicyList first (as required by Botslab / 360 protocol)
-        policy = {
-            "value": [
-                {
-                    "workNoisy": "auto",
-                    "active": False,
-                    "unlock": False,
-                    "period": [],
-                    "smartAreaIds": int_room_ids,
-                    "cleanWater": None,
-                    "index": None,
-                    "cleanWorkType": None,
-                    "cleanTimeType": None,
-                    "cleanTimeTypeCustomStr": None,
-                    "strWorkMode": None,
-                    "strSweepType": None,
-                    "cleaningPreference": None,
-                    "hour": None,
-                    "minute": None,
-                    "endHour": None,
-                    "endMinute": None,
-                    "isMorning": None,
-                    "isNotDisturb": None,
-                    "isTomorrow": None,
-                    "isSelectCleanTime": None,
-                    "cleanMode": 0,
-                    "priority": 1,
-                    "orderClean": True,
-                    "endTime": 28800,
-                    "mapId": map_id,
-                    "cleanAreas": [],
-                    "activeIdAttr": None,
-                    "cleanTimes": repeat_times,
-                    "startTime": 79200,
-                    "alternateStartTime": 79200,
-                    "isAttrOn": None,
-                    "msgID": None,
-                }
-            ],
-            "timeZone": 3.0,
-            "appendMode": False,
-        }
-
-        try:
-            _LOGGER.debug("Sending SetCleanPolicyList for %s: %s", sn, int_room_ids)
-            res_pol = await self.invoke_async(
-                sn,
-                product_key,
-                "SetCleanPolicyList",
-                {"CleanPolicyList": json.dumps(policy, separators=(",", ":"))},
-            )
-            req_id_pol = res_pol.get("data", {}).get("request_id")
-            if req_id_pol:
-                await self.wait_async_reply(req_id_pol, timeout=5)
-        except Exception as pol_err:
-            _LOGGER.warning("SetCleanPolicyList error for %s: %s", sn, pol_err)
-
-        await asyncio.sleep(1)
-
         sweep_payload = {
             "mapId": map_id,
             "value": room_list,
             "activeIds": int_room_ids,
             "areaCleanActiveId": None,
             "autoOrder": False,
-            "cleanTimes": 1,
+            "cleanTimes": repeat_times,
             "isAttrOn": 1,
         }
 
@@ -1923,6 +1868,7 @@ class BotslabVacuumApi:
             if not uploaded_url:
                 raise BotslabApiError("Cannot clean rooms: OSS upload failed")
 
+            await asyncio.sleep(1)
             _LOGGER.debug("Sending StartCleanInAreas for %s with map %s, url: %s", sn, map_id, uploaded_url)
             res = await self.invoke_async(
                 sn,
@@ -1936,8 +1882,12 @@ class BotslabVacuumApi:
             )
             req_id = res.get("data", {}).get("request_id")
             if req_id:
-                reply_ok = await self.wait_async_reply(req_id, timeout=12)
+                reply_ok = await self.wait_async_reply(req_id, timeout=10)
                 _LOGGER.debug("StartCleanInAreas reply for %s: ok=%s", sn, reply_ok)
+                if not reply_ok:
+                    raise BotslabCommandError(
+                        f"StartCleanInAreas rejected by robot {sn} (ErrorNO=-1 or timeout)"
+                    )
             _LOGGER.info("Room cleaning started successfully on %s for rooms %s", sn, int_room_ids)
         except Exception as err:
             _LOGGER.error(
