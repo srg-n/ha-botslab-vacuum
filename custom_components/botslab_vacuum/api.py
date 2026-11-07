@@ -1270,6 +1270,7 @@ class BotslabVacuumApi:
         robot_pose: list[float] | tuple[float, ...] | None = None,
         cleaning_path: list[list[int]] | None = None,
         is_active: bool = False,
+        is_zone_cleaning: bool = False,
     ) -> bytes | None:
         """Fetch, decompress and render high-resolution map with live overlays."""
         map_json, props = await self.get_map_json(sn, product_key)
@@ -1303,6 +1304,8 @@ class BotslabVacuumApi:
         cached_pose_tuple = tuple(round(x, 1) for x in self._cached_robot_pose[:2]) if self._cached_robot_pose and len(self._cached_robot_pose) >= 2 else None
         path_len = len(cleaning_path) if cleaning_path else 0
         cached_path_len = getattr(self, "_cached_path_len", 0)
+        is_zc = bool(is_zone_cleaning)
+        cached_is_zc = getattr(self, "_cached_is_zone_cleaning", False)
 
         if (
             upload_id
@@ -1310,6 +1313,7 @@ class BotslabVacuumApi:
             and self._cached_map_bytes
             and curr_pose_tuple == cached_pose_tuple
             and is_active == self._cached_is_active
+            and is_zc == cached_is_zc
             and path_len == cached_path_len
         ):
             return self._cached_map_bytes
@@ -1324,11 +1328,12 @@ class BotslabVacuumApi:
                     f"decompressed size {len(pixels)} != expected {width * height}"
                 )
 
-            # Clean zones (custom area clean) are temporary targets: only render them
-            # while cleaning is actively in progress. When docked, charging or idle, do
-            # not stamp stale clean zones onto the map.
+            # Clean zones (custom area clean) should ONLY be rendered when actively performing
+            # zone cleaning (WorkingStatus 3 / CleanInZones). During Room Cleaning (status 2) or
+            # Full Clean (status 1), the firmware's internal sweep decomposition blocks must
+            # NOT be rendered as user zones.
             active_clean_zones = (
-                map_info.clean_zones if (map_info and is_active) else []
+                map_info.clean_zones if (map_info and is_active and is_zc) else []
             )
 
             png_bytes, geom = render_map_advanced(
@@ -1357,6 +1362,7 @@ class BotslabVacuumApi:
             self._cached_map_bytes = png_bytes
             self._cached_robot_pose = list(robot_pose) if robot_pose else None
             self._cached_is_active = is_active
+            self._cached_is_zone_cleaning = is_zc
             self._cached_path_len = path_len
             return png_bytes
         except Exception as err:

@@ -165,6 +165,11 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self._firmware_cache: dict[str, str] = {}
         self._cleaning_paths: dict[str, list[list[int]]] = {}
         self._last_clean_status: dict[str, str] = {}
+        self._map_version: dict[str, int] = {}
+
+    def get_map_version(self, sn: str) -> int:
+        """Return the current rendered map revision counter for a device."""
+        return self._map_version.get(sn, 0)
 
     async def ensure_valid_session(self) -> None:
         """Ensure API has a valid session id and push alias, re-authenticating if necessary."""
@@ -516,6 +521,11 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
 
             dev_map_info = self.api.get_cached_map_info(sn)
 
+            is_zone_cleaning = (
+                str(raw_status).strip().lower() in ("3", "cleaninzones")
+                or str(props.get("WorkingStatus", "")).strip().lower() in ("3", "cleaninzones")
+            )
+
             if self.enable_map:
                 if (
                     dev_is_active
@@ -530,8 +540,11 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                             robot_pose=robot_pose,
                             cleaning_path=cleaning_path,
                             is_active=dev_is_active,
+                            is_zone_cleaning=is_zone_cleaning,
                         )
                         if map_bytes:
+                            if self._map_cache.get(sn) != map_bytes:
+                                self._map_version[sn] = self._map_version.get(sn, 0) + 1
                             self._map_cache[sn] = map_bytes
                             if robot_pose:
                                 self._last_rendered_pose[sn] = list(robot_pose)

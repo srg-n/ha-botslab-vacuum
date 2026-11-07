@@ -69,6 +69,20 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
         self._attr_entity_registry_enabled_default = coordinator.enable_map
 
     @property
+    def entity_picture(self) -> str | None:
+        """Return dynamic entity picture with revision counter for live map updates."""
+        try:
+            base = super().entity_picture
+        except AttributeError:
+            base = f"/api/camera_proxy/{self.entity_id}?token={getattr(self, 'access_token', '')}"
+        if not base:
+            return None
+        version = self.coordinator.get_map_version(self._device_sn)
+        if version > 0:
+            return f"{base}&v={version}"
+        return base
+
+    @property
     def _map_info(self):  # noqa: ANN202 - BotslabMapInfo | None
         """Return map geometry for this robot, if one has been fetched."""
         device = self.device
@@ -111,7 +125,10 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
             attrs["path"] = device.cleaning_path
         if info.no_go_zones:
             attrs["no_go_zones"] = info.no_go_zones
-        if info.clean_zones:
+        ws = ""
+        if device and device.props:
+            ws = str(device.props.get("WorkingStatus", "")).strip().lower()
+        if info.clean_zones and ws in ("3", "cleaninzones"):
             attrs["clean_zones"] = info.clean_zones
             attrs["zones"] = info.clean_zones
         if info.scale > 1:

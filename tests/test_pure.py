@@ -1933,7 +1933,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8")
 
 
 def test_parse_consumable_lifetime_legacy_vs_modern():
@@ -2046,6 +2046,95 @@ async def test_coordinator_continuous_cleaning_trail_accumulation():
     if (rx_i - lx) ** 2 + (ry_i - ly) ** 2 >= 400:
         trail.append([rx_i, ry_i])
     assert coord._cleaning_paths["SN1"] == [[100, 200], [130, 240]]
+
+
+@pytest.mark.asyncio
+async def test_live_map_suppresses_clean_zones_during_room_clean():
+    """Verify get_live_map suppresses internal sweep partition blocks during Room Clean."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    session = MagicMock()
+    api = BotslabVacuumApi(session, "eu1", "m2", "q", "t")
+
+    map_json = {
+        "width": 10,
+        "height": 10,
+        "map": "AAAA",
+        "cleanId": "clean_101",
+        "area": [
+            {
+                "id": 1,
+                "name": "RoomSweepBlock1",
+                "active": "normal",
+                "vertexs": [[100, 100], [500, 100], [500, 500], [100, 500]],
+            }
+        ],
+    }
+    api.get_map_json = AsyncMock(return_value=(map_json, {}))
+
+    with patch("custom_components.botslab_vacuum.api.decompress_lz4_block", return_value=b"\x00" * 100), \
+         patch("custom_components.botslab_vacuum.api.render_map_advanced", return_value=(b"PNG_DATA", (0, 10, 0, 10, 1))) as mock_render:
+        # Case 1: Room cleaning (is_active=True, is_zone_cleaning=False) -> clean_zones MUST BE EMPTY
+        await api.get_live_map("SN_S8", "PK_S8", is_active=True, is_zone_cleaning=False)
+        _, kwargs = mock_render.call_args
+        assert kwargs["clean_zones"] == []
+
+        # Case 2: Zone cleaning (is_active=True, is_zone_cleaning=True) -> clean_zones MUST BE PASSED
+        api._cached_map_bytes = None
+        await api.get_live_map("SN_S8", "PK_S8", is_active=True, is_zone_cleaning=True)
+        _, kwargs = mock_render.call_args
+        assert len(kwargs["clean_zones"]) == 1
+        assert kwargs["clean_zones"][0]["name"] == "RoomSweepBlock1"
+
+
+def test_map_camera_entity_picture_versioning_and_attribute_filtering():
+    """Verify BotslabMapCamera dynamic entity_picture and clean_zones suppression in room clean."""
+    from unittest.mock import MagicMock
+    from custom_components.botslab_vacuum.camera import BotslabMapCamera
+    from custom_components.botslab_vacuum.models import BotslabMapInfo, BotslabVacuumDevice
+
+    coord = MagicMock()
+    coord.enable_map = True
+    coord.get_map_version.return_value = 5
+
+    map_info = BotslabMapInfo(
+        width=100,
+        height=100,
+        x_min=0.0,
+        y_min=0.0,
+        resolution=0.05,
+        rooms=[],
+        clean_zones=[{"id": 1, "name": "SweepArea"}],
+    )
+    dev = BotslabVacuumDevice(
+        device_name="SN123",
+        product_key="PK123",
+        device_title="Botslab S8",
+        props={"WorkingStatus": "2"},  # Room Clean
+        map_info=map_info,
+    )
+    coord.data = {"SN123": dev}
+
+    cam = BotslabMapCamera(coord, dev)
+    cam.entity_id = "camera.botslab_s8_map"
+    cam._attr_access_token = "mock_token"
+    cam.access_token = "mock_token"
+
+    # Test entity_picture includes cache-busting revision
+    assert cam.entity_picture == "/api/camera_proxy/camera.botslab_s8_map?token=mock_token&v=5"
+
+    # Test extra_state_attributes suppresses clean_zones in WorkingStatus == 2 (Room Clean)
+    attrs = cam.extra_state_attributes
+    assert "clean_zones" not in attrs
+    assert "zones" not in attrs
+
+    # When WorkingStatus is 3 (Zone Clean), clean_zones are included
+    dev.props["WorkingStatus"] = "3"
+    attrs_zone = cam.extra_state_attributes
+    assert "clean_zones" in attrs_zone
+    assert len(attrs_zone["clean_zones"]) == 1
+
 
 
 
