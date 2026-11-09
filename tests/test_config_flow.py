@@ -159,3 +159,11 @@ async def test_reauth_flow_available(hass: HomeAssistant) -> None:
     result = await entry.start_reauth_flow(hass)
     assert result["type"] is data_entry_flow.FlowResultType.FORM
     assert result["step_id"] == "reauth_confirm"
+
+    result2 = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_PASSWORD: "new_secret_password"},
+    )
+    assert result2["type"] is data_entry_flow.FlowResultType.ABORT
+    assert result2["reason"] == "reauth_successful"
+    assert entry.data[CONF_PASSWORD] == "new_secret_password"

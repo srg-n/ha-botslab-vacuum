@@ -145,12 +145,21 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         enable_map: bool = True,
     ) -> None:
         # Start with active interval until first refresh determines robot state
-        super().__init__(
-            hass,
-            _LOGGER,
-            name=DOMAIN,
-            update_interval=timedelta(seconds=poll_interval_active),
-        )
+        try:
+            super().__init__(
+                hass,
+                _LOGGER,
+                config_entry=entry,
+                name=DOMAIN,
+                update_interval=timedelta(seconds=poll_interval_active),
+            )
+        except TypeError:
+            super().__init__(
+                hass,
+                _LOGGER,
+                name=DOMAIN,
+                update_interval=timedelta(seconds=poll_interval_active),
+            )
         self.entry = entry
         self.api = api
         self.poll_interval_active = poll_interval_active

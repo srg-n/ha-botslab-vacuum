@@ -212,9 +212,6 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
         self, entry_data: Mapping[str, Any]
     ) -> ConfigFlowResult:
         """Handle re-authentication."""
-        self._reauth_entry = self.hass.config_entries.async_get_entry(
-            self.context["entry_id"]
-        )
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -222,30 +219,34 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Confirm re-authentication dialog."""
         errors: dict[str, str] = {}
-        assert self._reauth_entry is not None
+        entry = (
+            self._get_reauth_entry()
+            if hasattr(self, "_get_reauth_entry")
+            else self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        )
+        assert entry is not None
+        self._reauth_entry = entry
 
         if user_input is not None:
-            email = self._reauth_entry.data[CONF_EMAIL]
+            email = entry.data[CONF_EMAIL]
             password = user_input[CONF_PASSWORD]
-            region = self._reauth_entry.data.get(CONF_REGION, DEFAULT_REGION)
-            m2 = self._reauth_entry.data[CONF_M2]
+            region = entry.data.get(CONF_REGION, DEFAULT_REGION)
+            m2 = entry.data[CONF_M2]
 
             session = async_get_clientsession(self.hass)
             try:
                 tokens = await async_login(session, region, email, password, m2)
-                qid = tokens.get("qid") or self._reauth_entry.data.get(CONF_QID, "")
-                self.hass.config_entries.async_update_entry(
-                    self._reauth_entry,
-                    data={
-                        **self._reauth_entry.data,
+                qid = tokens.get("qid") or entry.data.get(CONF_QID, "")
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates={
                         CONF_PASSWORD: password,
                         CONF_Q: tokens["q"],
                         CONF_T: tokens["t"],
                         CONF_QID: qid,
                     },
+                    reason="reauth_successful",
                 )
-                await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
-                return self.async_abort(reason="reauth_successful")
             except BotslabCaptchaRequired:
                 try:
                     view = self._get_or_register_captcha_view()
@@ -443,20 +444,23 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                         )
 
                 elif origin_step == "reauth_confirm":
-                    assert self._reauth_entry is not None
-                    qid = tokens.get("qid") or self._reauth_entry.data.get(CONF_QID, "")
-                    self.hass.config_entries.async_update_entry(
-                        self._reauth_entry,
-                        data={
-                            **self._reauth_entry.data,
+                    entry = (
+                        self._get_reauth_entry()
+                        if hasattr(self, "_get_reauth_entry")
+                        else (self._reauth_entry or self.hass.config_entries.async_get_entry(self.context["entry_id"]))
+                    )
+                    assert entry is not None
+                    qid = tokens.get("qid") or entry.data.get(CONF_QID, "")
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        data_updates={
                             CONF_PASSWORD: password,
                             CONF_Q: tokens["q"],
                             CONF_T: tokens["t"],
                             CONF_QID: qid,
                         },
+                        reason="reauth_successful",
                     )
-                    await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
-                    return self.async_abort(reason="reauth_successful")
 
                 elif origin_step == "reconfigure":
                     entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])

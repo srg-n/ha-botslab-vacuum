@@ -109,7 +109,8 @@ except ModuleNotFoundError:
             self.coordinator = coordinator
     class DataUpdateCoordinator:
         __class_getitem__ = classmethod(lambda cls, key: cls)
-        def __init__(self, hass, logger, *, name, update_interval=None, update_method=None):
+        def __init__(self, hass, logger, *, config_entry=None, name=None, update_interval=None, update_method=None, **kwargs):
+            self.config_entry = config_entry
             self.hass = hass
             self.logger = logger
             self.name = name
