@@ -235,13 +235,11 @@ class BotslabSchedulesSensor(BotslabVacuumEntity, SensorEntity):
         """Publish routine definitions and room names for the frontend card."""
         routines_out = []
         for i, r in enumerate(self.coordinator.routines):
-            rms = r.get("room_ids") or r.get("rooms", [])
             routines_out.append({
                 "slot": i,
                 "time": r.get("time"),
                 "days": r.get("days", []),
-                "room_ids": rms,
-                "rooms": rms,
+                "room_ids": r.get("room_ids", []),
                 "suction": r.get("suction", "auto"),
                 "passes": r.get("passes", 1),
                 "active": r.get("active", True),

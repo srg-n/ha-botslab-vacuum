@@ -1786,7 +1786,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17")
     assert data["categories"] == ["appliances_cleaning.cleaning"]
 
 
@@ -2263,21 +2263,16 @@ async def test_botslab_schedules_sensor_attributes():
     assert attrs["rooms"] == {"1": "Kitchen", "2": "Living Room"}
     sched = attrs["schedules"][0]
     assert sched["room_ids"] == ["1", "2"]
-    assert sched["rooms"] == ["1", "2"]
     assert sched["time"] == "10:30"
 
 
 @pytest.mark.asyncio
-async def test_set_schedule_suction_normalization_and_rooms_alias():
-    """Verify handle_set_schedule normalizes suction aliases and accepts rooms alias."""
+async def test_set_schedule_standard_payload():
+    """Verify set_schedule standard payload with room_ids and suction."""
     time_str = "14:00"
     days = [0, 6]
     room_ids = ["3"]
-    suction = "normal"
-    if suction == "normal":
-        suction = "standard"
-    elif suction == "strong":
-        suction = "powerful"
+    suction = "standard"
 
     routine = {
         "time": time_str,

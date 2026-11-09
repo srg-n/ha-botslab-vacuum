@@ -5,7 +5,7 @@
  * Native Home Assistant notifications and visual UI editor.
  */
 
-const SUCTIONS = ["quiet", "normal", "strong", "max", "auto"];
+const SUCTIONS = ["quiet", "standard", "powerful", "max", "auto"];
 
 const I18N = {
   tr: {
@@ -22,7 +22,7 @@ const I18N = {
     roomsLabel: "Odalar (temizleme sırasına göre tıklayın; boş = tüm ev)",
     mapNotLoaded: "Harita henüz yüklenmedi",
     suction: "Emiş Gücü",
-    suctions: { quiet: "Sessiz", normal: "Standart", standard: "Standart", strong: "Güçlü", powerful: "Güçlü", max: "Maksimum", auto: "Otomatik" },
+    suctions: { quiet: "Sessiz", standard: "Standart", powerful: "Güçlü", max: "Maksimum", auto: "Otomatik" },
     passes: "Geçiş Sayısı",
     active: "Aktif",
     cancel: "İptal",
@@ -52,7 +52,7 @@ const I18N = {
     roomsLabel: "Rooms (tap in order to clean; empty = whole house)",
     mapNotLoaded: "Map not loaded yet",
     suction: "Suction Power",
-    suctions: { quiet: "Quiet", normal: "Standard", standard: "Standard", strong: "Strong", powerful: "Strong", max: "Max", auto: "Auto" },
+    suctions: { quiet: "Quiet", standard: "Standard", powerful: "Strong", max: "Max", auto: "Auto" },
     passes: "Passes",
     active: "Active",
     cancel: "Cancel",
@@ -306,7 +306,7 @@ class BotslabRoutinesCard extends HTMLElement {
     list.innerHTML = schedules
       .map((s) => {
         const dayNames = (s.days || []).map((d) => t.dayLabels[d]).join(" ");
-        const rList = s.room_ids || s.rooms || [];
+        const rList = s.room_ids || [];
         let target;
         if (rList && rList.length) {
           target = rList.map((r) => rooms[r] || `#${r}`).join(" → ");
@@ -348,13 +348,12 @@ class BotslabRoutinesCard extends HTMLElement {
         const checked = ev.target.checked;
         const cur = schedules.find((s) => s.slot === slot);
         if (!cur) return;
-        const curRooms = (cur.room_ids || cur.rooms || []).map(String);
+        const curRooms = (cur.room_ids || []).map(String);
         this._call("set_schedule", {
           slot: slot,
           time: cur.time,
           days: cur.days,
           room_ids: curRooms,
-          rooms: curRooms,
           suction: cur.suction,
           passes: cur.passes,
           active: checked,
@@ -413,7 +412,7 @@ class BotslabRoutinesCard extends HTMLElement {
         slot: cur.slot,
         time: cur.time,
         days: new Set(cur.days || []),
-        rooms: [...((cur.room_ids || cur.rooms) || [])],
+        rooms: [...(cur.room_ids || [])],
         suction: cur.suction || "auto",
         passes: cur.passes || 1,
         active: cur.active !== false,
@@ -569,7 +568,6 @@ class BotslabRoutinesCard extends HTMLElement {
         time: e.time,
         days: Array.from(e.days).sort(),
         room_ids: roomList,
-        rooms: roomList,
         suction: e.suction,
         passes: e.passes,
         active: e.active,
