@@ -77,7 +77,7 @@ _LOGGER = logging.getLogger(__name__)
 _CARDS = ["botslab-routines-card.js", "botslab-vacuum-map-card.js"]
 
 
-async def _register_resources(hass: HomeAssistant, base: str, ver: str) -> bool:
+async def _register_resources(hass: HomeAssistant, base: str, ver: str, www: Path) -> bool:
     """Register bundled frontend cards in Lovelace resources."""
     data = hass.data.get("lovelace")
     resources = getattr(data, "resources", None)
@@ -89,10 +89,18 @@ async def _register_resources(hass: HomeAssistant, base: str, ver: str) -> bool:
         if not getattr(resources, "loaded", True):
             await resources.async_load()
             resources.loaded = True
+        for item in list(resources.async_items()):
+            u = item["url"].split("?")[0]
+            if u.startswith(f"{base}/"):
+                card_name = u[len(base) + 1 :]
+                if card_name not in _CARDS:
+                    await resources.async_delete_item(item["id"])
         by_base = {item["url"].split("?")[0]: item for item in resources.async_items()}
         for c in _CARDS:
+            card_file = www / c
+            mtime = int(card_file.stat().st_mtime) if card_file.exists() else 0
             url = f"{base}/{c}"
-            full = f"{url}?v={ver}"
+            full = f"{url}?v={ver}.{mtime}"
             item = by_base.get(url)
             if item is None:
                 await resources.async_create_item({"res_type": "module", "url": full})
@@ -125,11 +133,13 @@ async def _register_frontend(hass: HomeAssistant) -> None:
         ver = (await async_get_integration(hass, DOMAIN)).version or "0"
     except Exception:  # noqa: BLE001
         ver = "0"
-    if not await _register_resources(hass, base, ver):
+    if not await _register_resources(hass, base, ver, www):
         if "frontend" in hass.config.components:
             for c in _CARDS:
+                card_file = www / c
+                mtime = int(card_file.stat().st_mtime) if card_file.exists() else 0
                 try:
-                    add_extra_js_url(hass, f"{base}/{c}?v={ver}")
+                    add_extra_js_url(hass, f"{base}/{c}?v={ver}.{mtime}")
                 except Exception:  # noqa: BLE001
                     pass
     _LOGGER.debug("Botslab bundled frontend cards registered")

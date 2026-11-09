@@ -65,10 +65,14 @@ const I18N = {
 
 class BotslabRoutinesCard extends HTMLElement {
   static getStubConfig(hass) {
-    const o = Object.keys(hass?.states ?? {}).find((s) => s.startsWith("vacuum."));
+    const vac = Object.keys(hass?.states ?? {}).find((s) => s.startsWith("vacuum."));
+    const sched = Object.keys(hass?.states ?? {}).find(
+      (id) => id.startsWith("sensor.") && hass?.states[id]?.attributes?.schedules !== undefined
+    );
     return {
       type: "custom:botslab-routines-card",
-      entity: o || ""
+      entity: vac || "vacuum.botslab_vacuum",
+      ...(sched ? { schedules_entity: sched } : {})
     };
   }
 
@@ -115,6 +119,14 @@ class BotslabRoutinesCard extends HTMLElement {
         this._config.entity = vac;
       }
     }
+    if (!this._config.schedules_entity && this._hass && this._hass.states) {
+      const sched = Object.keys(this._hass.states).find(
+        (id) => id.startsWith("sensor.") && this._hass.states[id]?.attributes?.schedules !== undefined
+      );
+      if (sched) {
+        this._config.schedules_entity = sched;
+      }
+    }
   }
 
   _t() {
@@ -124,6 +136,12 @@ class BotslabRoutinesCard extends HTMLElement {
 
   _schedEntity() {
     if (this._config.schedules_entity) return this._config.schedules_entity;
+    if (this._hass && this._hass.states) {
+      const found = Object.keys(this._hass.states).find(
+        (id) => id.startsWith("sensor.") && this._hass.states[id]?.attributes?.schedules !== undefined
+      );
+      if (found) return found;
+    }
     if (!this._config.entity) return null;
     const parts = this._config.entity.split(".");
     return parts.length > 1 ? ("sensor." + parts[1] + "_schedules") : null;
@@ -151,40 +169,37 @@ class BotslabRoutinesCard extends HTMLElement {
           .wrap{padding:8px 16px 16px}
           .row{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--divider-color)}
           .row:first-child{border-top:none}
-          .time{font-size:1.5em;font-weight:600;min-width:64px}
-          .meta{flex:1;display:flex;flex-direction:column;gap:4px;font-size:.9em;color:var(--secondary-text-color)}
-          .days{display:flex;gap:3px}
-          .d{width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;font-size:.72em;background:var(--divider-color);color:var(--secondary-text-color)}
-          .d.on{background:var(--primary-color);color:var(--text-primary-color,#fff);font-weight:bold}
-          .rooms{font-weight:500;color:var(--primary-text-color)}
-          .iconbtn{cursor:pointer;color:var(--secondary-text-color);background:none;border:none;font-size:1.1em;padding:6px;border-radius:4px}
-          .iconbtn:hover{background:var(--secondary-background-color);color:var(--primary-text-color)}
-          button.main{background:var(--primary-color);color:var(--text-primary-color,#fff);border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:.95em}
-          button.ghost{background:none;border:1px solid var(--divider-color);border-radius:8px;padding:8px 14px;cursor:pointer;color:var(--primary-text-color)}
-          .add{padding-top:12px}
-          .ed{border-top:1px solid var(--divider-color);margin-top:8px;padding-top:12px;display:flex;flex-direction:column;gap:14px}
-          .fld{display:flex;flex-direction:column;gap:6px}
-          .fld>label{font-size:.85em;color:var(--secondary-text-color)}
-          .chips{display:flex;flex-wrap:wrap;gap:6px}
-          .chip{border:1px solid var(--divider-color);border-radius:16px;padding:5px 11px;cursor:pointer;user-select:none;font-size:.9em;position:relative}
-          .chip.sel{background:var(--primary-color);color:var(--text-primary-color,#fff);border-color:var(--primary-color)}
-          .chip .ord{font-size:.75em;margin-left:6px;background:rgba(255,255,255,0.3);border-radius:50%;padding:1px 5px}
-          select,input[type=time]{padding:8px;border-radius:8px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);font-size:1em}
-          .acts{display:flex;gap:10px;justify-content:flex-end}
+          .time{font-size:18px;font-weight:600;min-width:60px}
+          .mid{flex:1;min-width:0}
+          .days{font-size:12px;color:var(--secondary-text-color)}
+          .sub{font-size:12px;color:var(--secondary-text-color);margin-top:2px}
+          .btns{display:flex;align-items:center;gap:4px}
+          ha-icon-button{--mdc-icon-button-size:36px}
+          .addbtn{margin-top:12px}
+          .editor{padding:12px;background:var(--secondary-background-color);border-radius:8px;margin-top:12px}
+          .field{margin-bottom:12px}
+          .field label{display:block;font-size:12px;color:var(--secondary-text-color);margin-bottom:4px}
+          .daygrid{display:flex;gap:4px;flex-wrap:wrap}
+          .daychip{padding:6px 10px;border-radius:16px;border:1px solid var(--divider-color);cursor:pointer;font-size:12px;user-select:none}
+          .daychip.on{background:var(--primary-color);color:var(--primary-text-color, #fff);border-color:var(--primary-color)}
+          .roomgrid{display:flex;gap:6px;flex-wrap:wrap}
+          .roomchip{padding:6px 10px;border-radius:6px;border:1px solid var(--divider-color);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;user-select:none}
+          .roomchip.on{background:var(--primary-color);color:var(--primary-text-color, #fff);border-color:var(--primary-color)}
+          .ord{display:inline-block;width:16px;height:16px;line-height:16px;text-align:center;border-radius:50%;background:#fff;color:var(--primary-color);font-size:10px;font-weight:700}
+          select,input[type=time]{padding:6px 8px;border-radius:4px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);font-size:14px}
+          .actrow{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
           .muted{color:var(--secondary-text-color);font-style:italic}
-          .inline{display:flex;align-items:center;gap:8px}
         </style>
         <div class="wrap">
           <div id="list"></div>
-          <div class="add"><button class="main" id="addbtn">${t.addBtn}</button></div>
           <div id="editor"></div>
+          <mwc-button id="addbtn" class="addbtn" outlined>${t.addBtn}</mwc-button>
         </div>
-      </ha-card>`;
-    this.querySelector("#addbtn").addEventListener("click", () => this._openEditor(null));
-    this._built = true;
+      </ha-card>
+    `;
+    this.querySelector("#addbtn").addEventListener("click", () => this._openEditor(-1));
+    this._renderList();
   }
-
-  _roomName(rooms, id) { return rooms[id] != null ? rooms[id] : ("Room " + id); }
 
   _renderList() {
     const t = this._t();
@@ -203,51 +218,81 @@ class BotslabRoutinesCard extends HTMLElement {
       list.innerHTML = `<div class="muted" style="padding:8px 0">${t.empty}</div>`;
       return;
     }
-    list.innerHTML = schedules.map((s) => {
-      const days = t.dayLabels.map((d, i) =>
-        `<span class="d ${s.days.includes(i) ? "on" : ""}">${d}</span>`).join("");
-      const roomsTxt = (s.room_ids && s.room_ids.length)
-        ? s.room_ids.map((id) => this._roomName(rooms, id)).join(" → ")
-        : t.wholeHouse;
-      const sx = t.suctions[s.suction] || s.suction || t.suctions.auto;
-      const passesTxt = s.passes === 2 ? t.passes2 : t.passes1;
+    list.innerHTML = schedules.map(s => {
+      const dayNames = s.days.map(d => t.dayLabels[d]).join(" ");
+      let target;
+      if (s.rooms && s.rooms.length) {
+        target = s.rooms.map(r => rooms[r] || `#${r}`).join(" → ");
+      } else {
+        target = t.wholeHouse;
+      }
+      const suc = t.suctions[s.suction] || s.suction;
+      const passText = s.passes === 2 ? t.passes2 : t.passes1;
       return `
-        <div class="row">
+        <div class="row" data-slot="${s.slot}">
           <div class="time">${s.time}</div>
-          <div class="meta">
-            <div class="days">${days}</div>
-            <div class="rooms">${roomsTxt}</div>
-            <div>${sx} · ${passesTxt}</div>
+          <div class="mid">
+            <div class="days">${dayNames || "—"}</div>
+            <div class="sub">${target} • ${suc} • ${passText}</div>
           </div>
-          <label class="inline"><input type="checkbox" data-act="toggle" data-slot="${s.slot}" ${s.active ? "checked" : ""}></label>
-          <button class="iconbtn" title="${t.runNowTitle}" data-act="run" data-slot="${s.slot}">▶</button>
-          <button class="iconbtn" title="${t.editTitle}" data-act="edit" data-slot="${s.slot}">✎</button>
-          <button class="iconbtn" title="${t.deleteTitle}" data-act="del" data-slot="${s.slot}">🗑</button>
-        </div>`;
+          <div class="btns">
+            <ha-switch ${s.active ? "checked" : ""}></ha-switch>
+            <ha-icon-button class="run-btn" title="${t.runNowTitle}">
+              <ha-icon icon="mdi:play"></ha-icon>
+            </ha-icon-button>
+            <ha-icon-button class="edit-btn" title="${t.editTitle}">
+              <ha-icon icon="mdi:pencil"></ha-icon>
+            </ha-icon-button>
+            <ha-icon-button class="del-btn" title="${t.deleteTitle}">
+              <ha-icon icon="mdi:delete"></ha-icon>
+            </ha-icon-button>
+          </div>
+        </div>
+      `;
     }).join("");
-    list.querySelectorAll("[data-act]").forEach((el) => {
-      const slot = parseInt(el.dataset.slot, 10);
-      const act = el.dataset.act;
-      if (act === "toggle") el.addEventListener("change", (e) => this._toggle(slot, e.target.checked));
-      else if (act === "run") el.addEventListener("click", () => this._run(slot));
-      else el.addEventListener("click", () => act === "edit" ? this._openEditor(slot) : this._delete(slot));
-    });
-  }
 
-  async _run(slot) {
-    const t = this._t();
-    if (!confirm(t.runConfirm)) return;
-    await this._call("run_schedule", { slot });
+    list.querySelectorAll(".row").forEach(el => {
+      const slot = Number(el.dataset.slot);
+      const sw = el.querySelector("ha-switch");
+      sw.addEventListener("change", (ev) => {
+        const checked = ev.target.checked;
+        const cur = schedules.find(s => s.slot === slot);
+        if (!cur) return;
+        this._call("set_schedule", {
+          slot: slot, time: cur.time, days: cur.days,
+          rooms: cur.rooms, suction: cur.suction, passes: cur.passes,
+          active: checked,
+        }).catch(err => { console.error(err); ev.target.checked = !checked; });
+      });
+
+      el.querySelector(".run-btn").addEventListener("click", () => {
+        if (confirm(t.runConfirm)) {
+          this._call("run_schedule", { slot: slot });
+        }
+      });
+      el.querySelector(".edit-btn").addEventListener("click", () => this._openEditor(slot));
+      el.querySelector(".del-btn").addEventListener("click", () => {
+        if (confirm(t.deleteConfirm)) {
+          this._call("delete_schedule", { slot: slot })
+            .then(() => { this._lastKey = null; this._renderList(); });
+        }
+      });
+    });
   }
 
   _openEditor(slot) {
     const { schedules } = this._data();
-    if (slot != null && schedules[slot]) {
-      const s = schedules[slot];
+    if (slot >= 0) {
+      const cur = schedules.find(s => s.slot === slot);
+      if (!cur) return;
       this._editing = {
-        slot, time: s.time || "09:00", days: new Set(s.days || []),
-        rooms: [...(s.room_ids || [])],
-        suction: s.suction || "auto", passes: s.passes === 2 ? 2 : 1, active: !!s.active,
+        slot: cur.slot,
+        time: cur.time,
+        days: new Set(cur.days),
+        rooms: [...(cur.rooms || [])],
+        suction: cur.suction || "auto",
+        passes: cur.passes || 1,
+        active: cur.active !== false,
       };
     } else {
       this._editing = { slot: -1, time: "09:00", days: new Set(), rooms: [],
@@ -271,82 +316,99 @@ class BotslabRoutinesCard extends HTMLElement {
     const t = this._t();
     const e = this._editing;
     const { rooms } = this._data();
-    const roomIds = Object.keys(rooms).map((k) => k).sort();
     const ed = this.querySelector("#editor");
-    const dayChips = t.dayLabels.map((d, i) =>
-      `<div class="chip ${e.days.has(i) ? "sel" : ""}" data-day="${i}">${d}</div>`).join("");
-    const roomChips = roomIds.map((id) => {
-      const pos = e.rooms.indexOf(id);
-      const ord = pos >= 0 ? `<span class="ord">${pos + 1}</span>` : "";
-      return `<div class="chip ${pos >= 0 ? "sel" : ""}" data-room="${id}">${this._roomName(rooms, id)}${ord}</div>`;
-    }).join("");
-    const sucOpts = SUCTIONS.map((s) =>
-      `<option value="${s}" ${e.suction === s ? "selected" : ""}>${t.suctions[s] || s}</option>`).join("");
-    ed.innerHTML = `
-      <div class="ed">
-        <div class="fld"><label>${t.time}</label><input type="time" id="f-time" value="${e.time}"></div>
-        <div class="fld"><label>${t.days}</label><div class="chips" id="f-days">${dayChips}</div></div>
-        <div class="fld"><label>${t.roomsLabel}</label>
-          <div class="chips" id="f-rooms">${roomChips || `<span class="muted">${t.mapNotLoaded}</span>`}</div></div>
-        <div class="fld"><label>${t.suction}</label><select id="f-suc">${sucOpts}</select></div>
-        <div class="fld"><label>${t.passes}</label>
-          <select id="f-pass"><option value="1" ${e.passes === 1 ? "selected" : ""}>1</option>
-          <option value="2" ${e.passes === 2 ? "selected" : ""}>2</option></select></div>
-        <label class="inline"><input type="checkbox" id="f-active" ${e.active ? "checked" : ""}> ${t.active}</label>
-        <div class="acts">
-          <button class="ghost" id="f-cancel">${t.cancel}</button>
-          <button class="main" id="f-save">${e.slot >= 0 ? t.save : t.create}</button>
+
+    const daysHtml = t.dayLabels.map((lbl, idx) => `
+      <div class="daychip ${e.days.has(idx) ? "on" : ""}" data-day="${idx}">${lbl}</div>
+    `).join("");
+
+    const roomEntries = Object.entries(rooms);
+    const roomsHtml = roomEntries.length ? roomEntries.map(([id, name]) => {
+      const ordIdx = e.rooms.indexOf(Number(id));
+      const on = ordIdx >= 0;
+      return `
+        <div class="roomchip ${on ? "on" : ""}" data-rid="${id}">
+          ${on ? `<span class="ord">${ordIdx + 1}</span>` : ""}
+          <span>${name}</span>
         </div>
-      </div>`;
-    ed.querySelectorAll("#f-days .chip").forEach((c) => c.addEventListener("click", () => {
-      const d = parseInt(c.dataset.day, 10);
-      e.days.has(d) ? e.days.delete(d) : e.days.add(d);
-      this._syncEditFields(); this._renderEditor();
-    }));
-    ed.querySelectorAll("#f-rooms .chip").forEach((c) => c.addEventListener("click", () => {
-      const id = c.dataset.room;
-      const pos = e.rooms.indexOf(id);
-      pos >= 0 ? e.rooms.splice(pos, 1) : e.rooms.push(id);
-      this._syncEditFields(); this._renderEditor();
-    }));
-    ed.querySelector("#f-cancel").addEventListener("click", () => this._closeEditor());
-    ed.querySelector("#f-save").addEventListener("click", () => this._save());
-  }
+      `;
+    }).join("") : `<div class="muted">${t.mapNotLoaded}</div>`;
 
-  _syncEditFields() {
-    const e = this._editing, ed = this.querySelector("#editor");
-    const tm = ed.querySelector("#f-time"); if (tm) e.time = tm.value;
-    const s = ed.querySelector("#f-suc"); if (s) e.suction = s.value;
-    const p = ed.querySelector("#f-pass"); if (p) e.passes = parseInt(p.value, 10);
-    const a = ed.querySelector("#f-active"); if (a) e.active = a.checked;
-  }
+    const sucOpts = SUCTIONS.map(k => `
+      <option value="${k}" ${e.suction === k ? "selected" : ""}>${t.suctions[k] || k}</option>
+    `).join("");
 
-  async _save() {
-    const t = this._t();
-    this._syncEditFields();
-    const e = this._editing;
-    if (!e.days.size) { alert(t.pickOneDay); return; }
-    await this._call("set_schedule", {
-      time: e.time, days: [...e.days].sort((a, b) => a - b),
-      room_ids: e.rooms, suction: e.suction, passes: e.passes,
-      active: e.active, slot: e.slot,
+    ed.innerHTML = `
+      <div class="editor">
+        <div class="field">
+          <label>${t.time}</label>
+          <input type="time" id="ed-time" value="${e.time}">
+        </div>
+        <div class="field">
+          <label>${t.days}</label>
+          <div class="daygrid" id="ed-days">${daysHtml}</div>
+        </div>
+        <div class="field">
+          <label>${t.roomsLabel}</label>
+          <div class="roomgrid" id="ed-rooms">${roomsHtml}</div>
+        </div>
+        <div class="field">
+          <label>${t.suction}</label>
+          <select id="ed-suction">${sucOpts}</select>
+        </div>
+        <div class="field">
+          <label>${t.passes}</label>
+          <select id="ed-passes">
+            <option value="1" ${e.passes === 1 ? "selected" : ""}>1</option>
+            <option value="2" ${e.passes === 2 ? "selected" : ""}>2</option>
+          </select>
+        </div>
+        <div class="field" style="display:flex;align-items:center;gap:10px">
+          <label style="margin:0">${t.active}</label>
+          <ha-switch id="ed-active" ${e.active ? "checked" : ""}></ha-switch>
+        </div>
+        <div class="actrow">
+          <mwc-button id="ed-cancel">${t.cancel}</mwc-button>
+          <mwc-button id="ed-save" raised>${e.slot >= 0 ? t.save : t.create}</mwc-button>
+        </div>
+      </div>
+    `;
+
+    ed.querySelector("#ed-days").querySelectorAll(".daychip").forEach(ch => {
+      ch.addEventListener("click", () => {
+        const d = Number(ch.dataset.day);
+        if (e.days.has(d)) e.days.delete(d); else e.days.add(d);
+        this._renderEditor();
+      });
     });
-    this._closeEditor();
-  }
 
-  async _delete(slot) {
-    const t = this._t();
-    if (!confirm(t.deleteConfirm)) return;
-    await this._call("delete_schedule", { slot });
-    this._lastKey = null;
-  }
+    ed.querySelector("#ed-rooms").querySelectorAll(".roomchip").forEach(ch => {
+      ch.addEventListener("click", () => {
+        const rid = Number(ch.dataset.rid);
+        const idx = e.rooms.indexOf(rid);
+        if (idx >= 0) e.rooms.splice(idx, 1); else e.rooms.push(rid);
+        this._renderEditor();
+      });
+    });
 
-  async _toggle(slot, active) {
-    const s = this._data().schedules[slot];
-    if (!s) return;
-    await this._call("set_schedule", {
-      time: s.time, days: s.days, room_ids: s.room_ids, suction: s.suction || "auto",
-      passes: s.passes === 2 ? 2 : 1, active, slot,
+    ed.querySelector("#ed-time").addEventListener("change", ev => { e.time = ev.target.value; });
+    ed.querySelector("#ed-suction").addEventListener("change", ev => { e.suction = ev.target.value; });
+    ed.querySelector("#ed-passes").addEventListener("change", ev => { e.passes = Number(ev.target.value); });
+    ed.querySelector("#ed-active").addEventListener("change", ev => { e.active = ev.target.checked; });
+
+    ed.querySelector("#ed-cancel").addEventListener("click", () => this._closeEditor());
+    ed.querySelector("#ed-save").addEventListener("click", () => {
+      if (!e.days.size) { alert(t.pickOneDay); return; }
+      this._call("set_schedule", {
+        slot: e.slot,
+        time: e.time,
+        days: Array.from(e.days).sort(),
+        rooms: e.rooms,
+        suction: e.suction,
+        passes: e.passes,
+        active: e.active,
+      }).then(() => this._closeEditor())
+        .catch(err => { console.error(err); alert("Error saving schedule: " + err); });
     });
     this._lastKey = null;
   }
@@ -361,5 +423,6 @@ if (!window.customCards.some((c) => c.type === "botslab-routines-card")) {
     type: "botslab-routines-card",
     name: "Botslab Routines",
     description: "Create and edit scheduled cleaning routines for Botslab robots",
+    preview: true,
   });
 }
