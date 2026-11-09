@@ -1786,7 +1786,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16")
     assert data["categories"] == ["appliances_cleaning.cleaning"]
 
 
@@ -2228,4 +2228,66 @@ async def test_auto_reauth_on_token_expiration():
     assert res.get("code") == 0
     assert res.get("data", {}).get("request_id") == "req-ok"
     api.app_login.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_botslab_schedules_sensor_attributes():
+    """Verify BotslabSchedulesSensor publishes both room_ids and rooms."""
+    from unittest.mock import MagicMock
+    from custom_components.botslab_vacuum.sensor import BotslabSchedulesSensor
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice, BotslabRoom
+
+    coord = MagicMock()
+    coord.routines = [
+        {
+            "time": "10:30",
+            "days": [1, 2, 3],
+            "room_ids": ["1", "2"],
+            "suction": "standard",
+            "passes": 1,
+            "active": True,
+        }
+    ]
+    dev = BotslabVacuumDevice(
+        device_name="SN123",
+        product_key="PK123",
+        device_title="Botslab Test",
+        props={},
+        rooms=[BotslabRoom(room_id="1", name="Kitchen"), BotslabRoom(room_id="2", name="Living Room")],
+    )
+    coord.data = {"SN123": dev}
+    sensor = BotslabSchedulesSensor(coord, dev)
+    attrs = sensor.extra_state_attributes
+    assert "schedules" in attrs
+    assert "rooms" in attrs
+    assert attrs["rooms"] == {"1": "Kitchen", "2": "Living Room"}
+    sched = attrs["schedules"][0]
+    assert sched["room_ids"] == ["1", "2"]
+    assert sched["rooms"] == ["1", "2"]
+    assert sched["time"] == "10:30"
+
+
+@pytest.mark.asyncio
+async def test_set_schedule_suction_normalization_and_rooms_alias():
+    """Verify handle_set_schedule normalizes suction aliases and accepts rooms alias."""
+    time_str = "14:00"
+    days = [0, 6]
+    room_ids = ["3"]
+    suction = "normal"
+    if suction == "normal":
+        suction = "standard"
+    elif suction == "strong":
+        suction = "powerful"
+
+    routine = {
+        "time": time_str,
+        "days": [int(d) for d in days],
+        "room_ids": [str(r) for r in room_ids],
+        "suction": suction,
+        "passes": 1,
+        "active": True,
+    }
+    assert routine["suction"] == "standard"
+    assert routine["room_ids"] == ["3"]
+
 

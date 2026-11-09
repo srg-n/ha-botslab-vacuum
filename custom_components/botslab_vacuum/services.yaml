@@ -252,6 +252,13 @@ set_schedule:
       example: ["0", "1"]
       selector:
         object:
+    rooms:
+      name: Rooms
+      description: Alias for room_ids.
+      default: []
+      example: ["0", "1"]
+      selector:
+        object:
     suction:
       name: Suction Power
       description: Suction level for this routine.

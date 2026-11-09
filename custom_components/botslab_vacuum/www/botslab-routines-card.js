@@ -2,6 +2,7 @@
  * Reads sensor.<device>_schedules (schedules + rooms) and calls
  * botslab_vacuum.set_schedule / delete_schedule / run_schedule services.
  * Bilingual: English and Turkish with automatic language detection.
+ * Native Home Assistant notifications and visual UI editor.
  */
 
 const SUCTIONS = ["quiet", "normal", "strong", "max", "auto"];
@@ -15,15 +16,13 @@ const I18N = {
     wholeHouse: "Tüm Ev",
     passes1: "1 geçiş",
     passes2: "2 geçiş",
-    runConfirm: "Bu rutini şimdi çalıştırmak istiyor musunuz?",
-    deleteConfirm: "Bu rutini silmek istediğinize emin misiniz?",
     dayLabels: ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"],
     time: "Başlangıç Saati",
     days: "Günler",
     roomsLabel: "Odalar (temizleme sırasına göre tıklayın; boş = tüm ev)",
     mapNotLoaded: "Harita henüz yüklenmedi",
     suction: "Emiş Gücü",
-    suctions: { quiet: "Sessiz", normal: "Standart", strong: "Güçlü", max: "Maksimum", auto: "Otomatik" },
+    suctions: { quiet: "Sessiz", normal: "Standart", standard: "Standart", strong: "Güçlü", powerful: "Güçlü", max: "Maksimum", auto: "Otomatik" },
     passes: "Geçiş Sayısı",
     active: "Aktif",
     cancel: "İptal",
@@ -33,6 +32,11 @@ const I18N = {
     runNowTitle: "Şimdi Çalıştır",
     editTitle: "Düzenle",
     deleteTitle: "Sil",
+    deleteConfirm: "Silmek için tekrar tıklayın",
+    routineStarted: "Rutin başlatılıyor...",
+    routineSaved: "Rutin başarıyla kaydedildi.",
+    routineDeleted: "Rutin silindi.",
+    errorSaving: "Rutin kaydedilirken hata oluştu: ",
   },
   en: {
     header: "Cleaning Routines",
@@ -42,15 +46,13 @@ const I18N = {
     wholeHouse: "Whole House",
     passes1: "1 pass",
     passes2: "2 passes",
-    runConfirm: "Execute this routine now?",
-    deleteConfirm: "Delete this routine?",
     dayLabels: ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"],
     time: "Start Time",
     days: "Days",
     roomsLabel: "Rooms (tap in order to clean; empty = whole house)",
     mapNotLoaded: "Map not loaded yet",
     suction: "Suction Power",
-    suctions: { quiet: "Quiet", normal: "Standard", strong: "Strong", max: "Max", auto: "Auto" },
+    suctions: { quiet: "Quiet", normal: "Standard", standard: "Standard", strong: "Strong", powerful: "Strong", max: "Max", auto: "Auto" },
     passes: "Passes",
     active: "Active",
     cancel: "Cancel",
@@ -60,20 +62,68 @@ const I18N = {
     runNowTitle: "Run now",
     editTitle: "Edit",
     deleteTitle: "Delete",
+    deleteConfirm: "Click again to confirm delete",
+    routineStarted: "Starting routine...",
+    routineSaved: "Routine saved successfully.",
+    routineDeleted: "Routine deleted.",
+    errorSaving: "Error saving routine: ",
   }
 };
 
+class BotslabRoutinesCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = Object.assign({}, config);
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) {
+      this._form.hass = hass;
+    }
+  }
+
+  _render() {
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.schema = [
+        { name: "entity", required: true, selector: { entity: { domain: "vacuum" } } },
+        { name: "title", selector: { text: {} } },
+        { name: "schedules_entity", selector: { entity: { domain: "sensor" } } },
+      ];
+      this._form.computeLabel = (s) => {
+        if (s.name === "entity") return "Vacuum Entity";
+        if (s.name === "title") return "Card Title (optional)";
+        if (s.name === "schedules_entity") return "Schedules Sensor (optional)";
+        return s.name;
+      };
+      this._form.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        this._config = Object.assign({}, this._config, ev.detail.value);
+        this.dispatchEvent(
+          new CustomEvent("config-changed", {
+            detail: { config: this._config },
+            bubbles: true,
+            composed: true,
+          })
+        );
+      });
+      this.appendChild(this._form);
+    }
+    this._form.data = this._config;
+    if (this._hass) {
+      this._form.hass = this._hass;
+    }
+  }
+}
+
+if (!customElements.get("botslab-routines-card-editor")) {
+  customElements.define("botslab-routines-card-editor", BotslabRoutinesCardEditor);
+}
+
 class BotslabRoutinesCard extends HTMLElement {
-  static getStubConfig(hass) {
-    const vac = Object.keys(hass?.states ?? {}).find((s) => s.startsWith("vacuum."));
-    const sched = Object.keys(hass?.states ?? {}).find(
-      (id) => id.startsWith("sensor.") && hass?.states[id]?.attributes?.schedules !== undefined
-    );
-    return {
-      type: "custom:botslab-routines-card",
-      entity: vac || "vacuum.botslab_vacuum",
-      ...(sched ? { schedules_entity: sched } : {})
-    };
+  static async getConfigElement() {
+    return document.createElement("botslab-routines-card-editor");
   }
 
   static getConfigForm() {
@@ -81,14 +131,30 @@ class BotslabRoutinesCard extends HTMLElement {
       schema: [
         { name: "entity", required: true, selector: { entity: { domain: "vacuum" } } },
         { name: "title", selector: { text: {} } },
-        { name: "schedules_entity", selector: { entity: { domain: "sensor" } } }
+        { name: "schedules_entity", selector: { entity: { domain: "sensor" } } },
       ],
       computeLabel: (s) => {
         if (s.name === "entity") return "Vacuum Entity";
         if (s.name === "title") return "Card Title (optional)";
         if (s.name === "schedules_entity") return "Schedules Sensor (optional)";
         return s.name;
-      }
+      },
+    };
+  }
+
+  static getStubConfig(hass, entities, entitiesFallback) {
+    const list = entities || [];
+    const vac =
+      list.find((e) => e.startsWith("vacuum.")) ||
+      Object.keys(hass?.states || {}).find((s) => s.startsWith("vacuum.")) ||
+      "";
+    const sched = Object.keys(hass?.states || {}).find(
+      (id) => id.startsWith("sensor.") && hass?.states[id]?.attributes?.schedules !== undefined
+    );
+    return {
+      type: "custom:botslab-routines-card",
+      ...(vac ? { entity: vac } : {}),
+      ...(sched ? { schedules_entity: sched } : {}),
     };
   }
 
@@ -97,6 +163,7 @@ class BotslabRoutinesCard extends HTMLElement {
     this._editing = null;
     this._built = false;
     this._lastKey = null;
+    this._armDeleteSlot = null;
     if (this._hass) this._ensureEntity();
   }
 
@@ -106,11 +173,26 @@ class BotslabRoutinesCard extends HTMLElement {
     if (!this._built) this._build();
     if (!this._editing) {
       const key = JSON.stringify(this._data());
-      if (key !== this._lastKey) { this._lastKey = key; this._renderList(); }
+      if (key !== this._lastKey) {
+        this._lastKey = key;
+        this._renderList();
+      }
     }
   }
 
-  getCardSize() { return 8; }
+  getCardSize() {
+    return 8;
+  }
+
+  _notify(message) {
+    window.dispatchEvent(
+      new CustomEvent("hass-notification", {
+        detail: { message },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
 
   _ensureEntity() {
     if (!this._config.entity && this._hass && this._hass.states) {
@@ -144,7 +226,7 @@ class BotslabRoutinesCard extends HTMLElement {
     }
     if (!this._config.entity) return null;
     const parts = this._config.entity.split(".");
-    return parts.length > 1 ? ("sensor." + parts[1] + "_schedules") : null;
+    return parts.length > 1 ? "sensor." + parts[1] + "_schedules" : null;
   }
 
   _data() {
@@ -156,8 +238,9 @@ class BotslabRoutinesCard extends HTMLElement {
 
   _call(service, data) {
     if (!this._config.entity) return Promise.reject(new Error("No vacuum entity configured"));
-    return this._hass.callService("botslab_vacuum", service, data,
-      { entity_id: this._config.entity });
+    return this._hass.callService("botslab_vacuum", service, data, {
+      entity_id: this._config.entity,
+    });
   }
 
   _build() {
@@ -189,6 +272,8 @@ class BotslabRoutinesCard extends HTMLElement {
           select,input[type=time]{padding:6px 8px;border-radius:4px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);font-size:14px}
           .actrow{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
           .muted{color:var(--secondary-text-color);font-style:italic}
+          .del-armed{color:var(--error-color, #db4437)}
+          .ed-error{color:var(--error-color, #db4437);font-size:13px;margin-top:8px;display:none}
         </style>
         <div class="wrap">
           <div id="list"></div>
@@ -218,17 +303,21 @@ class BotslabRoutinesCard extends HTMLElement {
       list.innerHTML = `<div class="muted" style="padding:8px 0">${t.empty}</div>`;
       return;
     }
-    list.innerHTML = schedules.map(s => {
-      const dayNames = s.days.map(d => t.dayLabels[d]).join(" ");
-      let target;
-      if (s.rooms && s.rooms.length) {
-        target = s.rooms.map(r => rooms[r] || `#${r}`).join(" → ");
-      } else {
-        target = t.wholeHouse;
-      }
-      const suc = t.suctions[s.suction] || s.suction;
-      const passText = s.passes === 2 ? t.passes2 : t.passes1;
-      return `
+    list.innerHTML = schedules
+      .map((s) => {
+        const dayNames = (s.days || []).map((d) => t.dayLabels[d]).join(" ");
+        const rList = s.room_ids || s.rooms || [];
+        let target;
+        if (rList && rList.length) {
+          target = rList.map((r) => rooms[r] || `#${r}`).join(" → ");
+        } else {
+          target = t.wholeHouse;
+        }
+        const suc = t.suctions[s.suction] || s.suction;
+        const passText = s.passes === 2 ? t.passes2 : t.passes1;
+        const isDelArmed = this._armDeleteSlot === s.slot;
+
+        return `
         <div class="row" data-slot="${s.slot}">
           <div class="time">${s.time}</div>
           <div class="mid">
@@ -243,38 +332,73 @@ class BotslabRoutinesCard extends HTMLElement {
             <ha-icon-button class="edit-btn" title="${t.editTitle}">
               <ha-icon icon="mdi:pencil"></ha-icon>
             </ha-icon-button>
-            <ha-icon-button class="del-btn" title="${t.deleteTitle}">
-              <ha-icon icon="mdi:delete"></ha-icon>
+            <ha-icon-button class="del-btn ${isDelArmed ? "del-armed" : ""}" title="${isDelArmed ? t.deleteConfirm : t.deleteTitle}">
+              <ha-icon icon="${isDelArmed ? "mdi:alert" : "mdi:delete"}"></ha-icon>
             </ha-icon-button>
           </div>
         </div>
       `;
-    }).join("");
+      })
+      .join("");
 
-    list.querySelectorAll(".row").forEach(el => {
+    list.querySelectorAll(".row").forEach((el) => {
       const slot = Number(el.dataset.slot);
       const sw = el.querySelector("ha-switch");
       sw.addEventListener("change", (ev) => {
         const checked = ev.target.checked;
-        const cur = schedules.find(s => s.slot === slot);
+        const cur = schedules.find((s) => s.slot === slot);
         if (!cur) return;
+        const curRooms = (cur.room_ids || cur.rooms || []).map(String);
         this._call("set_schedule", {
-          slot: slot, time: cur.time, days: cur.days,
-          rooms: cur.rooms, suction: cur.suction, passes: cur.passes,
+          slot: slot,
+          time: cur.time,
+          days: cur.days,
+          room_ids: curRooms,
+          rooms: curRooms,
+          suction: cur.suction,
+          passes: cur.passes,
           active: checked,
-        }).catch(err => { console.error(err); ev.target.checked = !checked; });
+        }).catch((err) => {
+          console.error(err);
+          ev.target.checked = !checked;
+          this._notify("Error: " + (err.message || err));
+        });
       });
 
       el.querySelector(".run-btn").addEventListener("click", () => {
-        if (confirm(t.runConfirm)) {
-          this._call("run_schedule", { slot: slot });
-        }
+        this._notify(t.routineStarted);
+        this._call("run_schedule", { slot: slot }).catch((err) => {
+          console.error(err);
+          this._notify("Error: " + (err.message || err));
+        });
       });
+
       el.querySelector(".edit-btn").addEventListener("click", () => this._openEditor(slot));
-      el.querySelector(".del-btn").addEventListener("click", () => {
-        if (confirm(t.deleteConfirm)) {
+
+      const delBtn = el.querySelector(".del-btn");
+      delBtn.addEventListener("click", () => {
+        if (this._armDeleteSlot === slot) {
+          clearTimeout(this._armDeleteTimer);
+          this._armDeleteSlot = null;
           this._call("delete_schedule", { slot: slot })
-            .then(() => { this._lastKey = null; this._renderList(); });
+            .then(() => {
+              this._lastKey = null;
+              this._renderList();
+              this._notify(t.routineDeleted);
+            })
+            .catch((err) => {
+              console.error(err);
+              this._notify("Error: " + (err.message || err));
+            });
+        } else {
+          this._armDeleteSlot = slot;
+          this._renderList();
+          this._notify(t.deleteConfirm);
+          clearTimeout(this._armDeleteTimer);
+          this._armDeleteTimer = setTimeout(() => {
+            this._armDeleteSlot = null;
+            this._renderList();
+          }, 4000);
         }
       });
     });
@@ -283,20 +407,27 @@ class BotslabRoutinesCard extends HTMLElement {
   _openEditor(slot) {
     const { schedules } = this._data();
     if (slot >= 0) {
-      const cur = schedules.find(s => s.slot === slot);
+      const cur = schedules.find((s) => s.slot === slot);
       if (!cur) return;
       this._editing = {
         slot: cur.slot,
         time: cur.time,
-        days: new Set(cur.days),
-        rooms: [...(cur.rooms || [])],
+        days: new Set(cur.days || []),
+        rooms: [...((cur.room_ids || cur.rooms) || [])],
         suction: cur.suction || "auto",
         passes: cur.passes || 1,
         active: cur.active !== false,
       };
     } else {
-      this._editing = { slot: -1, time: "09:00", days: new Set(), rooms: [],
-        suction: "auto", passes: 1, active: true };
+      this._editing = {
+        slot: -1,
+        time: "09:00",
+        days: new Set(),
+        rooms: [],
+        suction: "auto",
+        passes: 1,
+        active: true,
+      };
     }
     const addBtn = this.querySelector("#addbtn");
     if (addBtn) addBtn.style.display = "none";
@@ -318,25 +449,35 @@ class BotslabRoutinesCard extends HTMLElement {
     const { rooms } = this._data();
     const ed = this.querySelector("#editor");
 
-    const daysHtml = t.dayLabels.map((lbl, idx) => `
+    const daysHtml = t.dayLabels
+      .map(
+        (lbl, idx) => `
       <div class="daychip ${e.days.has(idx) ? "on" : ""}" data-day="${idx}">${lbl}</div>
-    `).join("");
+    `
+      )
+      .join("");
 
     const roomEntries = Object.entries(rooms);
-    const roomsHtml = roomEntries.length ? roomEntries.map(([id, name]) => {
-      const ordIdx = e.rooms.indexOf(Number(id));
-      const on = ordIdx >= 0;
-      return `
+    const roomsHtml = roomEntries.length
+      ? roomEntries
+          .map(([id, name]) => {
+            const ordIdx = e.rooms.findIndex((r) => String(r) === String(id));
+            const on = ordIdx >= 0;
+            return `
         <div class="roomchip ${on ? "on" : ""}" data-rid="${id}">
           ${on ? `<span class="ord">${ordIdx + 1}</span>` : ""}
           <span>${name}</span>
         </div>
       `;
-    }).join("") : `<div class="muted">${t.mapNotLoaded}</div>`;
+          })
+          .join("")
+      : `<div class="muted">${t.mapNotLoaded}</div>`;
 
-    const sucOpts = SUCTIONS.map(k => `
+    const sucOpts = SUCTIONS.map(
+      (k) => `
       <option value="${k}" ${e.suction === k ? "selected" : ""}>${t.suctions[k] || k}</option>
-    `).join("");
+    `
+    ).join("");
 
     ed.innerHTML = `
       <div class="editor">
@@ -367,6 +508,7 @@ class BotslabRoutinesCard extends HTMLElement {
           <label style="margin:0">${t.active}</label>
           <ha-switch id="ed-active" ${e.active ? "checked" : ""}></ha-switch>
         </div>
+        <div id="ed-error" class="ed-error"></div>
         <div class="actrow">
           <mwc-button id="ed-cancel">${t.cancel}</mwc-button>
           <mwc-button id="ed-save" raised>${e.slot >= 0 ? t.save : t.create}</mwc-button>
@@ -374,41 +516,77 @@ class BotslabRoutinesCard extends HTMLElement {
       </div>
     `;
 
-    ed.querySelector("#ed-days").querySelectorAll(".daychip").forEach(ch => {
-      ch.addEventListener("click", () => {
-        const d = Number(ch.dataset.day);
-        if (e.days.has(d)) e.days.delete(d); else e.days.add(d);
-        this._renderEditor();
+    ed.querySelector("#ed-days")
+      .querySelectorAll(".daychip")
+      .forEach((ch) => {
+        ch.addEventListener("click", () => {
+          const d = Number(ch.dataset.day);
+          if (e.days.has(d)) e.days.delete(d);
+          else e.days.add(d);
+          this._renderEditor();
+        });
       });
-    });
 
-    ed.querySelector("#ed-rooms").querySelectorAll(".roomchip").forEach(ch => {
-      ch.addEventListener("click", () => {
-        const rid = Number(ch.dataset.rid);
-        const idx = e.rooms.indexOf(rid);
-        if (idx >= 0) e.rooms.splice(idx, 1); else e.rooms.push(rid);
-        this._renderEditor();
+    ed.querySelector("#ed-rooms")
+      .querySelectorAll(".roomchip")
+      .forEach((ch) => {
+        ch.addEventListener("click", () => {
+          const rid = String(ch.dataset.rid);
+          const idx = e.rooms.findIndex((r) => String(r) === rid);
+          if (idx >= 0) e.rooms.splice(idx, 1);
+          else e.rooms.push(rid);
+          this._renderEditor();
+        });
       });
-    });
 
-    ed.querySelector("#ed-time").addEventListener("change", ev => { e.time = ev.target.value; });
-    ed.querySelector("#ed-suction").addEventListener("change", ev => { e.suction = ev.target.value; });
-    ed.querySelector("#ed-passes").addEventListener("change", ev => { e.passes = Number(ev.target.value); });
-    ed.querySelector("#ed-active").addEventListener("change", ev => { e.active = ev.target.checked; });
+    ed.querySelector("#ed-time").addEventListener("change", (ev) => {
+      e.time = ev.target.value;
+    });
+    ed.querySelector("#ed-suction").addEventListener("change", (ev) => {
+      e.suction = ev.target.value;
+    });
+    ed.querySelector("#ed-passes").addEventListener("change", (ev) => {
+      e.passes = Number(ev.target.value);
+    });
+    ed.querySelector("#ed-active").addEventListener("change", (ev) => {
+      e.active = ev.target.checked;
+    });
 
     ed.querySelector("#ed-cancel").addEventListener("click", () => this._closeEditor());
     ed.querySelector("#ed-save").addEventListener("click", () => {
-      if (!e.days.size) { alert(t.pickOneDay); return; }
+      const errEl = ed.querySelector("#ed-error");
+      if (!e.days.size) {
+        if (errEl) {
+          errEl.textContent = t.pickOneDay;
+          errEl.style.display = "block";
+        }
+        this._notify(t.pickOneDay);
+        return;
+      }
+      const roomList = (e.rooms || []).map(String);
       this._call("set_schedule", {
         slot: e.slot,
         time: e.time,
         days: Array.from(e.days).sort(),
-        rooms: e.rooms,
+        room_ids: roomList,
+        rooms: roomList,
         suction: e.suction,
         passes: e.passes,
         active: e.active,
-      }).then(() => this._closeEditor())
-        .catch(err => { console.error(err); alert("Error saving schedule: " + err); });
+      })
+        .then(() => {
+          this._closeEditor();
+          this._notify(t.routineSaved);
+        })
+        .catch((err) => {
+          console.error(err);
+          const msg = (err && (err.message || err.error || err)) || String(err);
+          if (errEl) {
+            errEl.textContent = t.errorSaving + msg;
+            errEl.style.display = "block";
+          }
+          this._notify(t.errorSaving + msg);
+        });
     });
     this._lastKey = null;
   }
@@ -417,6 +595,7 @@ class BotslabRoutinesCard extends HTMLElement {
 if (!customElements.get("botslab-routines-card")) {
   customElements.define("botslab-routines-card", BotslabRoutinesCard);
 }
+
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === "botslab-routines-card")) {
   window.customCards.push({

@@ -689,8 +689,12 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_set_schedule(call: ServiceCall) -> None:
         time_str = call.data[ATTR_TIME]
         days = call.data[ATTR_DAYS]
-        room_ids = call.data.get(ATTR_ROOM_IDS, [])
+        room_ids = call.data.get(ATTR_ROOM_IDS) or call.data.get("rooms") or []
         suction = call.data.get(ATTR_SUCTION, "auto")
+        if suction == "normal":
+            suction = "standard"
+        elif suction == "strong":
+            suction = "powerful"
         passes = call.data.get(ATTR_PASSES, 1)
         active = call.data.get(ATTR_ACTIVE, True)
         slot = call.data.get(ATTR_SLOT, -1)
@@ -877,8 +881,9 @@ def _register_services(hass: HomeAssistant) -> None:
                 vol.Required(ATTR_TIME): cv.string,
                 vol.Required(ATTR_DAYS): vol.All(cv.ensure_list, [vol.All(vol.Coerce(int), vol.Range(min=0, max=6))]),
                 vol.Optional(ATTR_ROOM_IDS, default=[]): vol.All(cv.ensure_list, [cv.string]),
+                vol.Optional("rooms", default=[]): vol.All(cv.ensure_list, [cv.string]),
                 vol.Optional(ATTR_SUCTION, default="auto"): vol.In(
-                    ["quiet", "standard", "powerful", "max", "auto"]
+                    ["quiet", "standard", "powerful", "max", "auto", "normal", "strong"]
                 ),
                 vol.Optional(ATTR_PASSES, default=1): vol.In([1, 2]),
                 vol.Optional(ATTR_ACTIVE, default=True): cv.boolean,
