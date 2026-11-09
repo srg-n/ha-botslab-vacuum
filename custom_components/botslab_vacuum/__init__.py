@@ -74,7 +74,7 @@ from .qpush import BotslabChinaQPush, BotslabQPush
 _LOGGER = logging.getLogger(__name__)
 
 # Frontend cards bundled in ./www and auto-registered so dashboards work zero-config
-_CARDS = ["botslab-routines-card.js", "botslab-vacuum-map-card.js", "xiaomi-vacuum-map-card.js"]
+_CARDS = ["botslab-routines-card.js", "botslab-vacuum-map-card.js"]
 
 
 async def _register_resources(hass: HomeAssistant, base: str, ver: str) -> bool:

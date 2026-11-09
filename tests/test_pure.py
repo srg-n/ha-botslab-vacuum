@@ -8,11 +8,6 @@ import pytest
 
 from custom_components.botslab_vacuum import map_util
 from custom_components.botslab_vacuum.models import BotslabMapInfo, BotslabRoom
-from custom_components.botslab_vacuum.lovelace import (
-    build_full_dashboard_snippet,
-    build_maintenance_card,
-    build_map_card,
-)
 
 
 # --------------------------------------------------------------- LZ4 + PNG
@@ -177,117 +172,36 @@ def test_fill_polygon_rejects_degenerate_input(degenerate):
     assert map_util.fill_polygon(50, 50, degenerate) == {}
 
 
-# --------------------------------------------------------- Lovelace output
-def _device(room_count: int = 3):
-    rooms = [
-        BotslabRoom(
-            room_id=str(i),
-            name=f"Room {i}",
-            outline=((0, 0), (100, 0), (100, 100), (0, 100)),
-        )
-        for i in range(room_count)
-    ]
-    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+# --------------------------------------------------------- Frontend & Button tests
+def test_bundled_cards_do_not_include_xiaomi():
+    """Verify only modern botslab cards are registered, excluding legacy xiaomi card."""
+    from custom_components.botslab_vacuum import _CARDS
 
-    return BotslabVacuumDevice(
-        product_key="pk",
-        device_name="SN12345",
-        device_title="Botslab S8",
-        rooms=rooms,
-    )
+    assert _CARDS == ["botslab-routines-card.js", "botslab-vacuum-map-card.js"]
+    assert "xiaomi-vacuum-map-card.js" not in _CARDS
 
 
-def _ids() -> dict:
-    """Entity ids as the registry would report them, which are not guessable."""
-    return {
-        "vacuum": "vacuum.botslab_s8",
-        "camera": "camera.botslab_s8_cleaning_map",
-        "filter_life": "sensor.botslab_s8_hepa_filter",
-    }
+def test_buttons_exclude_map_card_generator():
+    """Verify generate_map_card button is completely removed from BUTTON_DESCRIPTIONS."""
+    from custom_components.botslab_vacuum.button import BUTTON_DESCRIPTIONS
+
+    button_keys = [desc.key for desc in BUTTON_DESCRIPTIONS]
+    assert "generate_map_card" not in button_keys
+    assert "locate" in button_keys
+    assert "sync_map" in button_keys
+    assert "refresh_rooms" in button_keys
 
 
-def test_generated_card_is_parseable():
-    """The emitted card is valid YAML with the expected structure."""
-    import yaml
+def test_routines_card_js_syntax_and_visual_form():
+    """Verify botslab-routines-card.js contains getStubConfig, getConfigForm, and does not hard-throw on missing entity."""
+    from pathlib import Path
 
-    ids = _ids()
-    config = yaml.safe_load(build_map_card(_device(), ids))
-    assert config["type"] == "custom:xiaomi-vacuum-map-card"
-    assert config["entity"] == ids["vacuum"]
-    assert config["map_source"]["camera"] == ids["camera"]
-
-
-def test_card_uses_supplied_entity_ids_not_guessed_ones():
-    """Entity ids come from the registry, never from the serial number."""
-    import yaml
-
-    ids = _ids()
-    card = build_map_card(_device(), ids)
-    config = yaml.safe_load(card)
-
-    # A serial-derived id would be vacuum.SN12345_vacuum, which does not exist.
-    assert "SN12345" not in config["entity"]
-    assert "SN12345" not in config["map_source"]["camera"]
-
-
-def test_maintenance_card_skips_unregistered_rows():
-    """Entities that are not registered are left out of the card."""
-    import yaml
-
-    config = yaml.safe_load(build_maintenance_card(_device(), _ids()))
-    entities = [row["entity"] for row in config["entities"]]
-    assert entities == ["sensor.botslab_s8_hepa_filter"]
-
-
-def test_generated_card_contains_every_room():
-    """One predefined selection per room."""
-    import yaml
-
-    config = yaml.safe_load(build_map_card(_device(4), _ids()))
-    room_mode = next(m for m in config["map_modes"] if m["selection_type"] == "ROOM")
-    assert len(room_mode["predefined_selections"]) == 4
-
-
-def test_generated_card_handles_empty_rooms():
-    """A robot without geometry still yields a valid card."""
-    import yaml
-
-    config = yaml.safe_load(build_map_card(_device(0), _ids()))
-    room_mode = next(m for m in config["map_modes"] if m["selection_type"] == "ROOM")
-    assert room_mode["predefined_selections"] == []
-
-
-def test_awkward_room_names_survive():
-    """Room selection is generated with valid id and outline."""
-    import yaml
-
-    device = _device(0)
-    device.rooms = [
-        BotslabRoom(
-            room_id="0",
-            name='Mutfak: "sol" #1\n2',
-            outline=((0, 0), (10, 0), (10, 10)),
-        )
-    ]
-    config = yaml.safe_load(build_map_card(device, _ids()))
-    selections = next(
-        m for m in config["map_modes"] if m["selection_type"] == "ROOM"
-    )["predefined_selections"]
-    assert selections[0]["id"] == "0"
-    assert len(selections[0]["outline"]) == 3
-
-
-def test_snippet_cards():
-    """The full snippet includes the modern map card, routines card, maintenance card, and legacy map card."""
-    import yaml
-
-    docs = list(yaml.safe_load_all(build_full_dashboard_snippet(_device(), _ids())))
-    assert [d["type"] for d in docs] == [
-        "custom:botslab-vacuum-map-card",
-        "custom:botslab-routines-card",
-        "entities",
-        "custom:xiaomi-vacuum-map-card",
-    ]
+    card_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "www" / "botslab-routines-card.js"
+    assert card_path.exists()
+    content = card_path.read_text(encoding="utf-8")
+    assert "getStubConfig" in content
+    assert "getConfigForm" in content
+    assert "throw new Error(\"Entity is required" not in content
 
 
 # ----------------------------------------------------------------- crypto
@@ -680,50 +594,6 @@ async def test_async_get_captcha():
     assert sc == "sc_token_123/xyz"
 
 
-@pytest.mark.asyncio
-async def test_generate_map_card_persistent_notification_signature():
-    """Verify _async_generate_map_card calls persistent_notification.async_create with hass as first arg."""
-    from custom_components.botslab_vacuum.button import _async_generate_map_card
-    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    hass = MagicMock()
-    coordinator = MagicMock()
-    coordinator.async_refresh_rooms = AsyncMock()
-    coordinator.async_request_refresh = AsyncMock()
-    dev = BotslabVacuumDevice(
-        device_name="sn123",
-        product_key="pk123",
-        device_title="Test Vacuum S8",
-        model="Botslab S8",
-    )
-    coordinator.data = {"sn123": dev}
-
-    with patch("homeassistant.components.persistent_notification.async_create") as mock_pn:
-        # With missing vacuum/camera entities:
-        with patch("custom_components.botslab_vacuum.button._resolve_card_entity_ids", return_value={}):
-            await _async_generate_map_card(hass, coordinator, dev)
-            mock_pn.assert_called_once()
-            args, kwargs = mock_pn.call_args
-            assert args[0] is hass  # First positional argument MUST be hass!
-
-        mock_pn.reset_mock()
-        # With resolved entities:
-        with patch(
-            "custom_components.botslab_vacuum.button._resolve_card_entity_ids",
-            return_value={"vacuum": "vacuum.test", "camera": "camera.test"},
-        ), patch(
-            "custom_components.botslab_vacuum.button.build_full_dashboard_snippet",
-            return_value="type: custom:card",
-        ):
-            hass.config.path.return_value = "/tmp/fake_card.yaml"
-            with patch("pathlib.Path.write_text"):
-                await _async_generate_map_card(hass, coordinator, dev)
-                mock_pn.assert_called_once()
-                args, kwargs = mock_pn.call_args
-                assert args[0] is hass  # First positional argument MUST be hass!
-
-
 def test_parse_consumable_lifetime():
     """Verify raw elapsed seconds and legacy percentages are converted to remaining hours and %."""
     from custom_components.botslab_vacuum.coordinator import (
@@ -773,23 +643,6 @@ def test_parse_consumable_lifetime():
     pct, hrs = _parse_consumable_lifetime(0, FILTER_MAX_HOURS, is_legacy_360=True)
     assert pct == 100
     assert hrs == 150.0
-
-def test_map_card_service_call_schema():
-    """Verify generated map card includes both service and action, service_data and data."""
-    import yaml
-    from custom_components.botslab_vacuum.lovelace import build_map_card
-
-    card_yaml = build_map_card(_device(2), _ids())
-    config = yaml.safe_load(card_yaml)
-
-    for mode in config["map_modes"]:
-        schema = mode["service_call_schema"]
-        assert "service" in schema
-        assert "action" in schema
-        assert schema["service"] == schema["action"]
-        assert "service_data" in schema
-        assert "data" in schema
-        assert schema["service_data"] == schema["data"]
 
 
 def test_derive_qid():
@@ -1927,13 +1780,14 @@ def test_vacuum_entity_clean_spot_not_present():
 
 
 def test_manifest_version_is_1_1_6():
-    """Verify manifest.json version is bumped to 1.1.6."""
+    """Verify manifest.json version is bumped and categories are present."""
     import json
     from pathlib import Path
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14")
+    assert data["categories"] == ["appliances_cleaning.cleaning"]
 
 
 def test_parse_consumable_lifetime_legacy_vs_modern():

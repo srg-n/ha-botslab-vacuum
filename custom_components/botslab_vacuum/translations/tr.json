@@ -118,8 +118,7 @@
       "reset_filter": { "name": "Filtre Ömrünü Sıfırla" },
       "reset_main_brush": { "name": "Ana Fırça Ömrünü Sıfırla" },
       "reset_side_brush": { "name": "Yan Fırça Ömrünü Sıfırla" },
-      "reset_sensors": { "name": "Sensör Temizliğini Sıfırla" },
-      "generate_map_card": { "name": "Harita Kartı Yapılandırması Üret" }
+      "reset_sensors": { "name": "Sensör Temizliğini Sıfırla" }
     },
     "switch": {
       "auto_boost": { "name": "Halıda Otomatik Emiş Artışı" },

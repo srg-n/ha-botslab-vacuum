@@ -11,6 +11,7 @@ const I18N = {
     header: "Temizlik Rutinleri",
     addBtn: "＋ Yeni Rutin",
     empty: "Kayıtlı rutin yok. '＋ Yeni Rutin' ile ekleyin.",
+    noEntity: "Lütfen kart yapılandırmasından bir süpürge (vacuum) varlığı seçin.",
     wholeHouse: "Tüm Ev",
     passes1: "1 geçiş",
     passes2: "2 geçiş",
@@ -37,6 +38,7 @@ const I18N = {
     header: "Cleaning Routines",
     addBtn: "＋ New Routine",
     empty: "No routines saved. Create one with '＋ New Routine'.",
+    noEntity: "Please select a vacuum entity in the card configuration.",
     wholeHouse: "Whole House",
     passes1: "1 pass",
     passes2: "2 passes",
@@ -62,16 +64,41 @@ const I18N = {
 };
 
 class BotslabRoutinesCard extends HTMLElement {
+  static getStubConfig(hass) {
+    const o = Object.keys(hass?.states ?? {}).find((s) => s.startsWith("vacuum."));
+    return {
+      type: "custom:botslab-routines-card",
+      entity: o || ""
+    };
+  }
+
+  static getConfigForm() {
+    return {
+      schema: [
+        { name: "entity", required: true, selector: { entity: { domain: "vacuum" } } },
+        { name: "title", selector: { text: {} } },
+        { name: "schedules_entity", selector: { entity: { domain: "sensor" } } }
+      ],
+      computeLabel: (s) => {
+        if (s.name === "entity") return "Vacuum Entity";
+        if (s.name === "title") return "Card Title (optional)";
+        if (s.name === "schedules_entity") return "Schedules Sensor (optional)";
+        return s.name;
+      }
+    };
+  }
+
   setConfig(config) {
-    if (!config || !config.entity) throw new Error("Entity is required (vacuum.*)");
-    this._config = config;
+    this._config = Object.assign({}, config);
     this._editing = null;
     this._built = false;
     this._lastKey = null;
+    if (this._hass) this._ensureEntity();
   }
 
   set hass(hass) {
     this._hass = hass;
+    this._ensureEntity();
     if (!this._built) this._build();
     if (!this._editing) {
       const key = JSON.stringify(this._data());
@@ -81,6 +108,15 @@ class BotslabRoutinesCard extends HTMLElement {
 
   getCardSize() { return 8; }
 
+  _ensureEntity() {
+    if (!this._config.entity && this._hass && this._hass.states) {
+      const vac = Object.keys(this._hass.states).find((s) => s.startsWith("vacuum."));
+      if (vac) {
+        this._config.entity = vac;
+      }
+    }
+  }
+
   _t() {
     const lang = (this._hass && (this._hass.language || this._hass.locale?.language || "")) || "en";
     return lang.startsWith("tr") ? I18N.tr : I18N.en;
@@ -88,24 +124,29 @@ class BotslabRoutinesCard extends HTMLElement {
 
   _schedEntity() {
     if (this._config.schedules_entity) return this._config.schedules_entity;
-    return "sensor." + this._config.entity.split(".")[1] + "_schedules";
+    if (!this._config.entity) return null;
+    const parts = this._config.entity.split(".");
+    return parts.length > 1 ? ("sensor." + parts[1] + "_schedules") : null;
   }
 
   _data() {
-    const st = this._hass && this._hass.states[this._schedEntity()];
+    const ent = this._schedEntity();
+    const st = ent && this._hass && this._hass.states[ent];
     const a = st ? st.attributes : {};
     return { schedules: a.schedules || [], rooms: a.rooms || {} };
   }
 
   _call(service, data) {
+    if (!this._config.entity) return Promise.reject(new Error("No vacuum entity configured"));
     return this._hass.callService("botslab_vacuum", service, data,
       { entity_id: this._config.entity });
   }
 
   _build() {
     const t = this._t();
+    const headerTitle = this._config.title || t.header;
     this.innerHTML = `
-      <ha-card header="${t.header}">
+      <ha-card header="${headerTitle}">
         <style>
           .wrap{padding:8px 16px 16px}
           .row{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--divider-color)}
@@ -147,8 +188,17 @@ class BotslabRoutinesCard extends HTMLElement {
 
   _renderList() {
     const t = this._t();
-    const { schedules, rooms } = this._data();
     const list = this.querySelector("#list");
+    const addBtn = this.querySelector("#addbtn");
+
+    if (!this._config.entity) {
+      if (list) list.innerHTML = `<div class="muted" style="padding:16px 0;text-align:center">${t.noEntity}</div>`;
+      if (addBtn) addBtn.style.display = "none";
+      return;
+    }
+    if (addBtn && !this._editing) addBtn.style.display = "";
+
+    const { schedules, rooms } = this._data();
     if (!schedules.length) {
       list.innerHTML = `<div class="muted" style="padding:8px 0">${t.empty}</div>`;
       return;
@@ -203,14 +253,16 @@ class BotslabRoutinesCard extends HTMLElement {
       this._editing = { slot: -1, time: "09:00", days: new Set(), rooms: [],
         suction: "auto", passes: 1, active: true };
     }
-    this.querySelector("#addbtn").style.display = "none";
+    const addBtn = this.querySelector("#addbtn");
+    if (addBtn) addBtn.style.display = "none";
     this._renderEditor();
   }
 
   _closeEditor() {
     this._editing = null;
     this.querySelector("#editor").innerHTML = "";
-    this.querySelector("#addbtn").style.display = "";
+    const addBtn = this.querySelector("#addbtn");
+    if (addBtn && this._config.entity) addBtn.style.display = "";
     this._lastKey = null;
     this._renderList();
   }
@@ -304,8 +356,10 @@ if (!customElements.get("botslab-routines-card")) {
   customElements.define("botslab-routines-card", BotslabRoutinesCard);
 }
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "botslab-routines-card",
-  name: "Botslab Routines",
-  description: "Create and edit scheduled cleaning routines for Botslab robots",
-});
+if (!window.customCards.some((c) => c.type === "botslab-routines-card")) {
+  window.customCards.push({
+    type: "botslab-routines-card",
+    name: "Botslab Routines",
+    description: "Create and edit scheduled cleaning routines for Botslab robots",
+  });
+}

@@ -1,9 +1,7 @@
-"""Map camera attributes and generated Lovelace configuration."""
+"""Map camera attributes and geometry."""
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant
-
-from custom_components.botslab_vacuum.const import DOMAIN
 
 from .conftest import (
     entity_id_for,
@@ -92,54 +90,6 @@ async def test_room_outline_is_in_robot_coordinates(hass: HomeAssistant) -> None
             assert isinstance(x, int)
             assert isinstance(y, int)
             assert abs(x) < 100_000 and abs(y) < 100_000
-
-
-def _card_config(hass: HomeAssistant) -> dict:
-    import yaml
-
-    from custom_components.botslab_vacuum.lovelace import build_map_card
-
-    entry = next(iter(hass.config_entries.async_entries(DOMAIN)))
-    robot = next(iter(entry.runtime_data.coordinator.data.values()))
-    ids = {
-        "vacuum": entity_id_for(hass, "vacuum", "vacuum"),
-        "camera": entity_id_for(hass, "camera", "map_camera"),
-    }
-    return yaml.safe_load(build_map_card(robot, ids))
-
-
-async def test_generated_card_is_valid_yaml(hass: HomeAssistant) -> None:
-    """The generated snippet parses and references the real entities."""
-    await _setup(hass)
-    config = _card_config(hass)
-
-    assert config["type"] == "custom:xiaomi-vacuum-map-card"
-    # Both ids must be the ones Home Assistant actually assigned, or the card
-    # the user pastes points at nothing.
-    assert config["entity"] == entity_id_for(hass, "vacuum", "vacuum")
-    assert config["map_source"]["camera"] == entity_id_for(hass, "camera", "map_camera")
-    assert config["calibration_source"] == {"camera": True}
-
-
-async def test_generated_card_services_are_namespaced(hass: HomeAssistant) -> None:
-    """Every map mode calls this integration's own services."""
-    await _setup(hass)
-    config = _card_config(hass)
-    for mode in config["map_modes"]:
-        assert mode["service_call_schema"]["service"].startswith(f"{DOMAIN}.")
-
-
-async def test_generated_card_lists_every_room(hass: HomeAssistant) -> None:
-    """predefined_selections contains one entry per room."""
-    await _setup(hass)
-    entry = next(iter(hass.config_entries.async_entries(DOMAIN)))
-    robot = next(iter(entry.runtime_data.coordinator.data.values()))
-
-    config = _card_config(hass)
-    room_mode = next(
-        m for m in config["map_modes"] if m["selection_type"] == "ROOM"
-    )
-    assert len(room_mode["predefined_selections"]) == len(robot.rooms)
 
 
 async def test_camera_hidden_when_map_disabled(hass: HomeAssistant) -> None:

@@ -4,6 +4,9 @@
   "after_dependencies": [
     "frontend"
   ],
+  "categories": [
+    "appliances_cleaning.cleaning"
+  ],
   "codeowners": [
     "@srg-n"
   ],
@@ -16,5 +19,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/srg-n/ha-botslab-vacuum/issues",
   "requirements": [],
-  "version": "1.1.13"
+  "version": "1.1.14"
 }

@@ -118,8 +118,7 @@
       "reset_filter": { "name": "Reset Filter Life" },
       "reset_main_brush": { "name": "Reset Main Brush Life" },
       "reset_side_brush": { "name": "Reset Side Brush Life" },
-      "reset_sensors": { "name": "Reset Sensors Cleanliness" },
-      "generate_map_card": { "name": "Generate Map Card Config" }
+      "reset_sensors": { "name": "Reset Sensors Cleanliness" }
     },
     "switch": {
       "auto_boost": { "name": "Carpet Auto Boost" },

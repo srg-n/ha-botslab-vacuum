@@ -47,13 +47,12 @@ Production-ready Home Assistant integration for **Botslab** and **Qihoo 360** ro
   - Automatically identifies partitioned rooms from your map
   - Exposes room cleaning actions/services directly in Home Assistant
   - **No-Go Zones (`SetFbdPlaces`):** Set virtual forbidden cleaning zones and boundaries directly via service call
-- 🗺️ **High-Resolution Map Rendering & Zero-Config Frontend:**
+- 🗺️ **High-Resolution Map Rendering & Built-in Cards:**
   - Dynamic Pillow auto-crop eliminating black void borders
   - Dock station glyph, live cleaning path polyline, and robot heading orientation arrow
   - Zero-config bundled Lovelace cards:
-    - **`botslab-vacuum-map-card`**: Modern interactive card with visual UI editor, per-room suction/water customization, and spot/zone cleaning (adapted from *noambergauz/dreame-vacuum-map-card*)
-    - **`botslab-routines-card`**: Full cleaning schedule and routines manager
-    - **`xiaomi-vacuum-map-card`**: Universal calibration-based map viewer
+    - **`botslab-vacuum-map-card`**: Modern, native interactive card with visual UI editor, sequential room ordering (1 -> 2), customized per-room suction and water flow settings, free zone cleaning, and spot cleaning (adapted from *noambergauz/dreame-vacuum-map-card*).
+    - **`botslab-routines-card`**: Full cleaning schedule and routines manager with visual card editor and automatic bilingual EN/TR support.
 - 📡 **Dynamic QPush Gateway & Real-time Live Telemetry:**
   - Dynamic GSLB push gateway resolution via `dp.push.dc.360.cn` supporting raw binary TCP on Port 443 (primary) and Port 80 (fallback)
   - Real-time millimeter Cartesian coordinates $[x, y, \theta]$ and live cleaning path exposed in camera and vacuum attributes
@@ -120,16 +119,63 @@ After restarting, go to **Settings ➔ Devices & Services ➔ Add Integration**,
 
 ---
 
-### Alternative: Manual Copy (Without HACS)
+## 🎨 Home Assistant Dashboard & Built-in Cards
 
-If you do not have HACS installed:
+The integration includes two **built-in Lovelace cards** served directly by Home Assistant. No separate card downloads or manual JavaScript resource configurations are needed!
 
-1. Copy the `custom_components/botslab_vacuum` directory into your Home Assistant `/config/custom_components/` folder:
-   ```bash
-   cp -r custom_components/botslab_vacuum /config/custom_components/
-   ```
-2. Restart Home Assistant.
-3. Go to **Settings ➔ Devices & Services ➔ Add Integration** and select **Botslab Vacuum**.
+### 1. `botslab-vacuum-map-card` (Interactive Map Card)
+
+An interactive, high-performance map card crafted specifically for Botslab vacuums:
+
+- **Sequential Room Cleaning:** Click rooms on the map to clean them. Ordered badges (`1`, `2`, `3`) indicate the exact cleaning sequence.
+- **Auto-Order Toggle:** Switch between strict sequential order (1 -> 2) or letting the robot calculate the shortest route.
+- **Per-Room Customization:** Fine-tune suction power, water level, and repeat passes (1x or 2x) independently for each room.
+- **Zone Cleaning:** Draw custom rectangular cleaning areas directly over the map.
+- **Spot Cleaning / Go To Point:** Tap anywhere on the floor plan to dispatch the robot to that coordinate.
+- **Live Overlays:** Live robot location marker with orientation heading arrow, charging dock glyph, and real-time path polyline.
+- **Interactive Controls:** Smooth pan, zoom, and 90° map rotation.
+- **Visual Card Editor:** Full graphical configuration UI with entity pickers and immediate live preview.
+
+#### How to Add the Map Card:
+1. Open your dashboard, click the **three dots (⋮)** in the top right corner, and select **Edit Dashboard**.
+2. Click **+ Add Card** at the bottom right.
+3. In the search box, type **Botslab** and select **Botslab Vacuum Map Card**.
+4. The visual editor automatically selects your `vacuum.*` and `camera.*_map_camera` entities.
+5. Click **Save**!
+
+Or via YAML / Manual card:
+```yaml
+type: custom:botslab-vacuum-map-card
+entity: vacuum.botslab_vacuum
+map_entity: camera.botslab_map_camera
+title: Botslab Vacuum
+default_mode: room
+# auto_order: false   # false (default): cleans in selection order (1 -> 2). true: robot auto-routes.
+```
+
+---
+
+### 2. `botslab-routines-card` (Cleaning Routines & Schedules)
+
+A dedicated card for managing automated cleaning schedules directly from your dashboard:
+
+- **Schedule Management:** Create, toggle, edit, or delete cleaning schedules without opening the mobile app.
+- **Day & Time Selection:** Set target execution time (HH:MM) and repeating days of the week.
+- **Room & Power Customization:** Choose specific rooms, suction power levels, and repeat cycles for each routine.
+- **Visual Card Editor:** Easily select your robot vacuum entity via dropdown or UI form.
+- **Bilingual Interface:** Automatically displays in English or Turkish based on your Home Assistant user profile.
+
+#### How to Add the Routines Card:
+1. In Edit Dashboard mode, click **+ Add Card**.
+2. Search for **Botslab** and select **Botslab Routines Card**.
+3. Select your vacuum entity in the dropdown.
+4. Click **Save**!
+
+Or via YAML / Manual card:
+```yaml
+type: custom:botslab-routines-card
+entity: vacuum.botslab_vacuum
+```
 
 ---
 
@@ -192,69 +238,15 @@ A traffic capture of the official app shows **no private or local addresses at a
 
 Region-specific equivalents exist for `eu1`, `eu2`, `na1`, `ap1`, and `cn` (legacy Qihoo 360 / 360 Smart Life backend at `q.smart.360.cn`).
 
-> **Local operation is not possible on this hardware.** Because the robot only initiates outbound cloud connections, there is no local API to talk to. The MQTT bridge that earlier versions of this repository shipped has been removed: it added a process and a broker without removing the cloud dependency, and it duplicated code that now lives in the integration itself.
-
 ### 5. Stability warning
 
 This integration talks to **undocumented cloud endpoints** and signs requests with the signing key shipped inside the official Android app. If Botslab changes its API, the integration can stop working until it is updated. There is no compatibility guarantee.
 
 ---
 
-## 🎨 Home Assistant Dashboard Examples
-
-Example Lovelace configurations are available in `lovelace_card_example.yaml`, including a ready-made card for the [Xiaomi Vacuum Map Card](https://github.com/PiotrMachowski/lovelace-xiaomi-vacuum-map-card) frontend card with tap-to-clean rooms, zones and point navigation.
-
-```yaml
-type: vacuum-card
-entity: >
-  {%- set ids = states('vacuum') | selectattr('entity_id', 'match', '_vacuum$')
-                              | map(attribute='entity_id') | list -%}
-  {{ ids | first }}
-show_toolbar: true
-```
-
-Entities are keyed by the robot's serial number, so the Jinja above resolves them without you editing anything.
-
-### Zero-Config Bundled Frontend Cards
-
-The integration automatically serves and registers the required Lovelace cards upon startup:
-- `/botslab_vacuum/www/botslab-vacuum-map-card.js` (⭐ **Recommended** — Interactive visual card with graphical UI editor, customized per-room suction and water settings, live pose orientation, and spot cleaning)
-- `/botslab_vacuum/www/botslab-routines-card.js` (Pre-bundled routine & schedule manager card with automatic EN/TR localization)
-- `/botslab_vacuum/www/xiaomi-vacuum-map-card.js` (Calibration-based map viewer with room tap and zone cleaning)
-
-No manual HACS frontend installation or resource configuration is required.
-
-### 🗺️ Generating Map and Routine Cards in One Click
-
-Room outlines and polygon boundaries are specific to your home and change whenever rooms are split, merged, or renamed in the Botslab app. Rather than calculating coordinates manually, the integration generates ready-to-paste configurations in one click:
-
-1. Press the **Sync Map** (`sync_map`) button in Home Assistant so the robot uploads its latest floor plan.
-2. Press **Generate Map Card** (`generate_map_card`).
-3. The integration writes complete, pre-configured cards (`botslab-vacuum-map-card`, `botslab-routines-card`, and `xiaomi-vacuum-map-card`) with all your room configurations to **`/config/botslab_map_card.yaml`** in your Home Assistant config directory, and posts a notification in your Home Assistant sidebar.
-
-#### 📌 Step-by-Step Dashboard Setup:
-
-1. **Copy the File Contents:**  
-   Open `/config/botslab_map_card.yaml` using the **File Editor** (or Studio Code Server / Samba) add-on and copy the YAML snippet for the card you want.
-2. **Open Your Dashboard:**  
-   Navigate to the dashboard where you want to place the vacuum map card.
-3. **Enter Edit Mode:**  
-   Click the **three dots (⋮)** in the top right corner and choose **Edit Dashboard**.
-4. **Add a Manual Card:**  
-   Click the **+ Add Card** button at the bottom right. Scroll all the way down and select the **Manual** card type.
-5. **Paste and Save:**  
-   Delete the sample code in the editor, paste the copied YAML configuration, and click **Save**.
-
-> [!WARNING]
-> **Avoid Raw Editor Error:**  
-> This YAML contains card configurations. Do **NOT** paste it into the dashboard's top-level **"Raw configuration editor"**, as doing so will corrupt your dashboard structure and produce `At path: views -- Expected an array value`. Always use **+ Add Card ➔ Manual**.
-
----
-
 ## 👏 Credits & Acknowledgments
 
 - **[Noam Bergauz](https://github.com/noambergauz)** — The bundled `botslab-vacuum-map-card` is adapted from the exceptional [noambergauz/dreame-vacuum-map-card](https://github.com/noambergauz/dreame-vacuum-map-card), tailored with custom room segmentation, live pose calibration, per-room controls, and Botslab backend services.
-- **[Piotr Machowski](https://github.com/PiotrMachowski)** — Creator of the widely celebrated [lovelace-xiaomi-vacuum-map-card](https://github.com/PiotrMachowski/lovelace-xiaomi-vacuum-map-card).
 - **Qihoo 360 / Botslab Community** — Community members who helped reverse-engineer and test legacy 360 S6 / S7 protocols.
 
 ---

@@ -26,7 +26,7 @@ flowchart TD
     end
 
     subgraph Frontend ["Zero-Config Cards"]
-        MapCard["xiaomi-vacuum-map-card.js"]
+        MapCard["botslab-vacuum-map-card.js"]
         RoutineCard["botslab-routines-card.js (EN/TR)"]
     end
 
@@ -111,7 +111,7 @@ The integration features an advanced, standalone map rendering engine powered by
 - Maps robot millimeter coordinates $(x, y)$ to card pixel coordinates $(u, v)$:
   $$u = (x_{mm} - c_{min}) \cdot scale$$
   $$v = (r_{max} - y_{mm}) \cdot scale$$
-- Provides precise 3-point calibration triplets (`calibration_points`) formatted for direct consumption by `xiaomi-vacuum-map-card`.
+- Provides precise 3-point calibration triplets (`calibration_points`) formatted for direct consumption by `botslab-vacuum-map-card`.
 
 ### 3.4. Histogram Room-Cover Fallback (`room_cover_rects`)
 - When a model firmware does not support polygon room cleaning payloads (`StartCleanInAreas`), the integration automatically rasterizes room polygons and decomposes them into the minimal set of rectangular bounding boxes using a largest-rectangle histogram algorithm.
@@ -140,15 +140,15 @@ Rather than relying on vendor cloud timer limitations (often limited to 3-5 basi
 
 ## 5. Zero-Config Frontend Asset Delivery
 
-Users do not need to manually clone HACS repositories or configure Lovelace JavaScript resources in YAML:
+Users do not need to manually clone external HACS card repositories or configure Lovelace JavaScript resources in YAML:
 
 1. **Static HTTP Handler:**
    - On integration startup, `__init__.py` registers `/botslab_vacuum/www/` with Home Assistant's internal HTTP server (`hass.http.register_static_path`).
 2. **Automatic Resource Registration:**
    - Hooks into `hass.data["lovelace"].resources` (or storage collection).
    - Automatically registers:
-     - `/botslab_vacuum/www/xiaomi-vacuum-map-card.js`
-     - `/botslab_vacuum/www/botslab-routines-card.js` (with automatic EN/TR localization).
+     - `/botslab_vacuum/www/botslab-vacuum-map-card.js` (Interactive visual map card with room/zone/spot cleaning).
+     - `/botslab_vacuum/www/botslab-routines-card.js` (Scheduled cleaning routines management with automatic EN/TR localization).
 3. **Card Version Tracking:**
    - Embeds package version query parameters to ensure browser cache busting upon integration updates.
 
@@ -160,12 +160,12 @@ Users do not need to manually clone HACS repositories or configure Lovelace Java
 custom_components/botslab_vacuum/
 ├── __init__.py               # Setup, teardown, service & resource registration, routine loop
 ├── api.py                    # BotslabApi, request signing, OSS upload, zone fallback
+├── button.py                 # Locate, sync map, refresh rooms, reset consumable buttons
 ├── config_flow.py            # UI setup flow, QUC login, multi-device selection
 ├── const.py                  # Protocol constants, services, domains, intervals
 ├── coordinator.py            # BotslabDataUpdateCoordinator, push/poll merge, routine store
 ├── diagnostics.py            # Sensitive-data-redacted diagnostics dump for HA issues
 ├── exceptions.py             # Custom integration exceptions (Auth, Network, Protocol)
-├── lovelace.py               # Lovelace card generators & helper definitions
 ├── map_util.py               # Pillow rendering, auto-crop, calibration, cover rects
 ├── models.py                 # Dataclasses: BotslabVacuumDevice, BotslabMapInfo, etc.
 ├── qpush.py                  # Binary TCP push client to dp.push.dc.360.cn:80
@@ -175,6 +175,6 @@ custom_components/botslab_vacuum/
 ├── translations/             # Multilingual translations (en.json, tr.json, strings.json)
 └── www/                      # Bundled Lovelace cards & third-party notices
     ├── botslab-routines-card.js
-    ├── xiaomi-vacuum-map-card.js
+    ├── botslab-vacuum-map-card.js
     └── THIRD_PARTY.md
 ```
