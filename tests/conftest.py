@@ -420,6 +420,23 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
         "invoke_async": AsyncMock(return_value={"code": 0, "data": {"request_id": "test_req"}}),
         "wait_async_reply": AsyncMock(return_value=True),
         "send_legacy_360_cmd": AsyncMock(return_value=True),
+        "get_dsl": AsyncMock(return_value={"services": [], "properties": []}),
+        "get_station_info": AsyncMock(return_value={"code": 0, "data": {"result": {}}}),
+        "get_multi_maps": AsyncMock(return_value={"code": 0, "data": {"map_list": []}}),
+        "start_dust_collection": AsyncMock(return_value={"code": 0}),
+        "start_mop_wash": AsyncMock(return_value={"code": 0}),
+        "stop_mop_wash": AsyncMock(return_value={"code": 0}),
+        "start_mop_drying": AsyncMock(return_value={"code": 0}),
+        "stop_mop_drying": AsyncMock(return_value={"code": 0}),
+        "switch_floor_map": AsyncMock(return_value={"code": 0}),
+        "save_map": AsyncMock(return_value={"code": 0}),
+        "delete_map": AsyncMock(return_value={"code": 0}),
+        "set_child_lock": AsyncMock(),
+        "set_dnd": AsyncMock(),
+        "set_carpet_mode": AsyncMock(),
+        "start_custom_clean_sequencing": AsyncMock(return_value={"code": 0}),
+        "set_remote_control_mode": AsyncMock(return_value={"code": 0}),
+        "send_remote_drive": AsyncMock(return_value={"code": 0}),
     }
 
     for name, impl in replacements.items():

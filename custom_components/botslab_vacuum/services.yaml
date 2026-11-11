@@ -378,14 +378,14 @@ wash_mop:
     wash_type:
       name: Wash Intensity
       description: "0: Standard wash, 1: Deep clean."
-      default: 0
+      default: "0"
       selector:
         select:
           options:
             - label: Standard
-              value: 0
+              value: "0"
             - label: Deep Clean
-              value: 1
+              value: "1"
 
 dry_mop:
   name: Dry Mop Pads
@@ -503,15 +503,15 @@ remote_control_drive:
         select:
           options:
             - label: Stop
-              value: 0
+              value: "0"
             - label: Forward
-              value: 1
+              value: "1"
             - label: Turn Left
-              value: 2
+              value: "2"
             - label: Turn Right
-              value: 3
+              value: "3"
             - label: Backward
-              value: 4
+              value: "4"
     speed:
       name: Speed / Headway Value
       description: Step duration in milliseconds (100 to 500, default 250).

@@ -992,7 +992,7 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
-                vol.Optional("wash_type", default=0): vol.In([0, 1]),
+                vol.Optional("wash_type", default=0): vol.All(vol.Coerce(int), vol.In([0, 1])),
             }
         ),
     )
