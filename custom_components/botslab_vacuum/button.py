@@ -78,6 +78,27 @@ BUTTON_DESCRIPTIONS: tuple[BotslabButtonEntityDescription, ...] = (
     ),
 )
 
+BASE_STATION_BUTTONS: tuple[BotslabButtonEntityDescription, ...] = (
+    BotslabButtonEntityDescription(
+        key="empty_dust_bin",
+        translation_key="empty_dust_bin",
+        icon="mdi:trash-can-arrow-up",
+        press_fn=lambda _hass, coord, dev: coord.async_empty_dust_bin(dev.device_name),
+    ),
+    BotslabButtonEntityDescription(
+        key="wash_mop",
+        translation_key="wash_mop",
+        icon="mdi:water-sync",
+        press_fn=lambda _hass, coord, dev: coord.async_wash_mop(dev.device_name),
+    ),
+    BotslabButtonEntityDescription(
+        key="dry_mop",
+        translation_key="dry_mop",
+        icon="mdi:hair-dryer",
+        press_fn=lambda _hass, coord, dev: coord.async_dry_mop(dev.device_name),
+    ),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -90,6 +111,12 @@ async def async_setup_entry(
     for device in coordinator.data.values():
         for desc in BUTTON_DESCRIPTIONS:
             entities.append(BotslabButton(coordinator, device, desc))
+        if device.has_dust_collection:
+            entities.append(BotslabButton(coordinator, device, BASE_STATION_BUTTONS[0]))
+        if device.has_mop_wash:
+            entities.append(BotslabButton(coordinator, device, BASE_STATION_BUTTONS[1]))
+        if device.has_mop_drying:
+            entities.append(BotslabButton(coordinator, device, BASE_STATION_BUTTONS[2]))
     async_add_entities(entities)
 
 

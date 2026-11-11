@@ -24,10 +24,16 @@ from .api import BotslabVacuumApi
 from .const import (
     ACTIVE_STATUSES,
     ATTR_ACTIVE,
+    ATTR_CARPETS,
+    ATTR_CLEAN_ORDER,
     ATTR_CONSUMABLE_TYPE,
     ATTR_DAYS,
+    ATTR_DIRECTION,
+    ATTR_DURATION,
     ATTR_ENTITY_ID,
     ATTR_FAN_SPEED,
+    ATTR_MAP_ID,
+    ATTR_MAP_NAME,
     ATTR_MODE,
     ATTR_MOP_MODE,
     ATTR_PASSES,
@@ -35,6 +41,7 @@ from .const import (
     ATTR_ROOM_IDS,
     ATTR_ROOM_NAMES,
     ATTR_SLOT,
+    ATTR_SPEED,
     ATTR_SUCTION,
     ATTR_TIME,
     ATTR_WATER_LEVEL,
@@ -54,19 +61,29 @@ from .const import (
     DEFAULT_REGION,
     DOMAIN,
     PLATFORMS,
+    SERVICE_CLEAR_CARPET_AREAS,
     SERVICE_CLEAN_ROOMS,
     SERVICE_CLEAN_ZONE,
+    SERVICE_CUSTOM_CLEAN_SEQUENCING,
+    SERVICE_DELETE_FLOOR_MAP,
     SERVICE_DELETE_SCHEDULE,
+    SERVICE_DRY_MOP,
+    SERVICE_EMPTY_DUST_BIN,
     SERVICE_GOTO_LOCATION,
     SERVICE_LOCATE,
     SERVICE_REFRESH_ROOMS,
+    SERVICE_REMOTE_CONTROL_DRIVE,
     SERVICE_RESET_CONSUMABLE,
     SERVICE_RUN_SCHEDULE,
+    SERVICE_SAVE_FLOOR_MAP,
+    SERVICE_SET_CARPET_AREAS,
     SERVICE_SET_MOP_MODE,
     SERVICE_SET_NO_GO_ZONES,
     SERVICE_SET_SCHEDULE,
     SERVICE_SET_WATER_LEVEL,
+    SERVICE_SWITCH_FLOOR_MAP,
     SERVICE_SYNC_MAP,
+    SERVICE_WASH_MOP,
 )
 from .coordinator import BotslabRuntimeData, BotslabVacuumCoordinator
 from .qpush import BotslabChinaQPush, BotslabQPush
@@ -731,6 +748,56 @@ def _register_services(hass: HomeAssistant) -> None:
             else:
                 _LOGGER.warning("run_schedule: slot %d out of range", slot)
 
+    async def handle_empty_dust_bin(call: ServiceCall) -> None:
+        for coordinator, dev in _targets(call):
+            await coordinator.async_empty_dust_bin(dev.device_name)
+
+    async def handle_wash_mop(call: ServiceCall) -> None:
+        wash_type = int(call.data.get("wash_type", 0))
+        for coordinator, dev in _targets(call):
+            await coordinator.async_wash_mop(dev.device_name, wash_type=wash_type)
+
+    async def handle_dry_mop(call: ServiceCall) -> None:
+        duration = int(call.data.get("duration", 120))
+        for coordinator, dev in _targets(call):
+            await coordinator.async_dry_mop(dev.device_name, duration_minutes=duration)
+
+    async def handle_set_carpet_areas(call: ServiceCall) -> None:
+        carpets = call.data.get(ATTR_CARPETS, [])
+        for coordinator, dev in _targets(call):
+            await coordinator.async_set_carpet_areas(dev.device_name, carpets)
+
+    async def handle_clear_carpet_areas(call: ServiceCall) -> None:
+        for coordinator, dev in _targets(call):
+            await coordinator.async_clear_carpet_areas(dev.device_name)
+
+    async def handle_switch_floor_map(call: ServiceCall) -> None:
+        map_id = call.data[ATTR_MAP_ID]
+        for coordinator, dev in _targets(call):
+            await coordinator.async_switch_floor_map(dev.device_name, map_id)
+
+    async def handle_save_floor_map(call: ServiceCall) -> None:
+        name = call.data[ATTR_MAP_NAME]
+        for coordinator, dev in _targets(call):
+            await coordinator.async_save_floor_map(dev.device_name, name)
+
+    async def handle_delete_floor_map(call: ServiceCall) -> None:
+        map_id = call.data[ATTR_MAP_ID]
+        for coordinator, dev in _targets(call):
+            await coordinator.async_delete_floor_map(dev.device_name, map_id)
+
+    async def handle_custom_clean_sequencing(call: ServiceCall) -> None:
+        order = call.data[ATTR_CLEAN_ORDER]
+        kitchen_last = bool(call.data.get("kitchen_toilet_last", True))
+        for coordinator, dev in _targets(call):
+            await coordinator.async_custom_clean_sequencing(dev.device_name, order, kitchen_last)
+
+    async def handle_remote_control_drive(call: ServiceCall) -> None:
+        direction = int(call.data[ATTR_DIRECTION])
+        speed = int(call.data.get(ATTR_SPEED, 250))
+        for coordinator, dev in _targets(call):
+            await coordinator.async_remote_control_drive(dev.device_name, direction, speed)
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_CLEAN_ROOMS,
@@ -907,6 +974,118 @@ def _register_services(hass: HomeAssistant) -> None:
             {
                 vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
                 vol.Required(ATTR_SLOT): vol.Coerce(int),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_EMPTY_DUST_BIN,
+        handle_empty_dust_bin,
+        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_WASH_MOP,
+        handle_wash_mop,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Optional("wash_type", default=0): vol.In([0, 1]),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DRY_MOP,
+        handle_dry_mop,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Optional(ATTR_DURATION, default=120): vol.Coerce(int),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_CARPET_AREAS,
+        handle_set_carpet_areas,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Required(ATTR_CARPETS): cv.ensure_list,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEAR_CARPET_AREAS,
+        handle_clear_carpet_areas,
+        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SWITCH_FLOOR_MAP,
+        handle_switch_floor_map,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Required(ATTR_MAP_ID): vol.Any(int, cv.string),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SAVE_FLOOR_MAP,
+        handle_save_floor_map,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Required(ATTR_MAP_NAME): cv.string,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DELETE_FLOOR_MAP,
+        handle_delete_floor_map,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Required(ATTR_MAP_ID): vol.Any(int, cv.string),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CUSTOM_CLEAN_SEQUENCING,
+        handle_custom_clean_sequencing,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Required(ATTR_CLEAN_ORDER): cv.ensure_list,
+                vol.Optional("kitchen_toilet_last", default=True): cv.boolean,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REMOTE_CONTROL_DRIVE,
+        handle_remote_control_drive,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Required(ATTR_DIRECTION): vol.All(vol.Coerce(int), vol.Range(min=0, max=4)),
+                vol.Optional(ATTR_SPEED, default=250): vol.Coerce(int),
             }
         ),
     )

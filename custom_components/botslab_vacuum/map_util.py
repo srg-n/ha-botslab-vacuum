@@ -27,6 +27,9 @@ from typing import Any
 C_UNKNOWN = (0, 0, 0, 0)
 C_FLOOR = (24, 26, 30, 140)
 C_WALL = (75, 90, 120, 255)
+C_OBSTACLE = (38, 44, 58, 255)
+C_CARPET_FILL = (56, 217, 255, 75)
+C_CARPET_BORDER = (255, 255, 255, 200)
 C_NOGO_FILL = (235, 60, 60, 90)
 C_NOGO_LINE = (235, 60, 60, 230)
 C_ZONE_FILL = (41, 140, 255, 60)
@@ -244,16 +247,17 @@ def render_map_png(
         row_overlay = overlay.get(y, {})
         base = row_y * width
         for x in range(width):
-            if (color := row_overlay.get(x)) is not None:
-                raw_rows.extend((color[0], color[1], color[2], 255))
-                continue
             val = pixels[base + x]
-            if val == 0:  # Wall / Obstacle
-                raw_rows.extend((75, 90, 120, 255))
-            elif val == 127:  # Floor
-                raw_rows.extend((24, 26, 30, 140))
+            # Obstacles & walls (val == 0) are strictly prioritized on top and never overwritten by room overlay
+            if val == 0:
+                raw_rows.extend(C_OBSTACLE)
+            elif val in (1, 127):  # Explored floor
+                if (color := row_overlay.get(x)) is not None:
+                    raw_rows.extend((color[0], color[1], color[2], 255))
+                else:
+                    raw_rows.extend(C_FLOOR)
             else:  # Unexplored background - fully transparent
-                raw_rows.extend((0, 0, 0, 0))
+                raw_rows.extend(C_UNKNOWN)
 
     compressed_idat = zlib.compress(bytes(raw_rows), 6)
 
@@ -294,17 +298,29 @@ def render_map_advanced(
     dock_pos: tuple[float, float] | None = None,
     robot_pose: list[float] | tuple[float, ...] | None = None,
     cleaning_path: list[list[int]] | None = None,
+    carpets: list[dict[str, Any]] | None = None,
     scale: int = 4,
     margin_cells: int = 4,
     draw_robot: bool = False,
 ) -> tuple[bytes, tuple[int, int, int, int, int]]:
-    """Render high-resolution map with Pillow.
+    """Render high-resolution map with Pillow adhering to native Botslab layer order.
 
-    Returns:
-      ``(png_bytes, (cmin, cmax, rmin, rmax, scale))``
+    Layer Compositing Pipeline:
+      1. Canvas Background (Transparent)
+      2. Floor Space (val == 127 or 1) tinted with modern slate C_FLOOR
+      3. Room Polygons Fill (applied to floor only)
+      4. Room Dividing Outlines
+      5. OBSTACLES & WALLS (val == 0) stamped ON TOP with 100% opacity C_OBSTACLE
+         with 1-pixel dilation filter for high-DPI clarity.
+      6. Carpet Polygons (C_CARPET_FILL cyan with white outline)
+      7. Active Cleaning Zones (Blue translucent)
+      8. No-Go Forbidden Zones & Virtual Walls (Red translucent)
+      9. Trajectory Trail / Path (C_PATH white curve)
+      10. Charging Dock Station Glyph
+      11. Live Robot Circle Marker + Heading Arrow (if draw_robot)
     """
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageDraw, ImageFilter
     except ImportError:
         # Fallback to pure-Python render
         fallback_bytes = render_map_png(width, height, pixels)
@@ -313,9 +329,8 @@ def render_map_advanced(
     # 1. Base occupancy grid image (flip Y for Cartesian world coordinates)
     lflip = Image.frombytes("L", (width, height), pixels).transpose(Image.FLIP_TOP_BOTTOM)
 
-    # 2. Determine non-empty content bounding box (127=floor, 0=wall, 255=unknown)
-    # Mask content where value is floor (127) or obstacle (0)
-    alpha = lflip.point(lambda v: 255 if v in (0, 127) else 0)
+    # 2. Determine non-empty content bounding box (127/1=floor, 0=wall)
+    alpha = lflip.point(lambda v: 255 if v in (0, 1, 127) else 0)
     bbox = alpha.getbbox()
     if bbox is None:
         bbox = (0, 0, width, height)
@@ -326,40 +341,13 @@ def render_map_advanced(
     right = min(width, right + margin_cells)
     lower = min(height, lower + margin_cells)
 
-    # Grid bounding box in cell coordinates (bottom-origin)
     cmin = left
     cmax = max(left, right - 1)
     rmin = max(0, height - lower)
     rmax = max(rmin, height - 1 - upper)
 
-    # 3. Colorize base image with RGBA lookup tables (transparent background)
-    lut_r = bytearray(256)
-    lut_g = bytearray(256)
-    lut_b = bytearray(256)
-    lut_a = bytearray(256)
-
-    # Set background default (all unknown/empty space is fully transparent)
-    for i in range(256):
-        lut_r[i], lut_g[i], lut_b[i], lut_a[i] = C_UNKNOWN
-
-    # Floor (127) - modern slate with soft opacity
-    lut_r[127], lut_g[127], lut_b[127], lut_a[127] = C_FLOOR
-    # Wall / Obstacle (0) - crisp modern obstacle/wall line
-    lut_r[0], lut_g[0], lut_b[0], lut_a[0] = C_WALL
-
-    rgba = Image.merge("RGBA", (
-        lflip.point(bytes(lut_r)),
-        lflip.point(bytes(lut_g)),
-        lflip.point(bytes(lut_b)),
-        lflip.point(bytes(lut_a)),
-    ))
-
-    # Crop and scale
-    crop = rgba.crop((left, upper, right, lower))
     crop_w = max(1, (right - left) * scale)
     crop_h = max(1, (lower - upper) * scale)
-    base_img = crop.resize((crop_w, crop_h), Image.NEAREST)
-    draw = ImageDraw.Draw(base_img, "RGBA")
 
     # Helper coordinate transform: world (mm) -> cropped pixel (x, y)
     def w2p(wx_mm: float, wy_mm: float) -> tuple[float, float]:
@@ -367,42 +355,129 @@ def render_map_advanced(
         cy = (wy_mm / 1000.0 - y_min) / resolution
         return ((cx - cmin) * scale, (rmax - cy) * scale)
 
-    # 4. Draw Room Polygons
+    # 3. Create Layer 1: Floor Background Canvas
+    floor_lut_r = bytearray(256)
+    floor_lut_g = bytearray(256)
+    floor_lut_b = bytearray(256)
+    floor_lut_a = bytearray(256)
+    floor_lut_r[127], floor_lut_g[127], floor_lut_b[127], floor_lut_a[127] = C_FLOOR
+    floor_lut_r[1], floor_lut_g[1], floor_lut_b[1], floor_lut_a[1] = C_FLOOR
+
+    floor_rgba = Image.merge(
+        "RGBA",
+        (
+            lflip.point(bytes(floor_lut_r)),
+            lflip.point(bytes(floor_lut_g)),
+            lflip.point(bytes(floor_lut_b)),
+            lflip.point(bytes(floor_lut_a)),
+        ),
+    )
+    crop_floor = floor_rgba.crop((left, upper, right, lower)).resize(
+        (crop_w, crop_h), Image.NEAREST
+    )
+
+    # 4. Create Layer 2: Room Fills Canvas (Drawn ON TOP of floor, but UNDER obstacles)
+    room_layer = Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0))
+    room_draw = ImageDraw.Draw(room_layer, "RGBA")
+
     for idx, r in enumerate(rooms or []):
-        v = getattr(r, "outline", None) or r.get("vertexs") or []
+        v = (
+            getattr(r, "outline", None)
+            or (r.get("vertexs") if isinstance(r, dict) else None)
+            or (r.get("points") if isinstance(r, dict) else None)
+            or []
+        )
         if len(v) < 3:
             continue
         poly = [w2p(pt[0], pt[1]) for pt in v]
         col = ROOM_PALETTE[idx % len(ROOM_PALETTE)]
-        draw.polygon(poly, fill=(col[0], col[1], col[2], 180))
-        draw.line(poly + [poly[0]], fill=(col[0], col[1], col[2], 255), width=max(1, scale // 2))
+        # Soft room tint fill (alpha 110)
+        room_draw.polygon(poly, fill=(col[0], col[1], col[2], 110))
+        # Crisp room dividing border outline (alpha 240)
+        room_draw.line(
+            poly + [poly[0]], fill=(col[0], col[1], col[2], 240), width=max(1, scale // 2)
+        )
 
-    # 5. Draw Active Cleaning Zones (Area Clean)
+    # Mask room layer so it only colors explored floor (val == 127 or 1)
+    floor_mask = (
+        lflip.point(lambda v: 255 if v in (1, 127) else 0)
+        .crop((left, upper, right, lower))
+        .resize((crop_w, crop_h), Image.NEAREST)
+    )
+    masked_room_layer = Image.composite(
+        room_layer, Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0)), floor_mask
+    )
+    base_canvas = Image.alpha_composite(crop_floor, masked_room_layer)
+
+    # 5. Create Layer 3: OBSTACLES & WALLS (STAMPED ON TOP)
+    raw_obstacle_mask = (
+        lflip.point(lambda v: 255 if v == 0 else 0)
+        .crop((left, upper, right, lower))
+    )
+    scaled_obstacle_mask = raw_obstacle_mask.resize((crop_w, crop_h), Image.NEAREST)
+    dilated_obstacle_mask = scaled_obstacle_mask.filter(ImageFilter.MaxFilter(size=3))
+
+    obstacle_layer = Image.new("RGBA", (crop_w, crop_h), C_OBSTACLE)
+    final_canvas = Image.composite(obstacle_layer, base_canvas, dilated_obstacle_mask)
+    draw = ImageDraw.Draw(final_canvas, "RGBA")
+
+    # 6. Draw Carpet Areas (if available)
+    for carpet in carpets or []:
+        v = (
+            (carpet.get("vertexs") if isinstance(carpet, dict) else None)
+            or (carpet.get("points") if isinstance(carpet, dict) else None)
+            or []
+        )
+        if len(v) >= 3:
+            poly = [w2p(pt[0], pt[1]) for pt in v]
+            draw.polygon(poly, fill=C_CARPET_FILL)
+            draw.line(poly + [poly[0]], fill=C_CARPET_BORDER, width=max(1, scale // 2))
+
+    # 7. Draw Active Cleaning Zones (Area Clean)
     for zone in clean_zones or []:
-        v = zone.get("vertexs") or zone.get("points") or []
+        v = (
+            (zone.get("vertexs") if isinstance(zone, dict) else None)
+            or (zone.get("points") if isinstance(zone, dict) else None)
+            or []
+        )
         if len(v) >= 3:
             poly = [w2p(pt[0], pt[1]) for pt in v]
             draw.polygon(poly, fill=C_ZONE_FILL)
             draw.line(poly + [poly[0]], fill=C_ZONE_LINE, width=max(1, scale // 2))
 
-    # 6. Draw No-Go Zones (Forbidden Areas)
+    # 8. Draw No-Go Zones (Forbidden Areas) & Virtual Walls
     for zone in no_go_zones or []:
-        v = zone.get("vertexs") or zone.get("points") or []
+        v = (
+            (zone.get("vertexs") if isinstance(zone, dict) else None)
+            or (zone.get("points") if isinstance(zone, dict) else None)
+            or []
+        )
         if len(v) >= 3:
             poly = [w2p(pt[0], pt[1]) for pt in v]
             draw.polygon(poly, fill=C_NOGO_FILL)
             draw.line(poly + [poly[0]], fill=C_NOGO_LINE, width=max(1, scale // 2))
+        elif len(v) == 2:
+            p1 = w2p(v[0][0], v[0][1])
+            p2 = w2p(v[1][0], v[1][1])
+            draw.line([p1, p2], fill=C_NOGO_LINE, width=max(2, scale))
 
-    # 7. Draw Charging Dock Station
+    # 9. Draw Charging Dock Station
     if dock_pos and len(dock_pos) >= 2:
         dx, dy = w2p(dock_pos[0], dock_pos[1])
         s = max(6, scale * 2)
-        draw.rectangle([dx - s, dy - s * 0.7, dx + s, dy + s * 0.7],
-                       fill=C_DOCK, outline=(255, 255, 255, 255), width=2)
-        draw.polygon([(dx - s, dy - s * 0.7), (dx, dy - s * 1.4), (dx + s, dy - s * 0.7)],
-                     fill=C_DOCK, outline=(255, 255, 255, 255))
+        draw.rectangle(
+            [dx - s, dy - s * 0.7, dx + s, dy + s * 0.7],
+            fill=C_DOCK,
+            outline=(255, 255, 255, 255),
+            width=2,
+        )
+        draw.polygon(
+            [(dx - s, dy - s * 0.7), (dx, dy - s * 1.4), (dx + s, dy - s * 0.7)],
+            fill=C_DOCK,
+            outline=(255, 255, 255, 255),
+        )
 
-    # 7. Draw Live Cleaning Trajectory / Path
+    # 10. Draw Live Cleaning Trajectory / Path
     if cleaning_path and len(cleaning_path) >= 2:
         seg: list[tuple[float, float]] = []
         last_pt: tuple[float, float] | None = None
@@ -421,7 +496,7 @@ def render_map_advanced(
         if len(seg) >= 2:
             draw.line(seg, fill=C_PATH, width=max(2, scale // 2), joint="curve")
 
-    # 8. Draw Live Robot Position & Directional Arrow (optional, disabled by default to let card render vector marker)
+    # 11. Draw Live Robot Position & Directional Arrow
     if draw_robot and robot_pose and len(robot_pose) >= 2:
         rx, ry = float(robot_pose[0]), float(robot_pose[1])
         ang = float(robot_pose[2]) if len(robot_pose) >= 3 else 0.0
@@ -432,11 +507,15 @@ def render_map_advanced(
         base_l = (rcx + math.cos(hr + 2.5) * r, rcy + math.sin(hr + 2.5) * r)
         base_r = (rcx + math.cos(hr - 2.5) * r, rcy + math.sin(hr - 2.5) * r)
         draw.polygon([tip, base_l, base_r], fill=(255, 255, 255, 230))
-        draw.ellipse([rcx - r, rcy - r, rcx + r, rcy + r],
-                     fill=C_ROBOT, outline=(255, 255, 255, 255), width=max(2, scale // 3))
+        draw.ellipse(
+            [rcx - r, rcy - r, rcx + r, rcy + r],
+            fill=C_ROBOT,
+            outline=(255, 255, 255, 255),
+            width=max(2, scale // 3),
+        )
 
     buf = io.BytesIO()
-    base_img.save(buf, format="PNG")
+    final_canvas.save(buf, format="PNG")
     return buf.getvalue(), (cmin, cmax, rmin, rmax, scale)
 
 
@@ -452,6 +531,7 @@ def decode_and_render_map(map_json: dict[str, Any]) -> bytes | None:
         raw = decompress_lz4_block(compressed, w * h)
         if len(raw) != w * h:
             return None
+        carpets = map_json.get("carpets") or map_json.get("carpet_rect") or []
         res, _ = render_map_advanced(
             width=w,
             height=h,
@@ -459,6 +539,7 @@ def decode_and_render_map(map_json: dict[str, Any]) -> bytes | None:
             resolution=float(map_json.get("resolution") or 0.05),
             x_min=float(map_json.get("x_min") or 0.0),
             y_min=float(map_json.get("y_min") or 0.0),
+            carpets=carpets if isinstance(carpets, list) else None,
         )
         return res
     except Exception:

@@ -55,6 +55,26 @@ SWITCH_DESCRIPTIONS: tuple[BotslabSwitchEntityDescription, ...] = (
             dev.device_name, dev.product_key, state
         ),
     ),
+    BotslabSwitchEntityDescription(
+        key="child_lock",
+        translation_key="child_lock",
+        icon="mdi:account-lock",
+        entity_category=EntityCategory.CONFIG,
+        is_on_fn=lambda dev: dev.child_lock,
+        set_fn=lambda coord, dev, state: coord.async_set_child_lock(
+            dev.device_name, state
+        ),
+    ),
+    BotslabSwitchEntityDescription(
+        key="dnd_enabled",
+        translation_key="dnd_enabled",
+        icon="mdi:bell-cancel",
+        entity_category=EntityCategory.CONFIG,
+        is_on_fn=lambda dev: dev.dnd_enabled,
+        set_fn=lambda coord, dev, state: coord.async_set_dnd(
+            dev.device_name, state
+        ),
+    ),
 )
 
 
@@ -67,11 +87,14 @@ async def async_setup_entry(
     coordinator = entry.runtime_data.coordinator
     if coordinator.api.is_legacy_360:
         return
-    entities = [
-        BotslabSwitch(coordinator, device, desc)
-        for device in coordinator.data.values()
-        for desc in SWITCH_DESCRIPTIONS
-    ]
+    entities = []
+    for device in coordinator.data.values():
+        for desc in SWITCH_DESCRIPTIONS:
+            if desc.key == "child_lock" and not device.has_child_lock:
+                continue
+            if desc.key == "dnd_enabled" and not device.has_dnd:
+                continue
+            entities.append(BotslabSwitch(coordinator, device, desc))
     async_add_entities(entities)
 
 

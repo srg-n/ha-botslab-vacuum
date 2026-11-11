@@ -106,7 +106,42 @@
       "main_brush_life": { "name": "Ana Fırça Ömrü" },
       "side_brush_life": { "name": "Yan Fırça Ömrü" },
       "sensor_dirtiness": { "name": "Sensör Temizliği" },
-      "schedules": { "name": "Temizlik Rutinleri" }
+      "schedules": { "name": "Temizlik Rutinleri" },
+      "base_station_status": {
+        "name": "İstasyon Durumu",
+        "state": {
+          "idle": "Boşta",
+          "washing_mop": "Paspas Yıkanıyor",
+          "drying_mop": "Paspas Kurutuluyor",
+          "dust_collecting": "Toz Boşaltılıyor",
+          "error": "Hata"
+        }
+      },
+      "clean_water_tank": {
+        "name": "Temiz Su Tankı",
+        "state": {
+          "ok": "Normal",
+          "empty": "Düşük / Boş",
+          "missing": "Takılı Değil"
+        }
+      },
+      "dirty_water_tank": {
+        "name": "Kirli Su Tankı",
+        "state": {
+          "ok": "Normal",
+          "full": "Dolu",
+          "missing": "Takılı Değil"
+        }
+      },
+      "dust_bag_status": {
+        "name": "Toz Torbası Durumu",
+        "state": {
+          "ok": "Normal",
+          "full": "Dolu",
+          "missing": "Takılı Değil"
+        }
+      },
+      "mop_drying_remaining_time": { "name": "Kalan Kurutma Süresi" }
     },
     "binary_sensor": {
       "problem": { "name": "Sorun" }
@@ -118,12 +153,17 @@
       "reset_filter": { "name": "Filtre Ömrünü Sıfırla" },
       "reset_main_brush": { "name": "Ana Fırça Ömrünü Sıfırla" },
       "reset_side_brush": { "name": "Yan Fırça Ömrünü Sıfırla" },
-      "reset_sensors": { "name": "Sensör Temizliğini Sıfırla" }
+      "reset_sensors": { "name": "Sensör Temizliğini Sıfırla" },
+      "empty_dust_bin": { "name": "Toz Haznesini Boşalt" },
+      "wash_mop": { "name": "Paspasları Yıka" },
+      "dry_mop": { "name": "Paspasları Kurut" }
     },
     "switch": {
       "auto_boost": { "name": "Halıda Otomatik Emiş Artışı" },
       "button_backlight": { "name": "Tuş Işığı" },
-      "collision_protection": { "name": "Çarpışma Koruması" }
+      "collision_protection": { "name": "Çarpışma Koruması" },
+      "child_lock": { "name": "Çocuk Kilidi" },
+      "dnd_enabled": { "name": "Rahatsız Etme Modu" }
     },
     "select": {
       "water_level": {
@@ -141,6 +181,17 @@
           "vacuum_only": "Sadece Süpür",
           "mop_only": "Sadece Sil"
         }
+      },
+      "carpet_mode": {
+        "name": "Halı Davranışı",
+        "state": {
+          "boost_only": "Emiş Gücünü Artır",
+          "avoid_while_mopping": "Silerken Halıdan Kaçın",
+          "ignore_carpet": "Halıyı Yoksay"
+        }
+      },
+      "active_floor": {
+        "name": "Aktif Kat Haritası"
       }
     },
     "number": {

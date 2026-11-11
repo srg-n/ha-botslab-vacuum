@@ -45,6 +45,21 @@
       },
       "schedules": {
         "default": "mdi:calendar-clock"
+      },
+      "base_station_status": {
+        "default": "mdi:home-analytics"
+      },
+      "clean_water_tank": {
+        "default": "mdi:water"
+      },
+      "dirty_water_tank": {
+        "default": "mdi:water-alert"
+      },
+      "dust_bag_status": {
+        "default": "mdi:bag-personal"
+      },
+      "mop_drying_remaining_time": {
+        "default": "mdi:progress-clock"
       }
     },
     "binary_sensor": {
@@ -61,6 +76,12 @@
       },
       "collision_protection": {
         "default": "mdi:shield-car"
+      },
+      "child_lock": {
+        "default": "mdi:account-lock"
+      },
+      "dnd_enabled": {
+        "default": "mdi:bell-cancel"
       }
     },
     "button": {
@@ -84,6 +105,15 @@
       },
       "reset_sensor": {
         "default": "mdi:radar"
+      },
+      "empty_dust_bin": {
+        "default": "mdi:trash-can-arrow-up"
+      },
+      "wash_mop": {
+        "default": "mdi:water-sync"
+      },
+      "dry_mop": {
+        "default": "mdi:hair-dryer"
       }
     },
     "select": {
@@ -92,6 +122,12 @@
       },
       "mop_mode": {
         "default": "mdi:liquid-spot"
+      },
+      "carpet_mode": {
+        "default": "mdi:rug"
+      },
+      "active_floor": {
+        "default": "mdi:layers-triple-outline"
       }
     },
     "number": {
@@ -144,6 +180,36 @@
     },
     "run_schedule": {
       "service": "mdi:calendar-play"
+    },
+    "empty_dust_bin": {
+      "service": "mdi:trash-can-arrow-up"
+    },
+    "wash_mop": {
+      "service": "mdi:water-sync"
+    },
+    "dry_mop": {
+      "service": "mdi:hair-dryer"
+    },
+    "set_carpet_areas": {
+      "service": "mdi:rug"
+    },
+    "clear_carpet_areas": {
+      "service": "mdi:layers-remove"
+    },
+    "switch_floor_map": {
+      "service": "mdi:layers-triple-outline"
+    },
+    "save_floor_map": {
+      "service": "mdi:content-save-all"
+    },
+    "delete_floor_map": {
+      "service": "mdi:delete-sweep"
+    },
+    "custom_clean_sequencing": {
+      "service": "mdi:sort-numeric-ascending"
+    },
+    "remote_control_drive": {
+      "service": "mdi:gamepad-variant-outline"
     }
   }
 }

@@ -102,6 +102,32 @@ except ModuleNotFoundError:
     homeassistant.components.button.ButtonEntity = ButtonEntity
     homeassistant.components.button.ButtonDeviceClass = ButtonDeviceClass
 
+    from dataclasses import field
+    import homeassistant.components.select
+    @dataclass(frozen=True, kw_only=True)
+    class SelectEntityDescription:
+        key: str = ""
+        translation_key: str | None = None
+        icon: str | None = None
+        options: list[str] = field(default_factory=list)
+        entity_category: Any = None
+    class SelectEntity:
+        pass
+    homeassistant.components.select.SelectEntityDescription = SelectEntityDescription
+    homeassistant.components.select.SelectEntity = SelectEntity
+
+    import homeassistant.components.switch
+    @dataclass(frozen=True, kw_only=True)
+    class SwitchEntityDescription:
+        key: str = ""
+        translation_key: str | None = None
+        icon: str | None = None
+        entity_category: Any = None
+    class SwitchEntity:
+        pass
+    homeassistant.components.switch.SwitchEntityDescription = SwitchEntityDescription
+    homeassistant.components.switch.SwitchEntity = SwitchEntity
+
     import homeassistant.helpers.update_coordinator
     class CoordinatorEntity:
         __class_getitem__ = classmethod(lambda cls, key: cls)
@@ -501,3 +527,15 @@ async def init_integration(hass: HomeAssistant) -> MockConfigEntry:
 def config_entry() -> MockConfigEntry:
     """An unstarted config entry."""
     return make_config_entry()
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip integration tests requiring real Home Assistant when running without HA test dependencies."""
+    if not HAVE_HA:
+        skip_marker = pytest.mark.skip(
+            reason="Home Assistant test framework (pytest-homeassistant-custom-component) not installed in local environment"
+        )
+        for item in items:
+            fixtures = getattr(item, "fixturenames", ())
+            if "hass" in fixtures or "init_integration" in fixtures or "config_entry" in fixtures:
+                item.add_marker(skip_marker)

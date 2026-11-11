@@ -327,3 +327,69 @@ ATTR_SLOT: Final = "slot"
 ATTR_PASSES: Final = "passes"
 ATTR_SUCTION: Final = "suction"
 ATTR_ACTIVE: Final = "active"
+
+# --- Base Station States & Telemetry ---
+STATION_STATUS_IDLE: Final = "idle"
+STATION_STATUS_WASHING_MOP: Final = "washing_mop"
+STATION_STATUS_DRYING_MOP: Final = "drying_mop"
+STATION_STATUS_DUST_COLLECTING: Final = "dust_collecting"
+STATION_STATUS_ERROR: Final = "error"
+
+TANK_STATE_OK: Final = "ok"
+TANK_STATE_EMPTY: Final = "empty"
+TANK_STATE_FULL: Final = "full"
+TANK_STATE_MISSING: Final = "missing"
+
+# --- Carpet Handling Modes ---
+CARPET_MODE_BOOST: Final = 0
+CARPET_MODE_AVOID: Final = 1
+CARPET_MODE_IGNORE: Final = 2
+CARPET_MODES: Final[list[str]] = [
+    "boost_only",
+    "avoid_while_mopping",
+    "ignore_carpet",
+]
+
+# --- TSL Service Constants ---
+SERVICE_START_IN_DUST: Final = "StartInDust"
+SERVICE_START_MOP_WASH: Final = "StartMopWash"
+SERVICE_STOP_MOP_WASH: Final = "StopCleanMop"
+SERVICE_START_MOP_DRY: Final = "StartDryMop"
+SERVICE_STOP_MOP_DRY: Final = "StopDryMop"
+SERVICE_GET_STATION_INFO: Final = "GetStationInfo"
+SERVICE_SET_FROM_MAP: Final = "SetFromMap"
+SERVICE_SAVE_MAP: Final = "saveMap"
+SERVICE_DELETE_MAP: Final = "deleteMap"
+SERVICE_REMOTE_CONTROL_MODE: Final = "openOrClooseRemotecontrol"
+SERVICE_SEND_REMOTE_CONTROL: Final = "sendRemotecontrolWithHeadwayValue"
+SERVICE_CUSTOM_CLEAN: Final = "StartFullhouseCustomClean"
+
+# --- Shadow Properties ---
+PROP_CHILD_LOCK: Final = "childLock"
+PROP_CARPET_MODE: Final = "carpetMode"
+PROP_NOT_DISTURB: Final = "notDisturb"
+PROP_MOP_WASH_INTERVAL: Final = "mopWashInterval"
+PROP_DUST_COLLECTION: Final = "dustCollectionMode"
+
+# --- Additional REST Endpoints ---
+EP_GET_DSL: Final = "/v1/iot/product/get_dsl"
+
+# --- New HA Services ---
+SERVICE_EMPTY_DUST_BIN: Final = "empty_dust_bin"
+SERVICE_WASH_MOP: Final = "wash_mop"
+SERVICE_DRY_MOP: Final = "dry_mop"
+SERVICE_SET_CARPET_AREAS: Final = "set_carpet_areas"
+SERVICE_CLEAR_CARPET_AREAS: Final = "clear_carpet_areas"
+SERVICE_SWITCH_FLOOR_MAP: Final = "switch_floor_map"
+SERVICE_SAVE_FLOOR_MAP: Final = "save_floor_map"
+SERVICE_DELETE_FLOOR_MAP: Final = "delete_floor_map"
+SERVICE_CUSTOM_CLEAN_SEQUENCING: Final = "custom_clean_sequencing"
+SERVICE_REMOTE_CONTROL_DRIVE: Final = "remote_control_drive"
+
+ATTR_MAP_ID: Final = "map_id"
+ATTR_MAP_NAME: Final = "map_name"
+ATTR_DIRECTION: Final = "direction"
+ATTR_SPEED: Final = "speed"
+ATTR_DURATION: Final = "duration"
+ATTR_CLEAN_ORDER: Final = "clean_order"
+ATTR_CARPETS: Final = "carpets"

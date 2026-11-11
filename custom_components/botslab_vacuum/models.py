@@ -61,6 +61,16 @@ class BotslabConsumableStatus:
 
 
 @dataclass(slots=True)
+class BotslabBaseStation:
+    """Telemetry for self-cleaning base station."""
+    status: str = "idle"
+    clean_water_tank: str = "ok"
+    dirty_water_tank: str = "ok"
+    dust_bag_status: str = "ok"
+    mop_dry_remain_seconds: int = 0
+
+
+@dataclass(slots=True)
 class BotslabMapInfo:
     """Geometry of the decoded cloud map.
 
@@ -84,6 +94,7 @@ class BotslabMapInfo:
     dock_position: tuple[float, float] | None = None
     no_go_zones: list[dict[str, Any]] = field(default_factory=list)
     clean_zones: list[dict[str, Any]] = field(default_factory=list)
+    carpets: list[dict[str, Any]] = field(default_factory=list)
 
     def robot_to_pixel(self, x_mm: float, y_mm: float) -> tuple[float, float]:
         """Convert a robot coordinate (mm) to a pixel on the rendered grid.
@@ -205,6 +216,22 @@ class BotslabVacuumDevice:
     robot_pose: list[float] | None = None
     map_image_bytes: bytes | None = None
     map_info: BotslabMapInfo | None = None
+    has_base_station: bool = False
+    has_dust_collection: bool = False
+    has_mop_wash: bool = False
+    has_mop_drying: bool = False
+    has_child_lock: bool = False
+    has_carpet_mode: bool = False
+    has_multi_map: bool = False
+    has_dnd: bool = True
+    base_station: BotslabBaseStation = field(default_factory=BotslabBaseStation)
+    child_lock: bool = False
+    dnd_enabled: bool = False
+    dnd_start: str = "22:00"
+    dnd_end: str = "08:00"
+    carpet_mode: int = 0
+    saved_maps: list[dict[str, Any]] = field(default_factory=list)
+    saved_carpets: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def unique_id(self) -> str:

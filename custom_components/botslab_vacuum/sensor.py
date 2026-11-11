@@ -154,6 +154,50 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
     ),
 )
 
+BASE_STATION_SENSORS: tuple[BotslabSensorEntityDescription, ...] = (
+    BotslabSensorEntityDescription(
+        key="base_station_status",
+        translation_key="base_station_status",
+        icon="mdi:home-analytics",
+        device_class=SensorDeviceClass.ENUM,
+        options=["idle", "washing_mop", "drying_mop", "dust_collecting", "error"],
+        value_fn=lambda dev: dev.base_station.status if dev.base_station else "idle",
+    ),
+    BotslabSensorEntityDescription(
+        key="clean_water_tank",
+        translation_key="clean_water_tank",
+        icon="mdi:water",
+        device_class=SensorDeviceClass.ENUM,
+        options=["ok", "empty", "missing"],
+        value_fn=lambda dev: dev.base_station.clean_water_tank if dev.base_station else "ok",
+    ),
+    BotslabSensorEntityDescription(
+        key="dirty_water_tank",
+        translation_key="dirty_water_tank",
+        icon="mdi:water-alert",
+        device_class=SensorDeviceClass.ENUM,
+        options=["ok", "full", "missing"],
+        value_fn=lambda dev: dev.base_station.dirty_water_tank if dev.base_station else "ok",
+    ),
+    BotslabSensorEntityDescription(
+        key="dust_bag_status",
+        translation_key="dust_bag_status",
+        icon="mdi:bag-personal",
+        device_class=SensorDeviceClass.ENUM,
+        options=["ok", "full", "missing"],
+        value_fn=lambda dev: dev.base_station.dust_bag_status if dev.base_station else "ok",
+    ),
+    BotslabSensorEntityDescription(
+        key="mop_drying_remaining_time",
+        translation_key="mop_drying_remaining_time",
+        icon="mdi:progress-clock",
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda dev: dev.base_station.mop_dry_remain_seconds if dev.base_station else 0,
+    ),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -167,6 +211,15 @@ async def async_setup_entry(
         for description in SENSOR_DESCRIPTIONS:
             entities.append(BotslabSensor(coordinator, device, description))
         entities.append(BotslabSchedulesSensor(coordinator, device))
+        if device.has_base_station:
+            entities.append(BotslabSensor(coordinator, device, BASE_STATION_SENSORS[0]))
+        if device.has_mop_wash or (device.has_base_station and device.base_station.clean_water_tank):
+            entities.append(BotslabSensor(coordinator, device, BASE_STATION_SENSORS[1]))
+            entities.append(BotslabSensor(coordinator, device, BASE_STATION_SENSORS[2]))
+        if device.has_dust_collection or (device.has_base_station and device.base_station.dust_bag_status):
+            entities.append(BotslabSensor(coordinator, device, BASE_STATION_SENSORS[3]))
+        if device.has_mop_drying:
+            entities.append(BotslabSensor(coordinator, device, BASE_STATION_SENSORS[4]))
     async_add_entities(entities)
 
 

@@ -23,6 +23,7 @@ from .const import (
     ACTIVE_SCAN_INTERVAL,
     ACTIVE_STATUSES,
     BATTERY_KEYS_360,
+    CARPET_MODES,
     CONF_EMAIL,
     CONF_M2,
     CONF_PASSWORD,
@@ -40,10 +41,25 @@ from .const import (
     MAP_SYNC_DURATION,
     MAP_SYNC_KEEPALIVE_INTERVAL,
     MODE_TO_FAN_SPEED,
+    STATION_STATUS_DRYING_MOP,
+    STATION_STATUS_DUST_COLLECTING,
+    STATION_STATUS_ERROR,
+    STATION_STATUS_IDLE,
+    STATION_STATUS_WASHING_MOP,
     STATUS_CLEANING,
     STATUS_ERROR,
+    TANK_STATE_EMPTY,
+    TANK_STATE_FULL,
+    TANK_STATE_MISSING,
+    TANK_STATE_OK,
 )
-from .models import BotslabConsumableStatus, BotslabMapInfo, BotslabRoom, BotslabVacuumDevice
+from .models import (
+    BotslabBaseStation,
+    BotslabConsumableStatus,
+    BotslabMapInfo,
+    BotslabRoom,
+    BotslabVacuumDevice,
+)
 from .qpush import BotslabChinaQPush, BotslabQPush
 from .quc_login import BotslabAuthError, async_login
 
@@ -105,6 +121,64 @@ def _parse_consumable_lifetime(
     life_pct = int(max(0, min(100, round(val))))
     remaining_hours = round((life_pct / 100.0) * max_hours, 1)
     return life_pct, remaining_hours
+
+
+def _parse_base_station(info: Any) -> BotslabBaseStation:
+    """Parse base station telemetry dictionary into BotslabBaseStation model."""
+    if not info or not isinstance(info, dict):
+        return BotslabBaseStation()
+
+    res = info.get("data", {}).get("result") or info.get("result") or info
+    if isinstance(res, str):
+        try:
+            res = json.loads(res)
+        except Exception:
+            res = {}
+    if not isinstance(res, dict):
+        res = {}
+
+    raw_status = res.get("station_status", res.get("StationStatus", res.get("status", 0)))
+    status_map = {
+        0: STATION_STATUS_IDLE,
+        1: STATION_STATUS_WASHING_MOP,
+        2: STATION_STATUS_DRYING_MOP,
+        3: STATION_STATUS_DUST_COLLECTING,
+        4: STATION_STATUS_ERROR,
+    }
+    st_val = status_map.get(raw_status, str(raw_status).lower())
+    if st_val not in (
+        STATION_STATUS_IDLE,
+        STATION_STATUS_WASHING_MOP,
+        STATION_STATUS_DRYING_MOP,
+        STATION_STATUS_DUST_COLLECTING,
+        STATION_STATUS_ERROR,
+    ):
+        st_val = STATION_STATUS_IDLE
+
+    # Clean water tank: 1=OK, 0=Empty, 2=Missing
+    raw_cwt = res.get("clean_water_tank", res.get("CleanWaterTank", 1))
+    cwt_map = {1: TANK_STATE_OK, 0: TANK_STATE_EMPTY, 2: TANK_STATE_MISSING}
+    cwt_val = cwt_map.get(raw_cwt, TANK_STATE_OK if raw_cwt not in (0, 2) else str(raw_cwt))
+
+    # Dirty water tank: 1=OK, 0=Full, 2=Missing
+    raw_dwt = res.get("dirty_water_tank", res.get("DirtyWaterTank", 1))
+    dwt_map = {1: TANK_STATE_OK, 0: TANK_STATE_FULL, 2: TANK_STATE_MISSING}
+    dwt_val = dwt_map.get(raw_dwt, TANK_STATE_OK if raw_dwt not in (0, 2) else str(raw_dwt))
+
+    # Dust bag status: 1=OK, 0=Full, 2=Missing
+    raw_db = res.get("dust_bag_status", res.get("DustBagStatus", 1))
+    db_map = {1: TANK_STATE_OK, 0: TANK_STATE_FULL, 2: TANK_STATE_MISSING}
+    db_val = db_map.get(raw_db, TANK_STATE_OK if raw_db not in (0, 2) else str(raw_db))
+
+    dry_remain = int(res.get("mop_dry_remain_time", res.get("MopDryRemainSeconds", 0)) or 0)
+
+    return BotslabBaseStation(
+        status=st_val,
+        clean_water_tank=cwt_val,
+        dirty_water_tank=dwt_val,
+        dust_bag_status=db_val,
+        mop_dry_remain_seconds=dry_remain,
+    )
 
 
 @dataclass(slots=True)
@@ -175,6 +249,9 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self._cleaning_paths: dict[str, list[list[int]]] = {}
         self._last_clean_status: dict[str, str] = {}
         self._map_version: dict[str, int] = {}
+        self._dsl_cache: dict[str, dict[str, Any]] = {}
+        self._saved_carpets: dict[str, list[dict[str, Any]]] = {}
+        self._multi_maps_cache: dict[str, list[dict[str, Any]]] = {}
 
     def get_map_version(self, sn: str) -> int:
         """Return the current rendered map revision counter for a device."""
@@ -574,6 +651,136 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             if cached_rooms:
                 self._rooms_cache[sn] = cached_rooms
 
+            # 4-Tier Dynamic Capability Detection
+            has_child_lock = False
+            has_carpet_mode = False
+            has_base_station = False
+            has_dust_collection = False
+            has_mop_wash = False
+            has_mop_drying = False
+            has_multi_map = False
+            has_dnd = False
+
+            if not self.api.is_legacy_360:
+                # Tier 1: Shadow Properties Introspection
+                if any(k in props for k in ("childLock", "ChildLock")):
+                    has_child_lock = True
+                if any(k in props for k in ("carpetMode", "CarpetMode", "AutoBoost")):
+                    has_carpet_mode = True
+                if any(k in props for k in ("notDisturb", "NotDisturb")):
+                    has_dnd = True
+                if any(k in props for k in ("multiMap", "multi_map", "MultiMap", "MapPkgOssInfo")):
+                    has_multi_map = True
+
+                if any(k in props for k in ("StartInDust", "dustCollectionMode", "autoDust", "DustBagStatus")):
+                    has_dust_collection = True
+                    has_base_station = True
+                if any(k in props for k in ("StartMopWash", "mopWashInterval", "selfCleanMode", "CleanWaterTankState", "DirtyWaterTankState")):
+                    has_mop_wash = True
+                    has_base_station = True
+                if any(k in props for k in ("StartDryMop", "dryingStatus", "hotAirDrying", "MopDryRemainSeconds")):
+                    has_mop_drying = True
+                    has_base_station = True
+                if "BaseStationStatus" in props or "StationStatus" in props:
+                    has_base_station = True
+
+                # Tier 2: TSL DSL Schema Query
+                if pk and pk not in self._dsl_cache:
+                    try:
+                        self._dsl_cache[pk] = await self.api.get_dsl(pk)
+                    except Exception as dsl_err:
+                        _LOGGER.debug("TSL DSL query failed for %s: %s", pk, dsl_err)
+                        self._dsl_cache[pk] = {}
+
+                dsl = self._dsl_cache.get(pk, {})
+                services = [s.get("identifier") for s in dsl.get("services", [])] if isinstance(dsl.get("services"), list) else []
+                properties = [p.get("identifier") for p in dsl.get("properties", [])] if isinstance(dsl.get("properties"), list) else []
+
+                if "childLock" in properties:
+                    has_child_lock = True
+                if "carpetMode" in properties:
+                    has_carpet_mode = True
+                if "notDisturb" in properties:
+                    has_dnd = True
+                if "SetFromMap" in services or "multi_map_room_list" in services:
+                    has_multi_map = True
+
+                if "StartInDust" in services:
+                    has_dust_collection = True
+                    has_base_station = True
+                if "StartMopWash" in services:
+                    has_mop_wash = True
+                    has_base_station = True
+                if "StartDryMop" in services:
+                    has_mop_drying = True
+                    has_base_station = True
+                if "GetStationInfo" in services or "BaseStationStatus" in properties:
+                    has_base_station = True
+
+                # Tier 3: Model-based heuristics fallback
+                m_lower = str(d.get("model", "")).lower()
+                title_lower = str(d.get("device_title", "")).lower()
+                comb_name = f"{m_lower} {title_lower}"
+                if any(w in comb_name for w in ("+", "plus", "k7", "s10 pro", "ultra")):
+                    has_dust_collection = True
+                    has_base_station = True
+                if any(w in comb_name for w in ("k7", "s10")):
+                    has_mop_wash = True
+                    has_mop_drying = True
+                    has_base_station = True
+                # Modern sweepers default support for child_lock, carpet_mode, multi_map, dnd if not explicitly disproven
+                if not dsl:
+                    has_child_lock = True
+                    has_carpet_mode = True
+                    has_multi_map = True
+                    has_dnd = True
+            else:
+                # Tier 4: Legacy 360 Models
+                has_multi_map = True
+                has_dnd = True
+
+            # Query Base Station Telemetry if present
+            base_station_telemetry = BotslabBaseStation()
+            if has_base_station:
+                try:
+                    st_resp = await self.api.get_station_info(sn, pk)
+                    base_station_telemetry = _parse_base_station(st_resp or props)
+                except Exception as st_err:
+                    _LOGGER.debug("Station info query failed for %s: %s", sn, st_err)
+                    base_station_telemetry = _parse_base_station(props)
+
+            # Query Multi-Floor Maps
+            saved_maps: list[dict[str, Any]] = []
+            if has_multi_map and not self.api.is_legacy_360:
+                try:
+                    mm_dict = await self.api.get_multi_maps(sn, pk)
+                    if isinstance(mm_dict, dict) and "map_list" in mm_dict:
+                        saved_maps = mm_dict["map_list"]
+                        self._multi_maps_cache[sn] = saved_maps
+                except Exception as mm_err:
+                    _LOGGER.debug("Multi-map fetch failed for %s: %s", sn, mm_err)
+                    saved_maps = self._multi_maps_cache.get(sn, [])
+
+            # Child lock, DND, Carpet Mode
+            child_lock = bool(props.get("childLock", props.get("ChildLock", False)))
+            raw_dnd = props.get("notDisturb", props.get("NotDisturb", False))
+            if isinstance(raw_dnd, dict):
+                dnd_enabled = bool(raw_dnd.get("enabled", True))
+                dnd_start = str(raw_dnd.get("start", "22:00"))
+                dnd_end = str(raw_dnd.get("end", "08:00"))
+            else:
+                dnd_enabled = bool(raw_dnd)
+                dnd_start = "22:00"
+                dnd_end = "08:00"
+
+            raw_c_mode = props.get("carpetMode", props.get("CarpetMode", 0))
+            if isinstance(raw_c_mode, int):
+                c_mode_int = raw_c_mode
+            elif str(raw_c_mode).isdigit():
+                c_mode_int = int(raw_c_mode)
+            else:
+                c_mode_int = 0
+
             dev = BotslabVacuumDevice(
                 product_key=pk,
                 device_name=sn,
@@ -620,6 +827,22 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 robot_pose=robot_pose,
                 map_image_bytes=map_bytes,
                 map_info=dev_map_info,
+                has_base_station=has_base_station,
+                has_dust_collection=has_dust_collection,
+                has_mop_wash=has_mop_wash,
+                has_mop_drying=has_mop_drying,
+                has_child_lock=has_child_lock,
+                has_carpet_mode=has_carpet_mode,
+                has_multi_map=has_multi_map,
+                has_dnd=has_dnd,
+                base_station=base_station_telemetry,
+                child_lock=child_lock,
+                dnd_enabled=dnd_enabled,
+                dnd_start=dnd_start,
+                dnd_end=dnd_end,
+                carpet_mode=c_mode_int,
+                saved_maps=saved_maps,
+                saved_carpets=self._saved_carpets.get(sn, []),
             )
             device_map[sn] = dev
 
@@ -846,3 +1069,176 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             self._last_rendered_pose.clear()
             self._rooms_cache.clear()
         self.api.clear_map_cache(sn)
+
+    async def async_empty_dust_bin(self, sn: str) -> None:
+        """Trigger base station dust collection."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.start_dust_collection(sn, pk)
+        await self.async_request_refresh()
+
+    async def async_wash_mop(self, sn: str, wash_type: int = 0) -> None:
+        """Trigger base station mop washing."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.start_mop_wash(sn, pk, wash_type)
+        await self.async_request_refresh()
+
+    async def async_dry_mop(self, sn: str, duration_minutes: int = 120) -> None:
+        """Trigger base station mop drying."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.start_mop_drying(sn, pk, duration_minutes)
+        await self.async_request_refresh()
+
+    async def async_set_carpet_mode(self, sn: str, mode: str | int) -> None:
+        """Set carpet behavior mode (0: boost, 1: avoid while mopping, 2: ignore)."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        if isinstance(mode, str):
+            c_int = CARPET_MODES.index(mode) if mode in CARPET_MODES else 0
+        else:
+            c_int = int(mode)
+        await self.api.set_carpet_mode(sn, pk, c_int)
+        if dev:
+            dev.carpet_mode = c_int
+            self.async_set_updated_data(self.data)
+            # Re-sync virtual carpet bridge with the new carpet mode
+            if dev.saved_carpets:
+                await self.async_set_carpet_areas(sn, dev.saved_carpets)
+
+    async def async_set_carpet_areas(self, sn: str, carpets: list[dict[str, Any]]) -> None:
+        """Store virtual carpet polygons and bridge to no-go zones when mopping."""
+        old_carpets = self._saved_carpets.get(sn, [])
+        self._saved_carpets[sn] = carpets
+        dev = self.data.get(sn) if self.data else None
+        if dev:
+            dev.saved_carpets = carpets
+            if dev.current_map_id:
+                # Helper to check if a zone matches a saved carpet
+                def _matches_carpet(z: dict[str, Any], c_list: list[dict[str, Any]]) -> bool:
+                    if z.get("type") != "mop":
+                        return False
+                    z_pts = z.get("points")
+                    for c in c_list:
+                        c_pts = c.get("points") or [c.get("x1", 0), c.get("y1", 0), c.get("x2", 0), c.get("y2", 0)]
+                        if z_pts == c_pts:
+                            return True
+                    return False
+
+                # Retain existing user non-carpet forbidden zones
+                existing_zones = [
+                    z for z in dev.no_go_zones
+                    if not _matches_carpet(z, old_carpets)
+                ]
+                if dev.carpet_mode == 1 and dev.mop_mode in ("vacuum_and_mop", "mop_only"):
+                    carpet_places = [
+                        {
+                            "type": "mop",
+                            "points": c.get("points") or [c.get("x1", 0), c.get("y1", 0), c.get("x2", 0), c.get("y2", 0)],
+                        }
+                        for c in carpets
+                    ]
+                    to_send = existing_zones + carpet_places
+                else:
+                    # In dry vacuum mode or boost/ignore mode: remove virtual carpet no-mop zones
+                    to_send = existing_zones
+                try:
+                    await self.api.set_no_go_zones(sn, dev.product_key, dev.current_map_id, to_send)
+                except Exception as err:
+                    _LOGGER.debug("Failed to bridge carpets into no-go zones for %s: %s", sn, err)
+            self.async_set_updated_data(self.data)
+
+    async def async_clear_carpet_areas(self, sn: str) -> None:
+        """Clear all virtual carpet zones and restore original no-go zones."""
+        old_carpets = self._saved_carpets.get(sn, [])
+        self._saved_carpets[sn] = []
+        dev = self.data.get(sn) if self.data else None
+        if dev:
+            dev.saved_carpets = []
+            if dev.current_map_id:
+                def _matches_carpet(z: dict[str, Any], c_list: list[dict[str, Any]]) -> bool:
+                    if z.get("type") != "mop":
+                        return False
+                    z_pts = z.get("points")
+                    for c in c_list:
+                        c_pts = c.get("points") or [c.get("x1", 0), c.get("y1", 0), c.get("x2", 0), c.get("y2", 0)]
+                        if z_pts == c_pts:
+                            return True
+                    return False
+
+                non_carpet_zones = [
+                    z for z in dev.no_go_zones
+                    if not _matches_carpet(z, old_carpets)
+                ]
+                try:
+                    await self.api.set_no_go_zones(
+                        sn, dev.product_key, dev.current_map_id, non_carpet_zones
+                    )
+                except Exception as err:
+                    _LOGGER.debug("Failed to clear bridged carpets on robot for %s: %s", sn, err)
+            self.async_set_updated_data(self.data)
+
+    async def async_set_child_lock(self, sn: str, enabled: bool) -> None:
+        """Toggle physical button child lock."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.set_child_lock(sn, pk, enabled)
+        if dev:
+            dev.child_lock = enabled
+            self.async_set_updated_data(self.data)
+
+    async def async_set_dnd(
+        self, sn: str, enabled: bool, start: str = "22:00", end: str = "08:00"
+    ) -> None:
+        """Configure Do Not Disturb quiet hours schedule."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.set_dnd(sn, pk, enabled, start=start, end=end)
+        if dev:
+            dev.dnd_enabled = enabled
+            dev.dnd_start = start
+            dev.dnd_end = end
+            self.async_set_updated_data(self.data)
+
+    async def async_switch_floor_map(self, sn: str, map_id: int | str) -> None:
+        """Switch active floor map."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.switch_floor_map(sn, pk, map_id)
+        await self.async_request_refresh()
+
+    async def async_save_floor_map(self, sn: str, name: str) -> None:
+        """Save current floor map."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.save_map(sn, pk, name)
+        await self.async_request_refresh()
+
+    async def async_delete_floor_map(self, sn: str, map_id: int | str) -> None:
+        """Delete saved floor map."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.delete_map(sn, pk, map_id)
+        await self.async_request_refresh()
+
+    async def async_custom_clean_sequencing(
+        self,
+        sn: str,
+        clean_order: list[dict[str, Any]],
+        kitchen_toilet_last: bool = True,
+    ) -> None:
+        """Start custom clean in specified room order."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.start_custom_clean_sequencing(sn, pk, clean_order, kitchen_toilet_last)
+        await self.async_request_refresh()
+
+    async def async_remote_control_drive(
+        self, sn: str, direction: int, speed: int = 250
+    ) -> None:
+        """Send directional movement pulse."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        await self.api.set_remote_control_mode(sn, pk, True)
+        await self.api.send_remote_drive(sn, pk, direction, speed)

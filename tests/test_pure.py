@@ -2286,3 +2286,405 @@ async def test_set_schedule_standard_payload():
     assert routine["room_ids"] == ["3"]
 
 
+# ============================================================================
+# NEW COMPREHENSIVE TESTS: MODERN BOTSLAB IMPROVEMENT SPECIFICATION
+# ============================================================================
+
+def test_base_station_telemetry_decoding():
+    """Verify _parse_base_station parses status, tank levels, and drying timer correctly."""
+    from custom_components.botslab_vacuum.coordinator import _parse_base_station
+    from custom_components.botslab_vacuum.const import (
+        STATION_STATUS_IDLE,
+        STATION_STATUS_WASHING_MOP,
+        STATION_STATUS_DRYING_MOP,
+        STATION_STATUS_DUST_COLLECTING,
+        STATION_STATUS_ERROR,
+        TANK_STATE_OK,
+        TANK_STATE_EMPTY,
+        TANK_STATE_FULL,
+        TANK_STATE_MISSING,
+    )
+
+    # 1. Idle status with all tanks OK
+    raw_idle = {
+        "station_status": 0,
+        "clean_water_tank": 1,
+        "dirty_water_tank": 1,
+        "dust_bag_status": 1,
+        "mop_dry_remain_time": 0,
+    }
+    st = _parse_base_station(raw_idle)
+    assert st.status == STATION_STATUS_IDLE
+    assert st.clean_water_tank == TANK_STATE_OK
+    assert st.dirty_water_tank == TANK_STATE_OK
+    assert st.dust_bag_status == TANK_STATE_OK
+    assert st.mop_dry_remain_seconds == 0
+
+    # 2. Washing mop with empty clean water tank
+    raw_washing = {
+        "data": {
+            "result": {
+                "station_status": 1,
+                "clean_water_tank": 0,
+                "dirty_water_tank": 1,
+                "dust_bag_status": 1,
+            }
+        }
+    }
+    st = _parse_base_station(raw_washing)
+    assert st.status == STATION_STATUS_WASHING_MOP
+    assert st.clean_water_tank == TANK_STATE_EMPTY
+
+    # 3. Drying mop with full dirty water and missing dust bag
+    raw_drying = {
+        "station_status": 2,
+        "clean_water_tank": 1,
+        "dirty_water_tank": 0,
+        "dust_bag_status": 2,
+        "mop_dry_remain_time": 3600,
+    }
+    st = _parse_base_station(raw_drying)
+    assert st.status == STATION_STATUS_DRYING_MOP
+    assert st.dirty_water_tank == TANK_STATE_FULL
+    assert st.dust_bag_status == TANK_STATE_MISSING
+    assert st.mop_dry_remain_seconds == 3600
+
+    # 4. Dust collecting & Error
+    assert _parse_base_station({"station_status": 3}).status == STATION_STATUS_DUST_COLLECTING
+    assert _parse_base_station({"station_status": 4}).status == STATION_STATUS_ERROR
+    assert _parse_base_station(None).status == STATION_STATUS_IDLE
+
+
+@pytest.mark.asyncio
+async def test_coordinator_base_station_and_carpet_bridge():
+    """Verify coordinator base station commands and carpet bridge no-go zone synchronization."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.coordinator import BotslabVacuumCoordinator
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+
+    coord = MagicMock(spec=BotslabVacuumCoordinator)
+    coord.api = MagicMock()
+    coord.api.start_dust_collection = AsyncMock(return_value={"code": 0})
+    coord.api.start_mop_wash = AsyncMock(return_value={"code": 0})
+    coord.api.start_mop_drying = AsyncMock(return_value={"code": 0})
+    coord.api.set_carpet_mode = AsyncMock(return_value={"code": 0})
+    coord.api.set_no_go_zones = AsyncMock(return_value={"code": 0})
+    coord.async_request_refresh = AsyncMock()
+    coord.async_set_updated_data = MagicMock()
+    coord._saved_carpets = {}
+
+    dev = BotslabVacuumDevice(
+        device_name="SN_S8",
+        product_key="PK_S8",
+        device_title="Botslab S8",
+        props={},
+        current_map_id="101",
+        mop_mode="vacuum_and_mop",
+        carpet_mode=1,  # avoid_while_mopping
+    )
+    coord.data = {"SN_S8": dev}
+
+    # 1. Base station action methods
+    await BotslabVacuumCoordinator.async_empty_dust_bin(coord, "SN_S8")
+    coord.api.start_dust_collection.assert_called_once_with("SN_S8", "PK_S8")
+
+    await BotslabVacuumCoordinator.async_wash_mop(coord, "SN_S8", wash_type=1)
+    coord.api.start_mop_wash.assert_called_once_with("SN_S8", "PK_S8", 1)
+
+    await BotslabVacuumCoordinator.async_dry_mop(coord, "SN_S8", duration_minutes=180)
+    coord.api.start_mop_drying.assert_called_once_with("SN_S8", "PK_S8", 180)
+
+    # 2. Carpet bridge injection
+    carpets = [{"x1": -1000, "y1": -500, "x2": 500, "y2": 1000}]
+    await BotslabVacuumCoordinator.async_set_carpet_areas(coord, "SN_S8", carpets)
+    assert coord._saved_carpets["SN_S8"] == carpets
+    coord.api.set_no_go_zones.assert_called_once_with(
+        "SN_S8",
+        "PK_S8",
+        "101",
+        [{"type": "mop", "points": [-1000, -500, 500, 1000]}],
+    )
+
+    # 3. Clear carpets
+    await BotslabVacuumCoordinator.async_clear_carpet_areas(coord, "SN_S8")
+    assert coord._saved_carpets["SN_S8"] == []
+
+
+@pytest.mark.asyncio
+async def test_coordinator_multi_floor_and_hardware_switches():
+    """Verify coordinator multi-floor map RPCs and hardware switches (child lock, DND, remote drive)."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.coordinator import BotslabVacuumCoordinator
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+
+    coord = MagicMock(spec=BotslabVacuumCoordinator)
+    coord.api = MagicMock()
+    coord.api.switch_floor_map = AsyncMock(return_value={"code": 0})
+    coord.api.save_map = AsyncMock(return_value={"code": 0})
+    coord.api.delete_map = AsyncMock(return_value={"code": 0})
+    coord.api.set_child_lock = AsyncMock()
+    coord.api.set_dnd = AsyncMock()
+    coord.api.start_custom_clean_sequencing = AsyncMock(return_value={"code": 0})
+    coord.api.set_remote_control_mode = AsyncMock(return_value={"code": 0})
+    coord.api.send_remote_drive = AsyncMock(return_value={"code": 0})
+    coord.async_request_refresh = AsyncMock()
+    coord.async_set_updated_data = MagicMock()
+
+    dev = BotslabVacuumDevice(
+        device_name="SN_S8",
+        product_key="PK_S8",
+        device_title="Botslab S8",
+        props={},
+    )
+    coord.data = {"SN_S8": dev}
+
+    # 1. Floor maps
+    await BotslabVacuumCoordinator.async_switch_floor_map(coord, "SN_S8", 102)
+    coord.api.switch_floor_map.assert_called_once_with("SN_S8", "PK_S8", 102)
+
+    await BotslabVacuumCoordinator.async_save_floor_map(coord, "SN_S8", "Upstairs")
+    coord.api.save_map.assert_called_once_with("SN_S8", "PK_S8", "Upstairs")
+
+    await BotslabVacuumCoordinator.async_delete_floor_map(coord, "SN_S8", 103)
+    coord.api.delete_map.assert_called_once_with("SN_S8", "PK_S8", 103)
+
+    # 2. Child Lock & DND
+    await BotslabVacuumCoordinator.async_set_child_lock(coord, "SN_S8", True)
+    coord.api.set_child_lock.assert_called_once_with("SN_S8", "PK_S8", True)
+    assert dev.child_lock is True
+
+    await BotslabVacuumCoordinator.async_set_dnd(coord, "SN_S8", True, "23:00", "07:00")
+    coord.api.set_dnd.assert_called_once_with("SN_S8", "PK_S8", True, start="23:00", end="07:00")
+    assert dev.dnd_enabled is True
+
+    # 3. Custom clean sequencing & Remote driving
+    order = [{"roomId": 1, "cleanTimes": 1}]
+    await BotslabVacuumCoordinator.async_custom_clean_sequencing(coord, "SN_S8", order, True)
+    coord.api.start_custom_clean_sequencing.assert_called_once_with("SN_S8", "PK_S8", order, True)
+
+    await BotslabVacuumCoordinator.async_remote_control_drive(coord, "SN_S8", direction=1, speed=300)
+    coord.api.set_remote_control_mode.assert_called_once_with("SN_S8", "PK_S8", True)
+    coord.api.send_remote_drive.assert_called_once_with("SN_S8", "PK_S8", 1, 300)
+
+
+def test_map_obstacle_loss_fix_and_compositing():
+    """Verify render_map_advanced stamps obstacles on top of rooms with 100% opacity without alpha bleaching."""
+    from custom_components.botslab_vacuum.map_util import render_map_advanced
+    from custom_components.botslab_vacuum.models import BotslabRoom
+    from PIL import Image
+    import io
+
+    # 10x10 map: obstacle at center (5, 5) -> pixel 0. All other floor -> pixel 127.
+    pixels = bytearray([127] * 100)
+    pixels[55] = 0  # y=5, x=5 is an obstacle
+    pixels_bytes = bytes(pixels)
+
+    room = BotslabRoom(
+        room_id="1",
+        name="Test Room",
+        outline=((0, 0), (9, 0), (9, 9), (0, 9)),
+    )
+
+    png_data, geom = render_map_advanced(
+        width=10,
+        height=10,
+        pixels=pixels_bytes,
+        resolution=0.05,
+        x_min=0.0,
+        y_min=0.0,
+        rooms=[room],
+        scale=4,
+    )
+
+    assert png_data.startswith(b"\x89PNG")
+    img = Image.open(io.BytesIO(png_data)).convert("RGBA")
+    # Obstacle at (5, 5) scaled by 4 will be around (x=20..23, y=16..19 because y is flipped)
+    # Check that pixel is stamped with solid charcoal obstacle color and 100% alpha (not bleached or tinted by room)
+    obs_pixel = img.getpixel((22, 18))
+    assert obs_pixel == (38, 44, 58, 255), f"Obstacle pixel must have solid obstacle color and 100% alpha (got {obs_pixel})"
+
+
+def test_pure_python_render_map_png_retains_obstacles():
+    """Verify render_map_png (pure-Python fallback) does not erase obstacles inside room polygons."""
+    from custom_components.botslab_vacuum.map_util import render_map_png, C_OBSTACLE
+    import struct
+    import zlib
+
+    # 10x10 map: obstacle at x=5, y=5. Everything else floor (127)
+    pixels = bytearray([127] * 100)
+    pixels[5 * 10 + 5] = 0  # y=5, x=5 obstacle
+
+    # Room overlay covering the whole map with red color (255, 0, 0)
+    room_polygon = [([(0, 0), (9, 0), (9, 9), (0, 9)], (255, 0, 0))]
+
+    png_bytes = render_map_png(10, 10, bytes(pixels), room_polygon)
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+    # Decompress IDAT chunks to inspect raw pixels directly
+    idx = 8
+    idat_data = bytearray()
+    while idx < len(png_bytes):
+        length = struct.unpack(">I", png_bytes[idx : idx + 4])[0]
+        tag = png_bytes[idx + 4 : idx + 8]
+        if tag == b"IDAT":
+            idat_data.extend(png_bytes[idx + 8 : idx + 8 + length])
+        idx += 12 + length
+
+    decompressed = zlib.decompress(bytes(idat_data))
+    # Row pitch: 1 filter byte + 10 * 4 bytes RGBA = 41 bytes per row
+    # In render_map_png: row y=0 in PNG output corresponds to row_y = height - 1 - y = 9
+    # Obstacle is at row_y = 5, which corresponds to y = 10 - 1 - 5 = 4
+    # Scanline byte offset for (x=5, y=4): 4 * 41 + 1 (filter byte) + 5 * 4 = 164 + 1 + 20 = 185
+    obs_r, obs_g, obs_b, obs_a = struct.unpack_from("4B", decompressed, 185)
+    assert (obs_r, obs_g, obs_b, obs_a) == C_OBSTACLE, (
+        f"Obstacle at (5, 5) must not be overwritten by room overlay! Got ({obs_r}, {obs_g}, {obs_b}, {obs_a})"
+    )
+
+
+def test_dual_backend_facade_routing_and_legacy_isolation():
+    """Verify BotslabVacuumApi Facade cleanly dispatches between Legacy 360 and Modern client."""
+    from unittest.mock import MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    session = MagicMock()
+    # 1. Modern client (region="eu1")
+    api_modern = BotslabVacuumApi(session, "eu1", "m2", "q", "t")
+    assert api_modern.is_legacy_360 is False
+    assert api_modern._legacy_client.is_legacy_360 is False
+
+    # 2. Legacy client (region="cn")
+    api_legacy = BotslabVacuumApi(session, "cn", "m2", "q", "t")
+    assert api_legacy.is_legacy_360 is True
+    assert api_legacy._legacy_client.is_legacy_360 is True
+    assert api_legacy._legacy_client.target is api_legacy
+
+
+@pytest.mark.asyncio
+async def test_legacy_360_app_login_and_clean_rooms_without_clean_id():
+    """Verify legacy 360 backend app_login delegation and clean_rooms with time fallback."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api import BotslabVacuumApi
+
+    session = MagicMock()
+    api = BotslabVacuumApi(session, "cn", "m2", "q", "t")
+    assert api.is_legacy_360 is True
+
+    # 1. Verify app_login routes to legacy 360 login
+    api._legacy_client._legacy_360_login = AsyncMock(
+        return_value={"sid": "legacy_sid_123", "pushKey": "pk_456"}
+    )
+    api._legacy_client.sid = "legacy_sid_123"
+    api._legacy_client.push_key = "pk_456"
+    api._legacy_client.push_alias = "alias_789"
+
+    res = await api.app_login()
+    assert res["sid"] == "legacy_sid_123"
+    assert api.sid == "legacy_sid_123"
+    api._legacy_client._legacy_360_login.assert_called_once()
+
+    # 2. Verify clean_rooms without cleanId does not raise NameError for 'time'
+    mock_record = {
+        "cleanId": None,
+        "smartArea": {
+            "value": [
+                {"id": 1, "name": "Living Room"},
+                {"id": 2, "name": "Kitchen"},
+            ]
+        },
+    }
+    api.get_latest_clean_record = AsyncMock(return_value=mock_record)
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"errno": 0})
+    session.post.return_value.__aenter__.return_value = mock_resp
+
+    # Calling clean_rooms should complete cleanly without NameError: name 'time' is not defined
+    await api.clean_rooms("SN_123", "PK_123", ["1"])
+    assert session.post.called
+
+
+def test_active_floor_select_deduplicates_duplicate_names():
+    """Verify BotslabActiveFloorSelect deduplicates identical map names to prevent HA ValueError."""
+    from unittest.mock import MagicMock
+    from custom_components.botslab_vacuum.select import BotslabActiveFloorSelect
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+
+    coord = MagicMock()
+    dev = BotslabVacuumDevice(
+        device_name="SN_123",
+        product_key="PK_123",
+        device_title="Botslab S8",
+        props={},
+        saved_maps=[
+            {"map_id": 101, "map_name": "Ground Floor", "is_cur": 1},
+            {"map_id": 102, "map_name": "Ground Floor", "is_cur": 0},
+            {"map_id": 103, "map_name": "Upstairs", "is_cur": 0},
+        ],
+        current_map_id="101",
+    )
+    coord.data = {"SN_123": dev}
+    selector = BotslabActiveFloorSelect(coord, dev)
+
+    options = selector.options
+    assert len(options) == 3
+    assert len(set(options)) == 3, f"Options must not contain duplicate items! Got {options}"
+    assert options[0] == "Ground Floor"
+    assert options[1] == "Ground Floor (102)"
+    assert options[2] == "Upstairs"
+    assert selector.current_option == "Ground Floor"
+
+
+@pytest.mark.asyncio
+async def test_carpet_bridge_preserves_existing_user_no_go_zones():
+    """Verify virtual carpet bridge merges with existing user no-go zones and does not wipe them."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.coordinator import BotslabVacuumCoordinator
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+
+    coord = MagicMock(spec=BotslabVacuumCoordinator)
+    coord.api = MagicMock()
+    coord.api.set_no_go_zones = AsyncMock(return_value={"code": 0})
+    coord.async_set_updated_data = MagicMock()
+    coord._saved_carpets = {}
+
+    existing_user_zone = {"type": "wall", "points": [100, 200, 300, 400]}
+    dev = BotslabVacuumDevice(
+        device_name="SN_S8",
+        product_key="PK_S8",
+        device_title="Botslab S8",
+        props={},
+        current_map_id="101",
+        mop_mode="vacuum_and_mop",
+        carpet_mode=1,  # avoid_while_mopping
+        no_go_zones=[existing_user_zone],
+    )
+    coord.data = {"SN_S8": dev}
+
+    # 1. Set carpets: user zone + carpet zone should be sent
+    carpets = [{"x1": -500, "y1": -500, "x2": 500, "y2": 500}]
+    await BotslabVacuumCoordinator.async_set_carpet_areas(coord, "SN_S8", carpets)
+
+    expected_payload = [
+        existing_user_zone,
+        {"type": "mop", "points": [-500, -500, 500, 500]},
+    ]
+    coord.api.set_no_go_zones.assert_called_once_with(
+        "SN_S8", "PK_S8", "101", expected_payload
+    )
+
+    # 2. Clear carpets: only user zone should remain
+    coord.api.set_no_go_zones.reset_mock()
+    # Simulate updated no_go_zones containing both
+    dev.no_go_zones = [
+        existing_user_zone,
+        {"type": "mop", "points": [-500, -500, 500, 500]},
+    ]
+    await BotslabVacuumCoordinator.async_clear_carpet_areas(coord, "SN_S8")
+    coord.api.set_no_go_zones.assert_called_once_with(
+        "SN_S8", "PK_S8", "101", [existing_user_zone]
+    )
+
+
+
+

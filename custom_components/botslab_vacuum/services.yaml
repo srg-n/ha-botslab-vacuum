@@ -360,3 +360,165 @@ vacuum_clean_zone:
         number:
           min: 1
           max: 2
+
+empty_dust_bin:
+  name: Empty Dust Bin
+  description: Triggers the self-cleaning base station to extract dirt from the vacuum robot's dust bin.
+  target:
+    entity:
+      domain: vacuum
+
+wash_mop:
+  name: Wash Mop Pads
+  description: Triggers the self-cleaning base station to wash the robot's mopping pads.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    wash_type:
+      name: Wash Intensity
+      description: "0: Standard wash, 1: Deep clean."
+      default: 0
+      selector:
+        select:
+          options:
+            - label: Standard
+              value: 0
+            - label: Deep Clean
+              value: 1
+
+dry_mop:
+  name: Dry Mop Pads
+  description: Triggers the base station hot air blower to dry the mop pads.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    duration:
+      name: Drying Duration
+      description: Hot air drying duration in minutes (120, 180, 240).
+      default: 120
+      selector:
+        number:
+          min: 60
+          max: 360
+          step: 30
+          unit_of_measurement: min
+
+set_carpet_areas:
+  name: Set Carpet Areas
+  description: Defines virtual carpet polygons. When mopping, the robot avoids these zones (Virtual Carpet Bridge). When vacuuming, it cleans them with turbo suction.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    carpets:
+      name: Carpet Polygons
+      description: List of carpet rectangular zones [[x1, y1, x2, y2]] or GeoJSON polygons in robot coordinates (mm).
+      required: true
+      selector:
+        object:
+
+clear_carpet_areas:
+  name: Clear Carpet Areas
+  description: Clears all stored virtual carpet polygons.
+  target:
+    entity:
+      domain: vacuum
+
+switch_floor_map:
+  name: Switch Floor Map
+  description: Switches the robot's active navigation map to a saved multi-floor map.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    map_id:
+      name: Map ID
+      description: Numeric ID of the saved map.
+      required: true
+      selector:
+        text:
+
+save_floor_map:
+  name: Save Current Floor Map
+  description: Saves the currently explored SLAM map as a permanent floor map.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    map_name:
+      name: Map Name
+      description: Human-readable name for the saved floor map (e.g. "Upstairs").
+      required: true
+      selector:
+        text:
+
+delete_floor_map:
+  name: Delete Floor Map
+  description: Deletes a saved multi-floor map.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    map_id:
+      name: Map ID
+      description: Numeric ID of the map to delete.
+      required: true
+      selector:
+        text:
+
+custom_clean_sequencing:
+  name: Custom Clean Sequencing
+  description: Commands the robot to clean rooms in a custom order with customized passes, suction, and water flow.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    clean_order:
+      name: Cleaning Order
+      description: "List of room dicts: [{'roomId': 0, 'cleanTimes': 1, 'fanSpeed': 2, 'waterLevel': 1}]"
+      required: true
+      selector:
+        object:
+    kitchen_toilet_last:
+      name: Kitchen & Bathroom Last
+      description: When enabled, cleans dirty zones (kitchen, bathroom) last.
+      default: true
+      selector:
+        boolean:
+
+remote_control_drive:
+  name: Remote Control Drive
+  description: Sends manual driving direction pulse to the robot vacuum.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    direction:
+      name: Direction
+      description: "0: Stop, 1: Forward, 2: Turn Left, 3: Turn Right, 4: Backward"
+      required: true
+      selector:
+        select:
+          options:
+            - label: Stop
+              value: 0
+            - label: Forward
+              value: 1
+            - label: Turn Left
+              value: 2
+            - label: Turn Right
+              value: 3
+            - label: Backward
+              value: 4
+    speed:
+      name: Speed / Headway Value
+      description: Step duration in milliseconds (100 to 500, default 250).
+      default: 250
+      selector:
+        number:
+          min: 100
+          max: 500
+          step: 50
+          unit_of_measurement: ms

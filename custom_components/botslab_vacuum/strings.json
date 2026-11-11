@@ -106,7 +106,42 @@
       "main_brush_life": { "name": "Main Brush Life" },
       "side_brush_life": { "name": "Side Brush Life" },
       "sensor_dirtiness": { "name": "Sensors Cleanliness" },
-      "schedules": { "name": "Schedules" }
+      "schedules": { "name": "Schedules" },
+      "base_station_status": {
+        "name": "Base Station Status",
+        "state": {
+          "idle": "Idle",
+          "washing_mop": "Washing Mop",
+          "drying_mop": "Drying Mop",
+          "dust_collecting": "Dust Collecting",
+          "error": "Error"
+        }
+      },
+      "clean_water_tank": {
+        "name": "Clean Water Tank",
+        "state": {
+          "ok": "Normal",
+          "empty": "Low / Empty",
+          "missing": "Missing"
+        }
+      },
+      "dirty_water_tank": {
+        "name": "Dirty Water Tank",
+        "state": {
+          "ok": "Normal",
+          "full": "Full",
+          "missing": "Missing"
+        }
+      },
+      "dust_bag_status": {
+        "name": "Dust Bag Status",
+        "state": {
+          "ok": "Normal",
+          "full": "Full",
+          "missing": "Missing"
+        }
+      },
+      "mop_drying_remaining_time": { "name": "Mop Drying Remaining Time" }
     },
     "binary_sensor": {
       "problem": { "name": "Problem" }
@@ -118,12 +153,17 @@
       "reset_filter": { "name": "Reset Filter Life" },
       "reset_main_brush": { "name": "Reset Main Brush Life" },
       "reset_side_brush": { "name": "Reset Side Brush Life" },
-      "reset_sensors": { "name": "Reset Sensors Cleanliness" }
+      "reset_sensors": { "name": "Reset Sensors Cleanliness" },
+      "empty_dust_bin": { "name": "Empty Dust Bin" },
+      "wash_mop": { "name": "Wash Mop Pads" },
+      "dry_mop": { "name": "Dry Mop Pads" }
     },
     "switch": {
       "auto_boost": { "name": "Carpet Auto Boost" },
       "button_backlight": { "name": "Button Backlight" },
-      "collision_protection": { "name": "Collision Protection" }
+      "collision_protection": { "name": "Collision Protection" },
+      "child_lock": { "name": "Child Lock" },
+      "dnd_enabled": { "name": "Do Not Disturb" }
     },
     "select": {
       "water_level": {
@@ -141,6 +181,17 @@
           "vacuum_only": "Vacuum Only",
           "mop_only": "Mop Only"
         }
+      },
+      "carpet_mode": {
+        "name": "Carpet Mode",
+        "state": {
+          "boost_only": "Suction Boost",
+          "avoid_while_mopping": "Avoid While Mopping",
+          "ignore_carpet": "Ignore Carpet"
+        }
+      },
+      "active_floor": {
+        "name": "Active Floor Map"
       }
     },
     "number": {
