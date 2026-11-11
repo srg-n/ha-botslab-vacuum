@@ -2027,7 +2027,7 @@ async def test_modern_clean_rooms_protocol_sequence():
         }
     }
     props = {
-        "MapPkgOssInfo": '{"MapID": 100, "CleanID": "360TY860103035420-1794070278"}'
+        "MapPkgOssInfo": '{"MapID": 100, "CleanID": "360TESTSERIAL0001-1794070278"}'
     }
     upload_info = {"host": "https://oss.example.com", "accessKeyId": "k", "accessKeySecret": "s", "securityToken": "t", "dir": "d/"}
 
@@ -2048,7 +2048,7 @@ async def test_modern_clean_rooms_protocol_sequence():
     api.invoke_async = fake_invoke_async
 
     # Dispatch ordered room clean: Room 2 first, then Room 1
-    await api.clean_rooms("360TY860103035420", "pk_mod", ["2", "1"], repeat_times=2)
+    await api.clean_rooms("360TESTSERIAL0001", "pk_mod", ["2", "1"], repeat_times=2)
 
     # 0. StartSyncMapPkgToOss MUST be invoked first to wake SLAM & refresh CleanID
     sync_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "StartSyncMapPkgToOss"]
@@ -2085,7 +2085,7 @@ async def test_modern_clean_rooms_protocol_sequence():
     start_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "StartCleanInAreas"]
     assert len(start_calls) == 1
     _, payload = start_calls[0]
-    assert payload["CleanID"] == "360TY860103035420-1794070278", "CleanID must match active session CleanID"
+    assert payload["CleanID"] == "360TESTSERIAL0001-1794070278", "CleanID must match active session CleanID"
     assert payload["MapID"] == 100
     assert payload["Url"] == "aliyun://bucket/sweep_areas123.txt"
 
@@ -2125,7 +2125,7 @@ async def test_modern_clean_rooms_auto_order_flag():
 
     api.invoke_async = fake_invoke_async
 
-    await api.clean_rooms("360TY860103035420", "pk_mod", ["1"], auto_order=True)
+    await api.clean_rooms("360TESTSERIAL0001", "pk_mod", ["1"], auto_order=True)
 
     # When auto_order is True, orderClean in SetCleanPolicyList must be False
     policy_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "SetCleanPolicyList"]
@@ -2140,7 +2140,7 @@ async def test_modern_clean_rooms_auto_order_flag():
     # Fallback CleanID generated when MapPkgOssInfo has no CleanID
     start_calls = [(cmd, p) for cmd, p in captured_cmds if cmd == "StartCleanInAreas"]
     assert len(start_calls) == 1
-    assert start_calls[0][1]["CleanID"].startswith("360TY860103035420-")
+    assert start_calls[0][1]["CleanID"].startswith("360TESTSERIAL0001-")
 
 
 @pytest.mark.asyncio
@@ -2683,6 +2683,52 @@ async def test_carpet_bridge_preserves_existing_user_no_go_zones():
     coord.api.set_no_go_zones.assert_called_once_with(
         "SN_S8", "PK_S8", "101", [existing_user_zone]
     )
+
+
+@pytest.mark.asyncio
+async def test_remote_control_drive_resolution():
+    """Verify handle_remote_control_drive resolves generic or slugified targets when single vacuum exists."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum import _register_services
+    from custom_components.botslab_vacuum.const import SERVICE_REMOTE_CONTROL_DRIVE
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+
+    hass = MagicMock()
+    registered_services = {}
+    hass.services.has_service = lambda domain, srv: srv in registered_services
+    def fake_register(domain, srv, handler, schema=None):
+        registered_services[srv] = handler
+    hass.services.async_register = fake_register
+
+    coord = MagicMock()
+    coord.async_remote_control_drive = AsyncMock()
+    dev = BotslabVacuumDevice(
+        device_name="360TESTSERIAL0001",
+        product_key="test_product_key",
+        device_title="Botslab S8",
+    )
+    coord.data = {"360TESTSERIAL0001": dev}
+
+    entry = MagicMock()
+    entry.runtime_data.coordinator = coord
+    hass.config_entries.async_entries.return_value = [entry]
+
+    _register_services(hass)
+    handler = registered_services[SERVICE_REMOTE_CONTROL_DRIVE]
+
+    # Test 1: generic target vacuum.botslab_vacuum resolves to single dev
+    call = MagicMock()
+    call.service = SERVICE_REMOTE_CONTROL_DRIVE
+    call.data = {"entity_id": "vacuum.botslab_vacuum", "direction": 1, "speed": 250}
+    await handler(call)
+    coord.async_remote_control_drive.assert_called_once_with("360TESTSERIAL0001", 1, 250)
+
+    # Test 2: slugified title vacuum.botslab_s8 resolves to dev
+    coord.async_remote_control_drive.reset_mock()
+    call.data = {"entity_id": "vacuum.botslab_s8", "direction": 2, "speed": 300}
+    await handler(call)
+    coord.async_remote_control_drive.assert_called_once_with("360TESTSERIAL0001", 2, 300)
+
 
 
 

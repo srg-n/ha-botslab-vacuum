@@ -210,7 +210,7 @@ The vacuum cloud communication runs over a 3-tier proprietary architecture:
 * **Two-Stage Dynamic Polling:** The integration polls every **5 seconds** during active cleaning (`STATUS_CLEANING`) and switches to **5 minutes (300s)** when docked or idle to conserve robot CPU and Wi-Fi airtime. Any push frame or state change wakes the coordinator immediately.
 
 ### 2. Alibaba Cloud (Aliyun) Alink & Downlink Commands
-* Botslab S8 hardware runs on the **Alibaba Cloud IoT (Alink)** platform (`ProductKey: 7347e727042a`).
+* Botslab S8 hardware runs on the **Alibaba Cloud IoT (Alink)** platform.
 * When the vacuum is in standby/sleep mode, it keeps an active Alink MQTT connection to Alibaba's Frankfurt broker.
 * When we issue a start, pause, or room clean command, the Botslab Cloud forwards it using enterprise Alibaba Cloud permissions through Alink downlink to the robot's active socket, instantly waking it.
 

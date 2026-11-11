@@ -407,20 +407,22 @@ def _register_services(hass: HomeAssistant) -> None:
         else:
             entity_ids = []
 
-        if not entity_ids:
-            _LOGGER.warning(
-                "%s was called without a target entity, so it was ignored. "
-                "Pass entity_id to choose which robot should run the command.",
-                call.service,
-            )
-            return []
-
         all_vacuums: list[tuple[BotslabVacuumCoordinator, Any]] = []
         for entry in hass.config_entries.async_entries(DOMAIN):
             runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
             if runtime and runtime.coordinator and runtime.coordinator.data:
                 for dev in runtime.coordinator.data.values():
                     all_vacuums.append((runtime.coordinator, dev))
+
+        if not entity_ids:
+            if len(all_vacuums) == 1:
+                return [all_vacuums[0]]
+            _LOGGER.warning(
+                "%s was called without a target entity, so it was ignored. "
+                "Pass entity_id to choose which robot should run the command.",
+                call.service,
+            )
+            return []
 
         entities = er.async_get(hass)
         devices = dr.async_get(hass)
@@ -449,20 +451,30 @@ def _register_services(hass: HomeAssistant) -> None:
                     matched = True
 
             if not matched:
-                low_id = entity_id.lower()
+                low_id = entity_id.lower().replace("vacuum.", "")
                 for coord, dev in all_vacuums:
                     sn = dev.device_name.lower()
                     title = dev.device_title.lower()
+                    slug_title = title.replace(" ", "_").replace("-", "_")
                     if (
                         entity_id == dev.device_name
                         or low_id == sn
                         or low_id == title
+                        or low_id == slug_title
                         or low_id.endswith(sn)
                         or sn in low_id
+                        or slug_title in low_id
+                        or low_id in slug_title
                     ):
                         selected.append((coord, dev))
                         matched = True
                         break
+
+            # If still not matched, but there is only a single Botslab vacuum in the entire system,
+            # safely map any generic target (e.g. vacuum.botslab_vacuum) to this single device.
+            if not matched and len(all_vacuums) == 1:
+                selected.append(all_vacuums[0])
+                matched = True
 
             if not matched:
                 unknown.append(entity_id)

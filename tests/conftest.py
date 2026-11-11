@@ -359,7 +359,7 @@ def patch_api(room_count: int = 2, login_error: Exception | None = None) -> None
         return [
             {
                 "device_name": TEST_SN,
-                "product_key": "7347e727042a",
+                "product_key": "pk_test_product",
                 "device_title": "Botslab S8",
                 "online": True,
                 "model": "Botslab S8",

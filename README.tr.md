@@ -210,7 +210,7 @@ Süpürgenin bulut iletişimi 3 katmanlı özel bir mimari üzerinde çalışır
 * **Çift Kademeli Dinamik Polling:** Entegrasyon, aktif temizlik esnasında her **5 saniyede bir** veri çeker. Cihaz şarjdayken veya boştayken Wi-Fi ağını ve robot işlemcisini yormamak için **5 dakikalık (300s)** bekleme moduna geçer. Herhangi bir durum değişikliğinde QPUSH TCP soketi Home Assistant'ı derhal uyandırır.
 
 ### 2. Alibaba Cloud (Aliyun) Alink ve Downlink Komutları
-* Botslab S8 donanımı **Alibaba Cloud IoT (Alink)** platformunu (`ProductKey: 7347e727042a`) kullanır.
+* Botslab S8 donanımı **Alibaba Cloud IoT (Alink)** platformunu kullanır.
 * Süpürge bekleme/uyku modundayken Alibaba'nın Frankfurt broker'ına aktif bir Alink MQTT bağlantısı tutar.
 * Biz Home Assistant'tan başlat, durdur veya oda temizliği komutu gönderdiğimizde, Botslab Bulutu kurumsal Alibaba Cloud yetkileriyle Alink downlink tünelinden süpürgenin aktif soketine komutu iletir ve cihazı anında uyandırır.
 
