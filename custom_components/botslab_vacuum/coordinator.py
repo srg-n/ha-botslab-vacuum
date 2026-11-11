@@ -101,11 +101,8 @@ def _parse_consumable_lifetime(
     if val < 0:
         return 0, 0.0
 
-    # 0 handling: in legacy 360, 0 means 0 used seconds (freshly reset -> 100% remaining).
-    # In modern Botslab, 0 means 0% life remaining (depleted).
+    # 0 handling: 0 elapsed/used seconds (freshly reset counter) -> 100% remaining across all models.
     if val == 0:
-        if is_legacy_360 is False:
-            return 0, 0.0
         return 100, max_hours
 
     total_seconds = max_hours * 3600.0

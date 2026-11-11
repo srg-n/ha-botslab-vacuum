@@ -905,46 +905,71 @@ class BotslabModernClient(BotslabBaseApiClient):
     async def reset_consumable(self, sn: str, product_key: str, consumable: str) -> None:
         """Reset consumable life counter."""
         c_norm = str(consumable).lower().strip()
-        if c_norm in ("filter", "hepa", "filter_life"):
-            canonical = "filter"
-        elif c_norm in ("main_brush", "mainbrush", "roll_brush", "brush", "main_brush_life"):
-            canonical = "main_brush"
+        if c_norm in ("sensor", "sensors", "sensor_clean", "sensor_dirtiness", "sensor_life"):
+            canonical = "sensor"
+            code_int = 0
+            tsl_fallbacks = ["ResetSensorCleanLife", "ResetSensorLife"]
         elif c_norm in ("side_brush", "sidebrush", "edge_brush", "side_brush_life"):
             canonical = "side_brush"
-        elif c_norm in ("sensor", "sensors", "sensor_clean", "sensor_dirtiness", "sensor_life"):
-            canonical = "sensor"
+            code_int = 1
+            tsl_fallbacks = ["ResetSideBrushLife"]
+        elif c_norm in ("filter", "hepa", "filter_life"):
+            canonical = "filter"
+            code_int = 2
+            tsl_fallbacks = ["ResetFilterLife"]
+        elif c_norm in ("main_brush", "mainbrush", "roll_brush", "brush", "main_brush_life"):
+            canonical = "main_brush"
+            code_int = 3
+            tsl_fallbacks = ["ResetRollBrushLife", "ResetMainBrushLife"]
         else:
             canonical = c_norm
+            code_int = -1
+            tsl_fallbacks = []
 
-        tsl_action_map: dict[str, str] = {
-            "filter": "ResetFilterLife",
-            "main_brush": "ResetRollBrushLife",
-            "side_brush": "ResetSideBrushLife",
-            "sensor": "ResetSensorCleanLife",
-        }
-        action = tsl_action_map.get(canonical, canonical)
-
-        res = await self.invoke_async(sn, product_key, action, {})
-        code = res.get("code") if isinstance(res, dict) else None
-        if code not in (0, "0", 202016, None):
-            res_sync = await self.invoke_sync(sn, product_key, action, {})
-            code_sync = res_sync.get("code") if isinstance(res_sync, dict) else None
-            if code_sync not in (0, "0", 202016, None):
-                msg = res.get("msg") or res_sync.get("msg") or "Command failed"
-                raise BotslabCommandError(f"Reset consumable {canonical} failed: {msg}")
-
-        shadow_prop_map: dict[str, str] = {
-            "filter": "FilterLifeTime",
-            "main_brush": "RollBrushLifeTime",
-            "side_brush": "EdgeBrushLifeTime",
-            "sensor": "SensorLifeTime",
-        }
-        prop_name = shadow_prop_map.get(canonical)
-        if prop_name:
+        # 1. Primary Modern Botslab Protocol: ResetConsumablesLife service with Consumable enum
+        if code_int >= 0:
             try:
-                await self.set_desired_property(sn, product_key, prop_name, 100)
-            except Exception as shadow_err:
-                _LOGGER.debug("Setting desired shadow property %s failed: %s", prop_name, shadow_err)
+                res = await self.invoke_sync(
+                    sn, product_key, "ResetConsumablesLife", {"Consumable": code_int}
+                )
+                code = res.get("code") if isinstance(res, dict) else None
+                if code in (0, "0"):
+                    _LOGGER.info(
+                        "Successfully reset consumable %s (code %d) on %s via ResetConsumablesLife",
+                        canonical,
+                        code_int,
+                        sn,
+                    )
+                    return
+                _LOGGER.debug(
+                    "ResetConsumablesLife returned code %s for %s, trying fallbacks",
+                    code,
+                    canonical,
+                )
+            except Exception as err:
+                _LOGGER.debug("ResetConsumablesLife exception for %s: %s", canonical, err)
+
+        # 2. Fallback to model-specific individual TSL actions if ResetConsumablesLife is not available
+        success = False
+        last_error = None
+        for action in tsl_fallbacks:
+            try:
+                res = await self.invoke_sync(sn, product_key, action, {})
+                code = res.get("code") if isinstance(res, dict) else None
+                data = res.get("data") if isinstance(res, dict) else {}
+                errmsg = str(data.get("errmsg", ""))
+                if code in (0, "0") and "does not exist" not in errmsg:
+                    _LOGGER.info(
+                        "Reset consumable %s on %s via fallback %s", canonical, sn, action
+                    )
+                    success = True
+                    break
+            except Exception as err:
+                last_error = err
+                continue
+
+        if not success and code_int < 0 and last_error:
+            raise BotslabCommandError(f"Reset consumable {canonical} failed: {last_error}")
 
     async def get_firmware_version(self, sn: str, product_key: str) -> str:
         """Fetch firmware version from Botslab OTA check."""

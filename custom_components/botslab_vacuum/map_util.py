@@ -391,23 +391,14 @@ def render_map_advanced(
             continue
         poly = [w2p(pt[0], pt[1]) for pt in v]
         col = ROOM_PALETTE[idx % len(ROOM_PALETTE)]
-        # Soft room tint fill (alpha 110)
-        room_draw.polygon(poly, fill=(col[0], col[1], col[2], 110))
+        # Vibrant room floor fill (alpha 160)
+        room_draw.polygon(poly, fill=(col[0], col[1], col[2], 160))
         # Crisp room dividing border outline (alpha 240)
         room_draw.line(
             poly + [poly[0]], fill=(col[0], col[1], col[2], 240), width=max(1, scale // 2)
         )
 
-    # Mask room layer so it only colors explored floor (val == 127 or 1)
-    floor_mask = (
-        lflip.point(lambda v: 255 if v in (1, 127) else 0)
-        .crop((left, upper, right, lower))
-        .resize((crop_w, crop_h), Image.NEAREST)
-    )
-    masked_room_layer = Image.composite(
-        room_layer, Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0)), floor_mask
-    )
-    base_canvas = Image.alpha_composite(crop_floor, masked_room_layer)
+    base_canvas = Image.alpha_composite(crop_floor, room_layer)
 
     # 5. Create Layer 3: OBSTACLES & WALLS (STAMPED ON TOP)
     raw_obstacle_mask = (

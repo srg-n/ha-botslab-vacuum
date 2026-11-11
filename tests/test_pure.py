@@ -1583,41 +1583,42 @@ def test_parse_consumable_lifetime_used_seconds_inverted():
 
 @pytest.mark.asyncio
 async def test_reset_consumable_aliases_and_tsl_actions():
-    """Verify reset_consumable invokes exact official Botslab TSL actions asynchronously with fallback."""
+    """Verify reset_consumable invokes exact official Botslab TSL actions with fallback."""
     from unittest.mock import AsyncMock, MagicMock
     from custom_components.botslab_vacuum.api import BotslabVacuumApi
     from custom_components.botslab_vacuum.const import INFO_360_RESET_CONSUMABLE
 
     session = MagicMock()
     api = BotslabVacuumApi(session, "eu1", "m2", "q", "t")
-    api.invoke_async = AsyncMock(return_value={"code": 0})
     api.invoke_sync = AsyncMock(return_value={"code": 0})
-    api.set_desired_property = AsyncMock(return_value={"code": 0})
 
-    # Test sensor aliases all call ResetSensorCleanLife
+    # Test sensor aliases all call ResetConsumablesLife with Consumable=0
     for alias in ("sensor", "sensors", "sensor_clean", "sensor_dirtiness"):
-        api.invoke_async.reset_mock()
+        api.invoke_sync.reset_mock()
         await api.reset_consumable("SN1", "PK1", alias)
-        api.invoke_async.assert_called_once_with("SN1", "PK1", "ResetSensorCleanLife", {})
+        api.invoke_sync.assert_called_once_with("SN1", "PK1", "ResetConsumablesLife", {"Consumable": 0})
 
     # Test filter, main brush, side brush call exact TSL actions
-    api.invoke_async.reset_mock()
-    await api.reset_consumable("SN1", "PK1", "filter")
-    api.invoke_async.assert_called_once_with("SN1", "PK1", "ResetFilterLife", {})
-
-    api.invoke_async.reset_mock()
-    await api.reset_consumable("SN1", "PK1", "main_brush")
-    api.invoke_async.assert_called_once_with("SN1", "PK1", "ResetRollBrushLife", {})
-
-    api.invoke_async.reset_mock()
-    await api.reset_consumable("SN1", "PK1", "side_brush")
-    api.invoke_async.assert_called_once_with("SN1", "PK1", "ResetSideBrushLife", {})
-
-    # Test fallback to invoke_sync when invoke_async returns non-zero error code
-    api.invoke_async = AsyncMock(return_value={"code": 1001, "msg": "async failed"})
     api.invoke_sync.reset_mock()
+    await api.reset_consumable("SN1", "PK1", "side_brush")
+    api.invoke_sync.assert_called_once_with("SN1", "PK1", "ResetConsumablesLife", {"Consumable": 1})
+
+    api.invoke_sync.reset_mock()
+    await api.reset_consumable("SN1", "PK1", "filter")
+    api.invoke_sync.assert_called_once_with("SN1", "PK1", "ResetConsumablesLife", {"Consumable": 2})
+
+    api.invoke_sync.reset_mock()
+    await api.reset_consumable("SN1", "PK1", "main_brush")
+    api.invoke_sync.assert_called_once_with("SN1", "PK1", "ResetConsumablesLife", {"Consumable": 3})
+
+    # Test fallback to individual actions when ResetConsumablesLife returns non-zero error
+    api.invoke_sync = AsyncMock(side_effect=[
+        {"code": 202016, "data": {"errmsg": "dsl service ResetConsumablesLife does not exist"}},
+        {"code": 0, "data": {}}
+    ])
     await api.reset_consumable("SN1", "PK1", "sensor")
-    api.invoke_sync.assert_called_once_with("SN1", "PK1", "ResetSensorCleanLife", {})
+    assert api.invoke_sync.call_args_list[0].args == ("SN1", "PK1", "ResetConsumablesLife", {"Consumable": 0})
+    assert api.invoke_sync.call_args_list[1].args == ("SN1", "PK1", "ResetSensorCleanLife", {})
 
     # Test legacy 360 backend reset uses INFO_360_RESET_CONSUMABLE (21016) and zeroes local cache
     api_legacy = BotslabVacuumApi(session, "cn", "m2", "q", "t")
@@ -1786,12 +1787,12 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0", "1.2.1")
     assert data["categories"] == ["appliances_cleaning.cleaning"]
 
 
 def test_parse_consumable_lifetime_legacy_vs_modern():
-    """Verify 0 value is 100% on legacy 360 (0 used seconds) and 0% on modern Botslab (0% remaining)."""
+    """Verify 0 value is 100% on both legacy 360 and modern Botslab (0 used seconds)."""
     from custom_components.botslab_vacuum.coordinator import (
         FILTER_MAX_HOURS,
         _parse_consumable_lifetime,
@@ -1802,27 +1803,25 @@ def test_parse_consumable_lifetime_legacy_vs_modern():
     assert pct_leg == 100
     assert hrs_leg == FILTER_MAX_HOURS
 
-    # Modern Botslab: 0% remaining = depleted (0%)
+    # Modern Botslab: 0 seconds elapsed = 100% remaining (freshly reset)
     pct_mod, hrs_mod = _parse_consumable_lifetime(0, FILTER_MAX_HOURS, is_legacy_360=False)
-    assert pct_mod == 0
-    assert hrs_mod == 0.0
+    assert pct_mod == 100
+    assert hrs_mod == FILTER_MAX_HOURS
 
 
 @pytest.mark.asyncio
 async def test_reset_consumable_code_202016_accepted():
-    """Verify code 202016 (device async reply pending) is accepted as successful dispatch."""
+    """Verify ResetConsumablesLife dispatches via invoke_sync and succeeds with code 0."""
     from unittest.mock import AsyncMock, MagicMock
     from custom_components.botslab_vacuum.api import BotslabVacuumApi
 
     session = MagicMock()
     api = BotslabVacuumApi(session, "eu1", "m2", "q", "t")
-    api.invoke_async = AsyncMock(return_value={"code": 202016, "msg": "Network Error"})
-    api.set_desired_property = AsyncMock(return_value={"code": 0})
+    api.invoke_sync = AsyncMock(return_value={"code": 0, "msg": "Success"})
 
     # Should not raise exception
     await api.reset_consumable("SN_S8", "PK_S8", "sensor")
-    api.invoke_async.assert_called_once_with("SN_S8", "PK_S8", "ResetSensorCleanLife", {})
-    api.set_desired_property.assert_called_once_with("SN_S8", "PK_S8", "SensorLifeTime", 100)
+    api.invoke_sync.assert_called_once_with("SN_S8", "PK_S8", "ResetConsumablesLife", {"Consumable": 0})
 
 
 @pytest.mark.asyncio
