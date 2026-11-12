@@ -1787,7 +1787,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.2.6", "1.2.7", "1.2.8")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.2.6", "1.2.7", "1.2.8", "1.2.9")
     assert data["categories"] == ["appliances_cleaning.cleaning"]
 
 
@@ -2835,11 +2835,25 @@ async def test_coordinator_no_go_zones_management():
     await coord.async_add_no_go_zone("360TESTSERIAL0001", -500, 500, 500, 1500, zone_type="forbid")
     assert len(coord._saved_no_go_zones["360TESTSERIAL0001"]) == 1
     assert coord._saved_no_go_zones["360TESTSERIAL0001"][0] == {
+        "active": "forbid",
         "type": "forbid",
+        "name": "forbid_0",
+        "vertexs": [[-500, 500], [-500, 1500], [500, 1500], [500, 500]],
         "points": [-500, 500, 500, 1500],
     }
     api.set_no_go_zones.assert_called_with(
-        "360TESTSERIAL0001", "test_product_key", 101, [{"type": "forbid", "points": [-500, 500, 500, 1500]}]
+        "360TESTSERIAL0001",
+        "test_product_key",
+        101,
+        [
+            {
+                "active": "forbid",
+                "type": "forbid",
+                "name": "forbid_0",
+                "vertexs": [[-500, 500], [-500, 1500], [500, 1500], [500, 500]],
+                "points": [-500, 500, 500, 1500],
+            }
+        ],
     )
 
     # 2. Add mop zone

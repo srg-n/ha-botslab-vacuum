@@ -278,6 +278,57 @@ def _decode_room_name(raw_name: str) -> str:
         return raw_name
 
 
+def _normalize_no_go_zone(zone: dict[str, Any], index: int = 0) -> dict[str, Any]:
+    """Normalize a forbidden / no-mop / virtual wall zone into standard Botslab format."""
+    if not isinstance(zone, dict):
+        return {}
+    z_type = str(zone.get("type", "forbid")).lower().strip()
+    if z_type in ("no_go", "forbid", "sweep"):
+        z_type = "forbid"
+    elif z_type in ("no_mop", "mop"):
+        z_type = "mop"
+    elif z_type in ("wall", "virtual_wall", "line"):
+        z_type = "line"
+
+    vertexs = zone.get("vertexs")
+    points = zone.get("points")
+
+    if points and isinstance(points, list) and len(points) >= 4:
+        x1, y1, x2, y2 = points[:4]
+        min_x, max_x = int(round(min(x1, x2))), int(round(max(x1, x2)))
+        min_y, max_y = int(round(min(y1, y2))), int(round(max(y1, y2)))
+        norm_points = [min_x, min_y, max_x, max_y]
+        if not (vertexs and isinstance(vertexs, list) and len(vertexs) >= 2):
+            if z_type == "line":
+                vertexs = [[min_x, min_y], [max_x, max_y]]
+            else:
+                vertexs = [
+                    [min_x, min_y],
+                    [min_x, max_y],
+                    [max_x, max_y],
+                    [max_x, min_y],
+                ]
+    elif vertexs and isinstance(vertexs, list) and len(vertexs) >= 2:
+        xs = [pt[0] for pt in vertexs if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+        ys = [pt[1] for pt in vertexs if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+        if xs and ys:
+            norm_points = [int(round(min(xs))), int(round(min(ys))), int(round(max(xs))), int(round(max(ys)))]
+        else:
+            norm_points = [0, 0, 0, 0]
+    else:
+        norm_points = [0, 0, 0, 0]
+        vertexs = []
+
+    name = zone.get("name") or f"{z_type}_{index}"
+    return {
+        "active": "forbid",
+        "type": z_type,
+        "name": str(name),
+        "vertexs": vertexs,
+        "points": norm_points,
+    }
+
+
 class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevice]]):
     """Coordinator to manage fetching data from Botslab cloud."""
 
@@ -882,6 +933,18 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             else:
                 c_mode_int = 0
 
+            # Synchronize no-go zones from live map info if not explicitly set in coordinator
+            cloud_no_go = dev_map_info.no_go_zones if dev_map_info else []
+            if sn not in self._saved_no_go_zones and cloud_no_go:
+                self._saved_no_go_zones[sn] = [
+                    _normalize_no_go_zone(z, i) for i, z in enumerate(cloud_no_go)
+                ]
+
+            active_no_go = list(
+                self._saved_no_go_zones.get(sn)
+                or [_normalize_no_go_zone(z, i) for i, z in enumerate(cloud_no_go)]
+            )
+
             dev = BotslabVacuumDevice(
                 product_key=pk,
                 device_name=sn,
@@ -923,7 +986,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 clean_sub_status=str(clean_sub_status) if clean_sub_status is not None else None,
                 current_location=current_loc if isinstance(current_loc, list) else None,
                 dock_position=dev_map_info.dock_position if dev_map_info else None,
-                no_go_zones=list(self._saved_no_go_zones.get(sn) or (dev_map_info.no_go_zones if dev_map_info else [])),
+                no_go_zones=active_no_go,
                 cleaning_path=cleaning_path,
                 robot_pose=robot_pose,
                 map_image_bytes=map_bytes,
@@ -1379,11 +1442,27 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         except (ValueError, TypeError):
             map_id = 0
 
-        self._saved_no_go_zones[sn] = list(places)
-        if dev:
-            dev.no_go_zones = list(places)
+        if map_id == 0 and dev:
+            if str(dev.clean_id).isdigit():
+                map_id = int(dev.clean_id)
+            elif dev.saved_maps:
+                for m in dev.saved_maps:
+                    if m.get("is_cur") and str(m.get("map_id", "")).isdigit():
+                        map_id = int(m["map_id"])
+                        break
 
-        await self.api.set_no_go_zones(sn, pk, map_id, places)
+        normalized = [
+            _normalize_no_go_zone(p, i)
+            for i, p in enumerate(places or [])
+            if isinstance(p, dict)
+        ]
+
+        await self.api.set_no_go_zones(sn, pk, map_id, normalized)
+
+        self._saved_no_go_zones[sn] = list(normalized)
+        if dev:
+            dev.no_go_zones = list(normalized)
+
         self.clear_map_cache(sn)
         if self.data:
             self.async_set_updated_data(self.data)
@@ -1402,10 +1481,10 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         dev = self.data.get(sn) if self.data else None
         min_x, max_x = int(round(min(x1, x2))), int(round(max(x1, x2)))
         min_y, max_y = int(round(min(y1, y2))), int(round(max(y1, y2)))
-        new_zone = {
+        new_zone = _normalize_no_go_zone({
             "type": zone_type,
             "points": [min_x, min_y, max_x, max_y],
-        }
+        })
         current_zones = list(
             self._saved_no_go_zones.get(sn) or (dev.no_go_zones if dev else [])
         )
@@ -1441,7 +1520,12 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             pts = [int(round(p)) for p in points[:4]]
             current_zones = [z for z in current_zones if z.get("points") != pts]
         elif zone_type is not None:
-            current_zones = [z for z in current_zones if z.get("type") != zone_type]
+            norm_type = (
+                "mop"
+                if zone_type in ("no_mop", "mop")
+                else ("line" if zone_type in ("wall", "virtual_wall", "line") else "forbid")
+            )
+            current_zones = [z for z in current_zones if z.get("type") != norm_type]
 
         await self.async_set_no_go_zones(sn, current_zones)
 
@@ -1456,5 +1540,10 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             current_zones = list(
                 self._saved_no_go_zones.get(sn) or (dev.no_go_zones if dev else [])
             )
-            remaining = [z for z in current_zones if z.get("type") != zone_type]
+            norm_type = (
+                "mop"
+                if zone_type in ("no_mop", "mop")
+                else ("line" if zone_type in ("wall", "virtual_wall", "line") else "forbid")
+            )
+            remaining = [z for z in current_zones if z.get("type") != norm_type]
             await self.async_set_no_go_zones(sn, remaining)

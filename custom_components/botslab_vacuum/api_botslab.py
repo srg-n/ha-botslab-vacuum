@@ -543,11 +543,17 @@ class BotslabModernClient(BotslabBaseApiClient):
             else None
         )
         raw_area = map_json.get("area") or map_json.get("zones") or []
-        no_go = [
-            a
-            for a in raw_area
-            if isinstance(a, dict) and a.get("active") == "forbid"
-        ]
+        no_go = []
+        for a in raw_area:
+            if isinstance(a, dict) and a.get("active") == "forbid":
+                zone_dict = dict(a)
+                v = zone_dict.get("vertexs")
+                if v and isinstance(v, list) and len(v) >= 2 and "points" not in zone_dict:
+                    xs = [pt[0] for pt in v if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+                    ys = [pt[1] for pt in v if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+                    if xs and ys:
+                        zone_dict["points"] = [min(xs), min(ys), max(xs), max(ys)]
+                no_go.append(zone_dict)
         clean_zones = [
             a
             for a in raw_area
@@ -1434,15 +1440,64 @@ class BotslabModernClient(BotslabBaseApiClient):
         places: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Set/replace/clear the forbidden (no-go) zones via SetFbdPlaces."""
-        return await self.invoke_sync(
+        try:
+            int_map_id = int(map_id)
+        except (ValueError, TypeError):
+            int_map_id = 0
+
+        formatted_places: list[dict[str, Any]] = []
+        for idx, place in enumerate(places or []):
+            if not isinstance(place, dict):
+                continue
+            z_type = str(place.get("type", "forbid")).lower()
+            if z_type in ("no_go", "forbid", "sweep"):
+                z_type = "forbid"
+            elif z_type in ("no_mop", "mop"):
+                z_type = "mop"
+            elif z_type in ("wall", "virtual_wall", "line"):
+                z_type = "line"
+
+            vertexs = place.get("vertexs")
+            if not (isinstance(vertexs, list) and len(vertexs) >= 2):
+                pts = place.get("points")
+                if isinstance(pts, list) and len(pts) >= 4:
+                    x1, y1, x2, y2 = pts[:4]
+                    min_x, max_x = int(round(min(x1, x2))), int(round(max(x1, x2)))
+                    min_y, max_y = int(round(min(y1, y2))), int(round(max(y1, y2)))
+                    if z_type == "line":
+                        vertexs = [[min_x, min_y], [max_x, max_y]]
+                    else:
+                        vertexs = [
+                            [min_x, min_y],
+                            [min_x, max_y],
+                            [max_x, max_y],
+                            [max_x, min_y],
+                        ]
+                else:
+                    continue
+
+            name = place.get("name") or f"{z_type}_{idx}"
+            formatted_places.append({
+                "active": "forbid",
+                "type": z_type,
+                "name": str(name),
+                "vertexs": vertexs,
+            })
+
+        res = await self.invoke_sync(
             sn,
             product_key,
             "SetFbdPlaces",
             {
-                "MapID": int(map_id),
-                "FbdPlacesList": json.dumps(places, separators=(",", ":")),
+                "MapID": int_map_id,
+                "FbdPlacesList": json.dumps(formatted_places, separators=(",", ":")),
             },
         )
+        code = res.get("code") if isinstance(res, dict) else None
+        if code not in (0, "0", None):
+            _LOGGER.error("SetFbdPlaces failed with code %s: %s", code, res)
+            raise BotslabCommandError(f"SetFbdPlaces failed: {res.get('message') or code}")
+        return res
 
     async def get_clean_track(
         self, sn: str, product_key: str, start_idx: int = 0
