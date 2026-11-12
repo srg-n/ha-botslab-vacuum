@@ -1787,7 +1787,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0", "1.2.1", "1.2.2", "1.2.3")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4")
     assert data["categories"] == ["appliances_cleaning.cleaning"]
 
 
@@ -2911,6 +2911,175 @@ def test_map_util_renders_points_no_go_and_mop_zones():
     )
     assert len(png_bytes) > 0
     assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_lan_remote_control_payload_and_directions():
+    """Verify BotslabLanRemoteControl formats payloads correctly for all directions and stop."""
+    from custom_components.botslab_vacuum.lan_remote import BotslabLanRemoteControl
+
+    # Stop: ctrlCode 4000
+    stop_payload = BotslabLanRemoteControl.build_payload(0)
+    assert stop_payload["infoType"] == 21020
+    assert stop_payload["data"]["ctrlCode"] == 4000
+    assert "ctrlParams" not in stop_payload["data"]
+
+    stop_str = BotslabLanRemoteControl.build_payload("stop")
+    assert stop_str["data"]["ctrlCode"] == 4000
+
+    # Forward: direction 1
+    fwd = BotslabLanRemoteControl.build_payload(1, speed=300)
+    assert fwd["data"]["ctrlCode"] == 3013
+    assert fwd["data"]["ctrlParams"] == {"speedV": 300, "direction": 1}
+
+    fwd_str = BotslabLanRemoteControl.build_payload("forward", speed=300)
+    assert fwd_str["data"]["ctrlParams"]["direction"] == 1
+
+    # Backward: direction 2
+    back = BotslabLanRemoteControl.build_payload(2, speed=200)
+    assert back["data"]["ctrlParams"] == {"speedV": 200, "direction": 2}
+    assert BotslabLanRemoteControl.build_payload("backward")["data"]["ctrlParams"]["direction"] == 2
+
+    # Left: direction 3
+    left = BotslabLanRemoteControl.build_payload(3, speed=250)
+    assert left["data"]["ctrlParams"] == {"speedV": 250, "direction": 3}
+    assert BotslabLanRemoteControl.build_payload("left")["data"]["ctrlParams"]["direction"] == 3
+
+    # Right: direction 4
+    right = BotslabLanRemoteControl.build_payload(4, speed=250)
+    assert right["data"]["ctrlParams"] == {"speedV": 250, "direction": 4}
+    assert BotslabLanRemoteControl.build_payload("right")["data"]["ctrlParams"]["direction"] == 4
+
+
+def test_lan_remote_control_send_datagram():
+    """Verify UDP datagram transmission to target IP and broadcast with SO_BROADCAST."""
+    import socket
+    from unittest.mock import MagicMock, patch
+    from custom_components.botslab_vacuum.lan_remote import BotslabLanRemoteControl
+
+    payload = {"infoType": 21020, "data": {"ctrlCode": 4000}, "packId": 1234}
+    mock_sock = MagicMock()
+
+    with patch("socket.socket", return_value=mock_sock):
+        BotslabLanRemoteControl.send_datagram(payload, target_ip="192.168.1.105")
+
+    # Verify socket options
+    mock_sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    assert mock_sock.sendto.call_count == 2
+    calls = [c[0] for c in mock_sock.sendto.call_args_list]
+    dest_ips = {c[1][0] for c in calls}
+    dest_ports = {c[1][1] for c in calls}
+    assert "192.168.1.105" in dest_ips
+    assert "255.255.255.255" in dest_ips
+    assert dest_ports == {21020}
+    mock_sock.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_lan_remote_control_async_send_drive():
+    """Verify async_send_drive builds payload and delegates to executor."""
+    from unittest.mock import patch
+    from custom_components.botslab_vacuum.lan_remote import BotslabLanRemoteControl
+
+    with patch.object(BotslabLanRemoteControl, "send_datagram") as mock_send:
+        res = await BotslabLanRemoteControl.async_send_drive("forward", speed=280, target_ip="10.0.0.50")
+        assert res["infoType"] == 21020
+        assert res["data"]["ctrlParams"]["direction"] == 1
+        assert res["data"]["ctrlParams"]["speedV"] == 280
+        mock_send.assert_called_once_with(res, "10.0.0.50", 21020, True)
+
+
+def test_parse_recorded_maps():
+    """Verify _parse_recorded_maps correctly parses device shadow RecordedMapList."""
+    import json
+    from custom_components.botslab_vacuum.coordinator import _parse_recorded_maps
+
+    sample_raw = [
+        {
+            "CleanID": "1734261908",
+            "BookmarkFlag": True,
+            "Nickname": "Salon & Mutfak",
+            "Url": "https://oss.example.com/map1.bin",
+        },
+        {
+            "CleanID": "1734270000",
+            "BookmarkFlag": False,
+            "Nickname": "",
+            "Url": "https://oss.example.com/map2.bin",
+        },
+        {
+            "CleanID": "1734280000",
+            "BookmarkFlag": True,
+            "Nickname": "",
+        },
+    ]
+
+    # Test with JSON serialized string
+    parsed = _parse_recorded_maps(json.dumps(sample_raw), current_clean_id="1734261908")
+    assert len(parsed) == 3
+    assert parsed[0]["clean_id"] == "1734261908"
+    assert parsed[0]["map_id"] == "1734261908"
+    assert parsed[0]["map_name"] == "Salon & Mutfak"
+    assert parsed[0]["is_cur"] == 1
+    assert parsed[0]["bookmark"] is True
+
+    # Map 2: Not bookmarked, empty name -> Map 2
+    assert parsed[1]["map_name"] == "Map 2"
+    assert parsed[1]["is_cur"] == 0
+    assert parsed[1]["bookmark"] is False
+
+    # Map 3: Bookmarked, empty name -> Floor 3 (Saved)
+    assert parsed[2]["map_name"] == "Floor 3 (Saved)"
+    assert parsed[2]["bookmark"] is True
+
+
+@pytest.mark.asyncio
+async def test_switch_floor_map_modern_recover_recorded_map():
+    """Verify switch_floor_map dispatches TSL RecoverRecordedMap with CleanID."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api_botslab import BotslabModernClient
+    from custom_components.botslab_vacuum.const import SERVICE_RECOVER_RECORDED_MAP
+
+    client = MagicMock(spec=BotslabModernClient)
+    client.invoke_sync = AsyncMock(return_value={"code": 0, "data": {"result": 0}, "msg": "Success"})
+
+    res = await BotslabModernClient.switch_floor_map(client, "SN123", "PK123", "1734261908")
+    assert res["code"] == 0
+    client.invoke_sync.assert_called_once_with(
+        "SN123", "PK123", SERVICE_RECOVER_RECORDED_MAP, {"CleanID": "1734261908"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_coordinator_lan_remote_drive_integration():
+    """Verify coordinator.async_remote_control_drive invokes BotslabLanRemoteControl."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from custom_components.botslab_vacuum.coordinator import BotslabVacuumCoordinator
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+
+    coord = MagicMock(spec=BotslabVacuumCoordinator)
+    coord.api = MagicMock()
+    coord.api.is_legacy_360 = False
+    dev = BotslabVacuumDevice(
+        device_name="SN_TEST",
+        product_key="PK_TEST",
+        device_title="Botslab S8",
+        ip_address="192.168.1.55",
+    )
+    coord.data = {"SN_TEST": dev}
+
+    with patch(
+        "custom_components.botslab_vacuum.lan_remote.BotslabLanRemoteControl.async_send_drive",
+        new=AsyncMock(),
+    ) as mock_send:
+        await BotslabVacuumCoordinator.async_remote_control_drive(
+            coord, "SN_TEST", direction=1, speed=300
+        )
+        mock_send.assert_called_once_with(
+            direction=1,
+            speed=300,
+            target_ip="192.168.1.55",
+        )
+
 
 
 

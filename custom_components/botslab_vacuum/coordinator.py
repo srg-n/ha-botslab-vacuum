@@ -53,6 +53,7 @@ from .const import (
     TANK_STATE_MISSING,
     TANK_STATE_OK,
 )
+from .lan_remote import BotslabLanRemoteControl
 from .models import (
     BotslabBaseStation,
     BotslabConsumableStatus,
@@ -176,6 +177,80 @@ def _parse_base_station(info: Any) -> BotslabBaseStation:
         dust_bag_status=db_val,
         mop_dry_remain_seconds=dry_remain,
     )
+
+
+def _parse_recorded_maps(
+    raw_maps: Any, current_clean_id: str = "", current_map_id: str = ""
+) -> list[dict[str, Any]]:
+    """Parse RecordedMapList from device shadow props into standard saved_maps list."""
+    if not raw_maps:
+        return []
+    if isinstance(raw_maps, str):
+        try:
+            raw_maps = json.loads(raw_maps)
+        except Exception:
+            return []
+    if not isinstance(raw_maps, list):
+        return []
+
+    result: list[dict[str, Any]] = []
+    for idx, item in enumerate(raw_maps):
+        if not isinstance(item, dict):
+            continue
+        clean_id = str(
+            item.get("CleanID")
+            or item.get("cleanId")
+            or item.get("clean_id")
+            or item.get("mapId")
+            or item.get("map_id")
+            or ""
+        ).strip()
+        if not clean_id:
+            clean_id = str(idx + 1)
+
+        raw_name = str(
+            item.get("Nickname")
+            or item.get("nickname")
+            or item.get("mapName")
+            or item.get("name")
+            or ""
+        ).strip()
+        bookmark = bool(
+            item.get("BookmarkFlag", item.get("bookmarkFlag", item.get("bookmark", False)))
+        )
+
+        if raw_name:
+            name = raw_name
+        elif bookmark:
+            name = f"Floor {idx + 1} (Saved)"
+        else:
+            name = f"Map {idx + 1}"
+
+        is_cur = (
+            1
+            if (
+                clean_id
+                and (
+                    clean_id == str(current_clean_id).strip()
+                    or clean_id == str(current_map_id).strip()
+                )
+            )
+            else 0
+        )
+
+        result.append(
+            {
+                "map_id": clean_id,
+                "clean_id": clean_id,
+                "map_name": name,
+                "name": name,
+                "is_cur": is_cur,
+                "bookmark": bookmark,
+                "url": str(item.get("Url") or item.get("url") or ""),
+            }
+        )
+
+    return result
 
 
 @dataclass(slots=True)
@@ -481,8 +556,21 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
 
             raw_oss = props.get("MapPkgOssInfo")
             oss_dict = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
-            map_id = str(oss_dict.get("MapID", ""))
-            clean_id = str(oss_dict.get("CleanID", ""))
+            clean_id = str(oss_dict.get("CleanID", "")).strip()
+            raw_map_id = str(oss_dict.get("MapID", "")).strip()
+            map_id = raw_map_id if (raw_map_id and raw_map_id != "0") else clean_id
+
+            ip_str = str(
+                props.get("wifiIP")
+                or props.get("ip")
+                or props.get("device_ip")
+                or props.get("devIp")
+                or props.get("lanIp")
+                or d.get("ip")
+                or d.get("devIp")
+                or d.get("wifiIP")
+                or ""
+            ).strip()
 
             # Consumables
             raw_filter = _find_first_prop(
@@ -749,14 +837,29 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
 
             # Query Multi-Floor Maps
             saved_maps: list[dict[str, Any]] = []
-            if has_multi_map and not self.api.is_legacy_360:
-                try:
-                    mm_dict = await self.api.get_multi_maps(sn, pk)
-                    if isinstance(mm_dict, dict) and "map_list" in mm_dict:
-                        saved_maps = mm_dict["map_list"]
+            if has_multi_map:
+                # 1. Primary: Device shadow RecordedMapList (modern Botslab S8/S10)
+                raw_rec = (
+                    props.get("RecordedMapList")
+                    or props.get("recorded_maps")
+                    or props.get("recordedMapList")
+                )
+                if raw_rec:
+                    saved_maps = _parse_recorded_maps(raw_rec, clean_id, map_id)
+                    if saved_maps:
                         self._multi_maps_cache[sn] = saved_maps
-                except Exception as mm_err:
-                    _LOGGER.debug("Multi-map fetch failed for %s: %s", sn, mm_err)
+
+                # 2. Secondary fallback: Legacy REST endpoint if shadow map list is empty
+                if not saved_maps and not self.api.is_legacy_360:
+                    try:
+                        mm_dict = await self.api.get_multi_maps(sn, pk)
+                        if isinstance(mm_dict, dict) and "map_list" in mm_dict:
+                            saved_maps = mm_dict["map_list"]
+                            self._multi_maps_cache[sn] = saved_maps
+                    except Exception as mm_err:
+                        _LOGGER.debug("Multi-map fetch failed for %s: %s", sn, mm_err)
+                        saved_maps = self._multi_maps_cache.get(sn, [])
+                elif not saved_maps:
                     saved_maps = self._multi_maps_cache.get(sn, [])
 
             # Child lock, DND, Carpet Mode
@@ -841,6 +944,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 carpet_mode=c_mode_int,
                 saved_maps=saved_maps,
                 saved_carpets=self._saved_carpets.get(sn, []),
+                ip_address=ip_str,
             )
             device_map[sn] = dev
 
@@ -1233,13 +1337,34 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         await self.async_request_refresh()
 
     async def async_remote_control_drive(
-        self, sn: str, direction: int, speed: int = 250
+        self,
+        sn: str,
+        direction: int | str,
+        speed: int = 250,
+        ip: str | None = None,
     ) -> None:
-        """Send directional movement pulse."""
+        """Send directional movement pulse via direct LAN UDP (port 21020) with cloud fallback."""
         dev = self.data.get(sn) if self.data else None
-        pk = dev.product_key if dev else ""
-        await self.api.set_remote_control_mode(sn, pk, True)
-        await self.api.send_remote_drive(sn, pk, direction, speed)
+        target_ip = ip or (dev.ip_address if dev else None)
+
+        # 1. Primary: Direct LAN UDP transmission (zero latency, firmware compatible)
+        try:
+            await BotslabLanRemoteControl.async_send_drive(
+                direction=direction,
+                speed=speed,
+                target_ip=target_ip,
+            )
+        except Exception as lan_err:
+            _LOGGER.warning("LAN UDP remote drive failed for %s: %s", sn, lan_err)
+
+        # 2. Secondary fallback: Legacy cloud mode for older 360 models
+        if self.api.is_legacy_360:
+            pk = dev.product_key if dev else ""
+            try:
+                await self.api.set_remote_control_mode(sn, pk, True)
+                await self.api.send_remote_drive(sn, pk, direction, speed)
+            except Exception as leg_err:
+                _LOGGER.debug("Legacy cloud remote drive failed for %s: %s", sn, leg_err)
 
     async def async_set_no_go_zones(
         self, sn: str, places: list[dict[str, Any]]

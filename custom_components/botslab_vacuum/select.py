@@ -134,12 +134,15 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
                 return f"Map {self.device.current_map_id}"
             return self.options[0]
         cur_id = str(self.device.current_map_id)
+        cur_clean_id = str(self.device.clean_id)
         seen: set[str] = set()
         current = None
         for m in self.device.saved_maps:
             name = self._map_display_name(m, seen)
             seen.add(name)
-            if str(m.get("map_id")) == cur_id or m.get("is_cur") == 1:
+            m_id = str(m.get("map_id", ""))
+            m_clean = str(m.get("clean_id", ""))
+            if (cur_id and m_id == cur_id) or (cur_clean_id and m_clean == cur_clean_id) or m.get("is_cur") == 1:
                 current = name
         return current or self.options[0]
 
@@ -153,7 +156,7 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
             name = self._map_display_name(m, seen)
             seen.add(name)
             if name == option:
-                target_id = m.get("map_id")
+                target_id = m.get("clean_id") or m.get("map_id")
                 break
         if target_id is not None:
             await self.coordinator.async_switch_floor_map(self.device.device_name, target_id)

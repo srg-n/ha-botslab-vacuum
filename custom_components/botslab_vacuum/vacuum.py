@@ -125,7 +125,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             },
             "wifi_ssid": dev.props.get("wifi_ssid") or dev.raw.get("ssid") or "-",
             "wifi_rssi": dev.props.get("wifi_rssi") or dev.raw.get("rssi") or "-",
-            "ip_address": dev.props.get("ip") or dev.raw.get("ip") or dev.raw.get("devIp") or "-",
+            "ip_address": dev.ip_address or dev.props.get("ip") or dev.raw.get("ip") or dev.raw.get("devIp") or "-",
             # Consumable percentages (0 - 100)
             "filter_life_pct": dev.consumables.filter_life_pct,
             "main_brush_life_pct": dev.consumables.main_brush_life_pct,

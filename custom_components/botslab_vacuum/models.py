@@ -232,6 +232,7 @@ class BotslabVacuumDevice:
     carpet_mode: int = 0
     saved_maps: list[dict[str, Any]] = field(default_factory=list)
     saved_carpets: list[dict[str, Any]] = field(default_factory=list)
+    ip_address: str = ""
 
     @property
     def unique_id(self) -> str:

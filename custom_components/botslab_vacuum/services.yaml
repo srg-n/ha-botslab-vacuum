@@ -627,14 +627,14 @@ custom_clean_sequencing:
 
 remote_control_drive:
   name: Remote Control Drive
-  description: Sends manual driving direction pulse to the robot vacuum.
+  description: Sends manual driving direction pulse to the robot vacuum via direct LAN UDP (port 21020).
   target:
     entity:
       domain: vacuum
   fields:
     direction:
       name: Direction
-      description: "0: Stop, 1: Forward, 2: Turn Left, 3: Turn Right, 4: Backward"
+      description: "0: Stop, 1: Forward, 2: Backward, 3: Turn Left, 4: Turn Right (also accepts strings: forward, backward, left, right, stop)"
       required: true
       selector:
         select:
@@ -643,11 +643,11 @@ remote_control_drive:
               value: "0"
             - label: Forward
               value: "1"
-            - label: Turn Left
-              value: "2"
-            - label: Turn Right
-              value: "3"
             - label: Backward
+              value: "2"
+            - label: Turn Left
+              value: "3"
+            - label: Turn Right
               value: "4"
     speed:
       name: Speed / Headway Value
@@ -659,3 +659,9 @@ remote_control_drive:
           max: 500
           step: 50
           unit_of_measurement: ms
+    ip:
+      name: Robot IP Address (Optional)
+      description: Direct IP address of the robot on the local network. If omitted, uses auto-discovered IP or LAN broadcast.
+      required: false
+      selector:
+        text:

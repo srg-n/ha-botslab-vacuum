@@ -34,8 +34,11 @@ from .const import (
     REQUEST_TIMEOUT,
     SERVICE_CUSTOM_CLEAN,
     SERVICE_DELETE_MAP,
+    SERVICE_DELETE_RECORDED_MAP,
     SERVICE_GET_STATION_INFO,
+    SERVICE_RECOVER_RECORDED_MAP,
     SERVICE_REMOTE_CONTROL_MODE,
+    SERVICE_RENAME_RECORDED_MAP,
     SERVICE_SAVE_MAP,
     SERVICE_SEND_REMOTE_CONTROL,
     SERVICE_SET_FROM_MAP,
@@ -1586,8 +1589,29 @@ class BotslabModernClient(BotslabBaseApiClient):
         self, sn: str, product_key: str, map_id: int | str
     ) -> dict[str, Any]:
         """Switch active map to a saved floor."""
+        # 1. Primary: Modern Botslab TSL RecoverRecordedMap with CleanID
+        clean_id_str = str(map_id).strip()
+        res = await self.invoke_sync(
+            sn, product_key, SERVICE_RECOVER_RECORDED_MAP, {"CleanID": clean_id_str}
+        )
+        if isinstance(res, dict) and res.get("code") == 0:
+            return res
+
+        # 2. Try with integer mapId if CleanID didn't succeed
+        try:
+            int_map_id = int(map_id)
+        except (ValueError, TypeError):
+            int_map_id = 0
+
+        res_map = await self.invoke_sync(
+            sn, product_key, SERVICE_RECOVER_RECORDED_MAP, {"mapId": int_map_id}
+        )
+        if isinstance(res_map, dict) and res_map.get("code") == 0:
+            return res_map
+
+        # 3. Fallback to legacy SetFromMap for older models
         return await self.invoke_sync(
-            sn, product_key, SERVICE_SET_FROM_MAP, {"MapID": int(map_id)}
+            sn, product_key, SERVICE_SET_FROM_MAP, {"MapID": int_map_id}
         )
 
     async def save_map(self, sn: str, product_key: str, name: str) -> dict[str, Any]:
@@ -1600,8 +1624,41 @@ class BotslabModernClient(BotslabBaseApiClient):
         self, sn: str, product_key: str, map_id: int | str
     ) -> dict[str, Any]:
         """Delete saved floor map."""
+        # 1. Primary: Modern Botslab TSL DeleteRecordedMap with CleanID
+        clean_id_str = str(map_id).strip()
+        res = await self.invoke_sync(
+            sn, product_key, SERVICE_DELETE_RECORDED_MAP, {"CleanID": clean_id_str}
+        )
+        if isinstance(res, dict) and res.get("code") == 0:
+            return res
+
+        # 2. Try with integer mapId
+        try:
+            int_map_id = int(map_id)
+        except (ValueError, TypeError):
+            int_map_id = 0
+
+        res_map = await self.invoke_sync(
+            sn, product_key, SERVICE_DELETE_RECORDED_MAP, {"mapId": int_map_id}
+        )
+        if isinstance(res_map, dict) and res_map.get("code") == 0:
+            return res_map
+
+        # 3. Fallback to legacy deleteMap
         return await self.invoke_sync(
-            sn, product_key, SERVICE_DELETE_MAP, {"MapID": int(map_id)}
+            sn, product_key, SERVICE_DELETE_MAP, {"MapID": int_map_id}
+        )
+
+    async def rename_map(
+        self, sn: str, product_key: str, map_id: int | str, name: str
+    ) -> dict[str, Any]:
+        """Rename a saved floor map."""
+        clean_id_str = str(map_id).strip()
+        return await self.invoke_sync(
+            sn,
+            product_key,
+            SERVICE_RENAME_RECORDED_MAP,
+            {"CleanID": clean_id_str, "name": str(name)},
         )
 
     # --- Custom Clean Sequencing ---
