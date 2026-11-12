@@ -1347,7 +1347,17 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         dev = self.data.get(sn) if self.data else None
         target_ip = ip or (dev.ip_address if dev else None)
 
-        # 1. Primary: Direct LAN UDP transmission (zero latency, firmware compatible)
+        # 1. Legacy 360 models: cloud RPC steering
+        if self.api.is_legacy_360:
+            pk = dev.product_key if dev else ""
+            try:
+                await self.api.set_remote_control_mode(sn, pk, True)
+                await self.api.send_remote_drive(sn, pk, direction, speed)
+            except Exception as leg_err:
+                _LOGGER.debug("Legacy cloud remote drive failed for %s: %s", sn, leg_err)
+            return
+
+        # 2. Modern Botslab models: Direct LAN UDP transmission (zero latency, firmware compatible)
         try:
             await BotslabLanRemoteControl.async_send_drive(
                 direction=direction,
@@ -1356,15 +1366,6 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             )
         except Exception as lan_err:
             _LOGGER.warning("LAN UDP remote drive failed for %s: %s", sn, lan_err)
-
-        # 2. Secondary fallback: Legacy cloud mode for older 360 models
-        if self.api.is_legacy_360:
-            pk = dev.product_key if dev else ""
-            try:
-                await self.api.set_remote_control_mode(sn, pk, True)
-                await self.api.send_remote_drive(sn, pk, direction, speed)
-            except Exception as leg_err:
-                _LOGGER.debug("Legacy cloud remote drive failed for %s: %s", sn, leg_err)
 
     async def async_set_no_go_zones(
         self, sn: str, places: list[dict[str, Any]]

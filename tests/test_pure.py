@@ -2418,6 +2418,7 @@ async def test_coordinator_multi_floor_and_hardware_switches():
 
     coord = MagicMock(spec=BotslabVacuumCoordinator)
     coord.api = MagicMock()
+    coord.api.is_legacy_360 = True
     coord.api.switch_floor_map = AsyncMock(return_value={"code": 0})
     coord.api.save_map = AsyncMock(return_value={"code": 0})
     coord.api.delete_map = AsyncMock(return_value={"code": 0})
