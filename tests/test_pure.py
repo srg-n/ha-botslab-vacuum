@@ -2956,7 +2956,6 @@ def test_lan_remote_control_send_datagram():
     Patches the socket class *inside* the lan_remote module so the HA
     test harness socket-block fires before our code ever touches a real socket.
     """
-    import socket
     from unittest.mock import MagicMock, patch
     from custom_components.botslab_vacuum.lan_remote import BotslabLanRemoteControl
 
