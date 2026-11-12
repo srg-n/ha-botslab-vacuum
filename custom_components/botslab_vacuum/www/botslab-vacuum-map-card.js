@@ -25294,14 +25294,22 @@ function D2({ deviceName: a, onSettingsClick: i }) {
   ] });
 }
 function L2() {
-  const { t: a } = Oe(), i = sa(), o = mt(), [s, l] = N.useState(!1), d = N.useRef(null), { get: _ } = la(), m = i.attributes, p = N.useMemo(() => m.maps ?? [], [m.maps]), g = m.selected_map_id ?? m.selected_map, v = _(Rs.selectedMap.platform, Rs.selectedMap.key), k = ra(o, v).unavailable, z = N.useMemo(() => p.find((R) => R.id === g), [p, g]), E = z?.custom_name || z?.name || a("map_selector.unknown"), A = N.useCallback(
+  const { t: a } = Oe(), i = sa(), o = mt(), [s, l] = N.useState(!1), d = N.useRef(null), { get: _ } = la(), m = i.attributes, p = N.useMemo(() => m.maps ?? [], [m.maps]), g = m.selected_map_id ?? m.selected_map, v = _(Rs.selectedMap.platform, Rs.selectedMap.key), k = v ? ra(o, v).unavailable : (p.length <= 1), z = N.useMemo(() => p.find((R) => R.id === g), [p, g]), E = z?.custom_name || z?.name || (p.length > 0 ? (p[0].custom_name || p[0].name) : a("map_selector.unknown")), A = N.useCallback(
     (R) => {
-      v && (o.callService("select", "select_option", {
-        entity_id: v,
-        option: R.name
-      }), l(!1));
+      if (v) {
+        o.callService("select", "select_option", {
+          entity_id: v,
+          option: R.name
+        });
+      } else {
+        o.callService("botslab_vacuum", "switch_floor_map", {
+          entity_id: i.entity_id || i.entity,
+          map_id: R.id
+        });
+      }
+      l(!1);
     },
-    [o, v]
+    [o, v, i]
   );
   return N.useEffect(() => {
     function R(D) {
@@ -29013,7 +29021,80 @@ function pN({ hass: a, config: i }) {
                   onStop: ua,
                   onDock: ha
                 }
-              )
+              ),
+              z === "zone" && E !== "spot" && /* @__PURE__ */ f.jsxs("div", {
+                style: { display: "flex", gap: "0.5rem", marginTop: "0.6rem", width: "100%", justifyContent: "center" },
+                children: [
+                  /* @__PURE__ */ f.jsx("button", {
+                    type: "button",
+                    className: "action-buttons__stop",
+                    style: { flex: 1, padding: "0.45rem 0.6rem", fontSize: "0.8rem", borderRadius: "0.6rem", cursor: "pointer", background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid #ef4444", fontWeight: "600" },
+                    onClick: async () => {
+                      if (!R || R.length === 0) {
+                        De?.(l === "tr" ? "Lütfen önce haritada bir bölge çizin" : "Please draw a zone on the map first");
+                        return;
+                      }
+                      const H_res = Jz(R, F.transform, m?.width, m?.height);
+                      if (!H_res.ok || !H_res.zones || H_res.zones.length === 0) {
+                        De?.(l === "tr" ? "Bölge koordinatları dönüştürülemedi" : "Could not convert zone coordinates");
+                        return;
+                      }
+                      for (const zn of H_res.zones) {
+                        await a.callService("botslab_vacuum", "add_no_go_zone", {
+                          entity_id: i.entity,
+                          x1: zn[0],
+                          y1: zn[1],
+                          x2: zn[2],
+                          y2: zn[3],
+                          zone_type: "forbid"
+                        });
+                      }
+                      I([]);
+                      De?.(l === "tr" ? "⛔ Yasaklı bölge eklendi" : "⛔ No-go zone added");
+                    },
+                    children: l === "tr" ? "⛔ Yasaklı Bölge" : "⛔ No-Go Zone"
+                  }),
+                  /* @__PURE__ */ f.jsx("button", {
+                    type: "button",
+                    className: "action-buttons__resume",
+                    style: { flex: 1, padding: "0.45rem 0.6rem", fontSize: "0.8rem", borderRadius: "0.6rem", cursor: "pointer", background: "rgba(56, 189, 248, 0.15)", color: "#0ea5e9", border: "1px solid #0ea5e9", fontWeight: "600" },
+                    onClick: async () => {
+                      if (!R || R.length === 0) {
+                        De?.(l === "tr" ? "Lütfen önce haritada bir bölge çizin" : "Please draw a zone on the map first");
+                        return;
+                      }
+                      const H_res = Jz(R, F.transform, m?.width, m?.height);
+                      if (!H_res.ok || !H_res.zones || H_res.zones.length === 0) {
+                        De?.(l === "tr" ? "Bölge koordinatları dönüştürülemedi" : "Could not convert zone coordinates");
+                        return;
+                      }
+                      for (const zn of H_res.zones) {
+                        await a.callService("botslab_vacuum", "add_no_go_zone", {
+                          entity_id: i.entity,
+                          x1: zn[0],
+                          y1: zn[1],
+                          x2: zn[2],
+                          y2: zn[3],
+                          zone_type: "mop"
+                        });
+                      }
+                      I([]);
+                      De?.(l === "tr" ? "💧 Paspas yasaklı bölge eklendi" : "💧 No-mop zone added");
+                    },
+                    children: l === "tr" ? "💧 Paspas Yasaklı" : "💧 No-Mop Zone"
+                  }),
+                  /* @__PURE__ */ f.jsx("button", {
+                    type: "button",
+                    className: "action-buttons__dock",
+                    style: { flex: 0.8, padding: "0.45rem 0.5rem", fontSize: "0.8rem", borderRadius: "0.6rem", cursor: "pointer", fontWeight: "600" },
+                    onClick: async () => {
+                      await a.callService("botslab_vacuum", "clear_no_go_zones", { entity_id: i.entity });
+                      De?.(l === "tr" ? "🗑️ Yasaklı bölgeler temizlendi" : "🗑️ No-go zones cleared");
+                    },
+                    children: l === "tr" ? "🗑️ Temizle" : "🗑️ Clear"
+                  })
+                ]
+              })
             ] })
           ] })
         ] }),

@@ -223,6 +223,143 @@ set_no_go_zones:
             - replace
             - add
             - clear
+    zone_type:
+      name: Zone Type
+      description: Type of forbidden zone ("forbid", "mop", "line", or "carpet_rect").
+      default: forbid
+      selector:
+        select:
+          options:
+            - forbid
+            - mop
+            - line
+            - carpet_rect
+
+add_no_go_zone:
+  name: Add No-Go Zone
+  description: Add a forbidden zone (vacuum & mop restricted) to the active map.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    x1:
+      name: X1
+      description: First X coordinate in mm.
+      example: -1000
+      selector:
+        number:
+          mode: box
+    y1:
+      name: Y1
+      description: First Y coordinate in mm.
+      example: -1000
+      selector:
+        number:
+          mode: box
+    x2:
+      name: X2
+      description: Second X coordinate in mm.
+      example: 1000
+      selector:
+        number:
+          mode: box
+    y2:
+      name: Y2
+      description: Second Y coordinate in mm.
+      example: 1000
+      selector:
+        number:
+          mode: box
+    zone_type:
+      name: Zone Type
+      description: Type of forbidden zone.
+      default: forbid
+      selector:
+        select:
+          options:
+            - forbid
+            - mop
+            - line
+            - carpet_rect
+
+add_no_mop_zone:
+  name: Add No-Mop Zone
+  description: Add a mop-only forbidden zone (robot sweeps but avoids mopping with wet pads).
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    x1:
+      name: X1
+      description: First X coordinate in mm.
+      example: -1000
+      selector:
+        number:
+          mode: box
+    y1:
+      name: Y1
+      description: First Y coordinate in mm.
+      example: -1000
+      selector:
+        number:
+          mode: box
+    x2:
+      name: X2
+      description: Second X coordinate in mm.
+      example: 1000
+      selector:
+        number:
+          mode: box
+    y2:
+      name: Y2
+      description: Second Y coordinate in mm.
+      example: 1000
+      selector:
+        number:
+          mode: box
+
+delete_no_go_zone:
+  name: Delete No-Go Zone
+  description: Remove a specific forbidden or mop forbidden zone.
+  target:
+    entity:
+      domain: vacuum
+  fields:
+    index:
+      name: Index
+      description: 0-based index of the zone to remove.
+      selector:
+        number:
+          mode: box
+    zone_type:
+      name: Zone Type
+      description: Filter by zone type to remove all matching zones ("forbid", "mop", "line").
+      selector:
+        select:
+          options:
+            - forbid
+            - mop
+            - line
+    clear_all:
+      name: Clear All
+      description: Remove all forbidden and no-mop zones.
+      default: false
+      selector:
+        boolean:
+
+clear_no_go_zones:
+  name: Clear No-Go Zones
+  description: Remove all regular forbidden zones from the active map.
+  target:
+    entity:
+      domain: vacuum
+
+clear_no_mop_zones:
+  name: Clear No-Mop Zones
+  description: Remove all mop forbidden zones from the active map.
+  target:
+    entity:
+      domain: vacuum
 
 set_schedule:
   name: Set Schedule

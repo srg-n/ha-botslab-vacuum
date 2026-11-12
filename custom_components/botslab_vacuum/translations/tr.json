@@ -190,6 +190,9 @@
           "ignore_carpet": "Halıyı Yoksay"
         }
       },
+      "selected_map": {
+        "name": "Seçili Harita"
+      },
       "active_floor": {
         "name": "Aktif Kat Haritası"
       }

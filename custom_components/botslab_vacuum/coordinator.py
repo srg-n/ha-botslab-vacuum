@@ -249,6 +249,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self._dsl_cache: dict[str, dict[str, Any]] = {}
         self._saved_carpets: dict[str, list[dict[str, Any]]] = {}
         self._multi_maps_cache: dict[str, list[dict[str, Any]]] = {}
+        self._saved_no_go_zones: dict[str, list[dict[str, Any]]] = {}
 
     def get_map_version(self, sn: str) -> int:
         """Return the current rendered map revision counter for a device."""
@@ -819,7 +820,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 clean_sub_status=str(clean_sub_status) if clean_sub_status is not None else None,
                 current_location=current_loc if isinstance(current_loc, list) else None,
                 dock_position=dev_map_info.dock_position if dev_map_info else None,
-                no_go_zones=dev_map_info.no_go_zones if dev_map_info else [],
+                no_go_zones=list(self._saved_no_go_zones.get(sn) or (dev_map_info.no_go_zones if dev_map_info else [])),
                 cleaning_path=cleaning_path,
                 robot_pose=robot_pose,
                 map_image_bytes=map_bytes,
@@ -1239,3 +1240,95 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         pk = dev.product_key if dev else ""
         await self.api.set_remote_control_mode(sn, pk, True)
         await self.api.send_remote_drive(sn, pk, direction, speed)
+
+    async def async_set_no_go_zones(
+        self, sn: str, places: list[dict[str, Any]]
+    ) -> None:
+        """Replace all no-go / forbidden zones."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        raw_map_id = dev.current_map_id if dev else 0
+        try:
+            map_id = int(raw_map_id) if raw_map_id else 0
+        except (ValueError, TypeError):
+            map_id = 0
+
+        self._saved_no_go_zones[sn] = list(places)
+        if dev:
+            dev.no_go_zones = list(places)
+
+        await self.api.set_no_go_zones(sn, pk, map_id, places)
+        self.clear_map_cache(sn)
+        if self.data:
+            self.async_set_updated_data(self.data)
+        await self.async_request_refresh()
+
+    async def async_add_no_go_zone(
+        self,
+        sn: str,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        zone_type: str = "forbid",
+    ) -> None:
+        """Add a forbidden zone, mop forbidden zone, or virtual wall."""
+        dev = self.data.get(sn) if self.data else None
+        min_x, max_x = int(round(min(x1, x2))), int(round(max(x1, x2)))
+        min_y, max_y = int(round(min(y1, y2))), int(round(max(y1, y2)))
+        new_zone = {
+            "type": zone_type,
+            "points": [min_x, min_y, max_x, max_y],
+        }
+        current_zones = list(
+            self._saved_no_go_zones.get(sn) or (dev.no_go_zones if dev else [])
+        )
+        # Avoid duplicate zone
+        if not any(
+            z.get("points") == new_zone["points"] and z.get("type") == new_zone["type"]
+            for z in current_zones
+        ):
+            current_zones.append(new_zone)
+        await self.async_set_no_go_zones(sn, current_zones)
+
+    async def async_delete_no_go_zone(
+        self,
+        sn: str,
+        index: int | None = None,
+        zone_type: str | None = None,
+        points: list[float] | None = None,
+        clear_all: bool = False,
+    ) -> None:
+        """Delete specific no-go zone by index, type, points, or clear all."""
+        if clear_all:
+            await self.async_set_no_go_zones(sn, [])
+            return
+
+        dev = self.data.get(sn) if self.data else None
+        current_zones = list(
+            self._saved_no_go_zones.get(sn) or (dev.no_go_zones if dev else [])
+        )
+
+        if index is not None and 0 <= index < len(current_zones):
+            current_zones.pop(index)
+        elif points is not None and len(points) >= 4:
+            pts = [int(round(p)) for p in points[:4]]
+            current_zones = [z for z in current_zones if z.get("points") != pts]
+        elif zone_type is not None:
+            current_zones = [z for z in current_zones if z.get("type") != zone_type]
+
+        await self.async_set_no_go_zones(sn, current_zones)
+
+    async def async_clear_no_go_zones(
+        self, sn: str, zone_type: str | None = None
+    ) -> None:
+        """Clear forbidden zones (all or filtered by type e.g. forbid or mop)."""
+        if not zone_type:
+            await self.async_set_no_go_zones(sn, [])
+        else:
+            dev = self.data.get(sn) if self.data else None
+            current_zones = list(
+                self._saved_no_go_zones.get(sn) or (dev.no_go_zones if dev else [])
+            )
+            remaining = [z for z in current_zones if z.get("type") != zone_type]
+            await self.async_set_no_go_zones(sn, remaining)

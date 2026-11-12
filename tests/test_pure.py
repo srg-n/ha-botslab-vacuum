@@ -1787,7 +1787,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0", "1.2.1")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0", "1.2.1", "1.2.2", "1.2.3")
     assert data["categories"] == ["appliances_cleaning.cleaning"]
 
 
@@ -2694,6 +2694,7 @@ async def test_remote_control_drive_resolution():
     from custom_components.botslab_vacuum.models import BotslabVacuumDevice
 
     hass = MagicMock()
+    hass.services.has_service.return_value = False
     registered_services = {}
     hass.services.has_service = lambda domain, srv: srv in registered_services
     def fake_register(domain, srv, handler, schema=None):
@@ -2728,6 +2729,188 @@ async def test_remote_control_drive_resolution():
     call.data = {"entity_id": "vacuum.botslab_s8", "direction": 2, "speed": 300}
     await handler(call)
     coord.async_remote_control_drive.assert_called_once_with("360TESTSERIAL0001", 2, 300)
+
+
+@pytest.mark.asyncio
+async def test_no_go_zone_services_registration_and_dispatch():
+    """Verify add_no_go_zone, add_no_mop_zone, delete_no_go_zone, clear services dispatch correctly."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.__init__ import _register_services
+    from custom_components.botslab_vacuum.const import (
+        SERVICE_ADD_NO_GO_ZONE,
+        SERVICE_ADD_NO_MOP_ZONE,
+        SERVICE_CLEAR_NO_GO_ZONES,
+        SERVICE_CLEAR_NO_MOP_ZONES,
+        SERVICE_DELETE_NO_GO_ZONE,
+    )
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+
+    hass = MagicMock()
+    hass.services.has_service.return_value = False
+    registered_services = {}
+
+    def fake_register(dom, srv, handler, schema=None):
+        registered_services[srv] = handler
+    hass.services.async_register = fake_register
+
+    coord = MagicMock()
+    coord.async_add_no_go_zone = AsyncMock()
+    coord.async_delete_no_go_zone = AsyncMock()
+    coord.async_clear_no_go_zones = AsyncMock()
+    dev = BotslabVacuumDevice(
+        device_name="360TESTSERIAL0001",
+        product_key="test_product_key",
+        device_title="Botslab S8",
+    )
+    coord.data = {"360TESTSERIAL0001": dev}
+
+    entry = MagicMock()
+    entry.runtime_data.coordinator = coord
+    hass.config_entries.async_entries.return_value = [entry]
+
+    _register_services(hass)
+
+    # Test add_no_go_zone
+    add_handler = registered_services[SERVICE_ADD_NO_GO_ZONE]
+    call = MagicMock()
+    call.data = {"entity_id": "vacuum.botslab_s8", "x1": -500, "y1": 500, "x2": 500, "y2": 1500, "zone_type": "forbid"}
+    await add_handler(call)
+    coord.async_add_no_go_zone.assert_called_once_with("360TESTSERIAL0001", -500, 500, 500, 1500, zone_type="forbid")
+
+    # Test add_no_mop_zone
+    add_mop_handler = registered_services[SERVICE_ADD_NO_MOP_ZONE]
+    call.data = {"entity_id": "vacuum.botslab_s8", "x1": -1000, "y1": -1000, "x2": 1000, "y2": 1000}
+    await add_mop_handler(call)
+    coord.async_add_no_go_zone.assert_called_with("360TESTSERIAL0001", -1000, -1000, 1000, 1000, zone_type="mop")
+
+    # Test delete_no_go_zone
+    del_handler = registered_services[SERVICE_DELETE_NO_GO_ZONE]
+    call.data = {"entity_id": "vacuum.botslab_s8", "index": 0}
+    await del_handler(call)
+    coord.async_delete_no_go_zone.assert_called_once_with(
+        "360TESTSERIAL0001", index=0, zone_type=None, points=None, clear_all=False
+    )
+
+    # Test clear_no_go_zones
+    clear_handler = registered_services[SERVICE_CLEAR_NO_GO_ZONES]
+    call.data = {"entity_id": "vacuum.botslab_s8"}
+    await clear_handler(call)
+    coord.async_clear_no_go_zones.assert_called_once_with("360TESTSERIAL0001", zone_type="forbid")
+
+    # Test clear_no_mop_zones
+    clear_mop_handler = registered_services[SERVICE_CLEAR_NO_MOP_ZONES]
+    await clear_mop_handler(call)
+    coord.async_clear_no_go_zones.assert_called_with("360TESTSERIAL0001", zone_type="mop")
+
+
+@pytest.mark.asyncio
+async def test_coordinator_no_go_zones_management():
+    """Verify coordinator handles adding, deleting, and clearing no-go zones via api.set_no_go_zones."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.coordinator import BotslabVacuumCoordinator
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+
+    hass = MagicMock()
+    entry = MagicMock()
+    api = MagicMock()
+    api.set_no_go_zones = AsyncMock(return_value={"code": 0})
+    api.sid = "sid"
+    api.push_alias = "alias"
+
+    coord = BotslabVacuumCoordinator(hass, entry, api)
+    coord.async_set_updated_data = MagicMock()
+    coord.async_request_refresh = AsyncMock()
+
+    dev = BotslabVacuumDevice(
+        device_name="360TESTSERIAL0001",
+        product_key="test_product_key",
+        device_title="Botslab S8",
+        current_map_id=101,
+        no_go_zones=[],
+    )
+    coord.data = {"360TESTSERIAL0001": dev}
+
+    # 1. Add forbid zone
+    await coord.async_add_no_go_zone("360TESTSERIAL0001", -500, 500, 500, 1500, zone_type="forbid")
+    assert len(coord._saved_no_go_zones["360TESTSERIAL0001"]) == 1
+    assert coord._saved_no_go_zones["360TESTSERIAL0001"][0] == {
+        "type": "forbid",
+        "points": [-500, 500, 500, 1500],
+    }
+    api.set_no_go_zones.assert_called_with(
+        "360TESTSERIAL0001", "test_product_key", 101, [{"type": "forbid", "points": [-500, 500, 500, 1500]}]
+    )
+
+    # 2. Add mop zone
+    await coord.async_add_no_go_zone("360TESTSERIAL0001", 100, 200, 300, 400, zone_type="mop")
+    assert len(coord._saved_no_go_zones["360TESTSERIAL0001"]) == 2
+
+    # 3. Delete by index
+    await coord.async_delete_no_go_zone("360TESTSERIAL0001", index=0)
+    assert len(coord._saved_no_go_zones["360TESTSERIAL0001"]) == 1
+    assert coord._saved_no_go_zones["360TESTSERIAL0001"][0]["type"] == "mop"
+
+    # 4. Clear all
+    await coord.async_clear_no_go_zones("360TESTSERIAL0001")
+    assert len(coord._saved_no_go_zones["360TESTSERIAL0001"]) == 0
+
+
+def test_active_floor_select_and_vacuum_maps_attributes():
+    """Verify select entity uses selected_map translation key and vacuum exposes maps attributes."""
+    from unittest.mock import MagicMock
+    from custom_components.botslab_vacuum.models import BotslabVacuumDevice
+    from custom_components.botslab_vacuum.select import BotslabActiveFloorSelect
+    from custom_components.botslab_vacuum.vacuum import BotslabVacuumRobot
+
+    coord = MagicMock()
+    dev = BotslabVacuumDevice(
+        device_name="360TESTSERIAL0001",
+        product_key="test_product_key",
+        device_title="Botslab S8",
+        current_map_id=101,
+        saved_maps=[
+            {"map_id": 101, "map_name": "Ground Floor", "is_cur": 1},
+            {"map_id": 102, "map_name": "First Floor", "is_cur": 0},
+        ],
+    )
+    coord.data = {"360TESTSERIAL0001": dev}
+
+    select = BotslabActiveFloorSelect(coord, dev)
+    assert select._attr_translation_key == "selected_map"
+    assert select.options == ["Ground Floor", "First Floor"]
+    assert select.current_option == "Ground Floor"
+
+    # Vacuum extra state attributes
+    vac = BotslabVacuumRobot(coord, dev)
+    attrs = vac.extra_state_attributes
+    assert "maps" in attrs
+    assert len(attrs["maps"]) == 2
+    assert attrs["maps"][0]["id"] == 101
+    assert attrs["selected_map_id"] == 101
+    assert attrs["selected_map"] == 101
+
+
+def test_map_util_renders_points_no_go_and_mop_zones():
+    """Verify render_map_advanced renders both points format and mop forbidden zones."""
+    from custom_components.botslab_vacuum.map_util import render_map_advanced
+
+    # 20x20 test occupancy grid (127: floor, 0: wall)
+    pixels = bytes([127] * 400)
+    no_go_zones = [
+        {"type": "forbid", "points": [-500, -500, 500, 500]},
+        {"type": "mop", "points": [1000, 1000, 2000, 2000]},
+    ]
+    png_bytes, bounds = render_map_advanced(
+        width=20,
+        height=20,
+        pixels=pixels,
+        resolution=0.05,
+        x_min=-2.0,
+        y_min=-2.0,
+        no_go_zones=no_go_zones,
+    )
+    assert len(png_bytes) > 0
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 

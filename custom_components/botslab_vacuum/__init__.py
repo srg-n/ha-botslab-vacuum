@@ -26,17 +26,20 @@ from .const import (
     ATTR_ACTIVE,
     ATTR_CARPETS,
     ATTR_CLEAN_ORDER,
+    ATTR_CLEAR_ALL,
     ATTR_CONSUMABLE_TYPE,
     ATTR_DAYS,
     ATTR_DIRECTION,
     ATTR_DURATION,
     ATTR_ENTITY_ID,
     ATTR_FAN_SPEED,
+    ATTR_INDEX,
     ATTR_MAP_ID,
     ATTR_MAP_NAME,
     ATTR_MODE,
     ATTR_MOP_MODE,
     ATTR_PASSES,
+    ATTR_POINTS,
     ATTR_REPEAT_TIMES,
     ATTR_ROOM_IDS,
     ATTR_ROOM_NAMES,
@@ -46,7 +49,12 @@ from .const import (
     ATTR_TIME,
     ATTR_WATER_LEVEL,
     ATTR_X,
+    ATTR_X1,
+    ATTR_X2,
     ATTR_Y,
+    ATTR_Y1,
+    ATTR_Y2,
+    ATTR_ZONE_TYPE,
     ATTR_ZONES,
     CONF_ENABLE_MAP,
     CONF_M2,
@@ -61,11 +69,16 @@ from .const import (
     DEFAULT_REGION,
     DOMAIN,
     PLATFORMS,
+    SERVICE_ADD_NO_GO_ZONE,
+    SERVICE_ADD_NO_MOP_ZONE,
     SERVICE_CLEAR_CARPET_AREAS,
+    SERVICE_CLEAR_NO_GO_ZONES,
+    SERVICE_CLEAR_NO_MOP_ZONES,
     SERVICE_CLEAN_ROOMS,
     SERVICE_CLEAN_ZONE,
     SERVICE_CUSTOM_CLEAN_SEQUENCING,
     SERVICE_DELETE_FLOOR_MAP,
+    SERVICE_DELETE_NO_GO_ZONE,
     SERVICE_DELETE_SCHEDULE,
     SERVICE_DRY_MOP,
     SERVICE_EMPTY_DUST_BIN,
@@ -656,62 +669,85 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_set_no_go_zones(call: ServiceCall) -> None:
         zones = call.data.get(ATTR_ZONES, [])
         mode = call.data.get(ATTR_MODE, "replace")
+        zone_type = call.data.get(ATTR_ZONE_TYPE, "forbid")
 
         for coordinator, dev in _targets(call):
-            map_id = dev.current_map_id
-            if not map_id:
-                map_json, props = await coordinator.api.get_map_json(dev.device_name, dev.product_key)
-                raw_oss = props.get("MapPkgOssInfo") if props else None
-                oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
-                map_id = int(oss_info.get("MapID", 28239))
+            if mode == "clear":
+                await coordinator.async_clear_no_go_zones(dev.device_name)
+                continue
 
-            existing = []
-            if dev.map_info and dev.map_info.no_go_zones:
-                existing = list(dev.map_info.no_go_zones)
-
-            new_zones = []
+            parsed_zones: list[dict[str, Any]] = []
             for z in zones or []:
-                if len(z) >= 4:
-                    x1, y1, x2, y2 = (
-                        int(round(z[0])),
-                        int(round(z[1])),
-                        int(round(z[2])),
-                        int(round(z[3])),
-                    )
-                    new_zones.append({
-                        "vertexs": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
-                        "active": "forbid",
-                        "forbidType": "all",
-                        "tag": "",
+                if isinstance(z, dict):
+                    parsed_zones.append(z)
+                elif len(z) >= 4:
+                    min_x, max_x = int(round(min(z[0], z[2]))), int(round(max(z[0], z[2])))
+                    min_y, max_y = int(round(min(z[1], z[3]))), int(round(max(z[1], z[3])))
+                    parsed_zones.append({
+                        "type": zone_type,
+                        "points": [min_x, min_y, max_x, max_y],
                     })
 
-            if mode == "clear":
-                result = []
-                try:
-                    await coordinator.api.clear_cleaning_zones(
-                        sn=dev.device_name,
-                        product_key=dev.product_key,
-                        map_id=map_id,
-                    )
-                except Exception as err:
-                    _LOGGER.debug("Could not clear cleaning zones on %s: %s", dev.device_name, err)
-            elif mode == "add":
-                result = existing + new_zones
+            if mode == "add":
+                existing = list(
+                    coordinator._saved_no_go_zones.get(dev.device_name)
+                    or dev.no_go_zones
+                )
+                combined = existing + [z for z in parsed_zones if z not in existing]
+                await coordinator.async_set_no_go_zones(dev.device_name, combined)
             else:  # replace
-                result = new_zones
+                await coordinator.async_set_no_go_zones(dev.device_name, parsed_zones)
 
-            for i, a in enumerate(result):
-                a["id"] = i
-                a.setdefault("name", f"rect{i}")
-
-            await coordinator.api.set_no_go_zones(
-                sn=dev.device_name,
-                product_key=dev.product_key,
-                map_id=map_id,
-                places=result,
+    async def handle_add_no_go_zone(call: ServiceCall) -> None:
+        zone_type = call.data.get(ATTR_ZONE_TYPE, "forbid")
+        pts = call.data.get(ATTR_POINTS)
+        if pts and len(pts) >= 4:
+            x1, y1, x2, y2 = pts[0], pts[1], pts[2], pts[3]
+        else:
+            x1 = call.data.get(ATTR_X1, 0)
+            y1 = call.data.get(ATTR_Y1, 0)
+            x2 = call.data.get(ATTR_X2, 0)
+            y2 = call.data.get(ATTR_Y2, 0)
+        for coordinator, dev in _targets(call):
+            await coordinator.async_add_no_go_zone(
+                dev.device_name, x1, y1, x2, y2, zone_type=zone_type
             )
-            coordinator.clear_map_cache(dev.device_name)
-            await coordinator.async_request_refresh()
+
+    async def handle_add_no_mop_zone(call: ServiceCall) -> None:
+        pts = call.data.get(ATTR_POINTS)
+        if pts and len(pts) >= 4:
+            x1, y1, x2, y2 = pts[0], pts[1], pts[2], pts[3]
+        else:
+            x1 = call.data.get(ATTR_X1, 0)
+            y1 = call.data.get(ATTR_Y1, 0)
+            x2 = call.data.get(ATTR_X2, 0)
+            y2 = call.data.get(ATTR_Y2, 0)
+        for coordinator, dev in _targets(call):
+            await coordinator.async_add_no_go_zone(
+                dev.device_name, x1, y1, x2, y2, zone_type="mop"
+            )
+
+    async def handle_delete_no_go_zone(call: ServiceCall) -> None:
+        index = call.data.get(ATTR_INDEX)
+        zone_type = call.data.get(ATTR_ZONE_TYPE)
+        points = call.data.get(ATTR_POINTS)
+        clear_all = call.data.get(ATTR_CLEAR_ALL, False)
+        for coordinator, dev in _targets(call):
+            await coordinator.async_delete_no_go_zone(
+                dev.device_name,
+                index=index,
+                zone_type=zone_type,
+                points=points,
+                clear_all=clear_all,
+            )
+
+    async def handle_clear_no_go_zones(call: ServiceCall) -> None:
+        for coordinator, dev in _targets(call):
+            await coordinator.async_clear_no_go_zones(dev.device_name, zone_type="forbid")
+
+    async def handle_clear_no_mop_zones(call: ServiceCall) -> None:
+        for coordinator, dev in _targets(call):
+            await coordinator.async_clear_no_go_zones(dev.device_name, zone_type="mop")
 
     async def handle_set_schedule(call: ServiceCall) -> None:
         time_str = call.data[ATTR_TIME]
@@ -937,11 +973,85 @@ def _register_services(hass: HomeAssistant) -> None:
                 vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
                 vol.Optional(ATTR_ZONES, default=[]): vol.All(
                     cv.ensure_list,
-                    [vol.ExactSequence((vol.Coerce(float),) * 4)],
                 ),
                 vol.Optional(ATTR_MODE, default="replace"): vol.In(["replace", "add", "clear"]),
+                vol.Optional(ATTR_ZONE_TYPE, default="forbid"): vol.In(
+                    ["forbid", "mop", "line", "carpet_rect"]
+                ),
             }
         ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD_NO_GO_ZONE,
+        handle_add_no_go_zone,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Optional(ATTR_X1): vol.Coerce(float),
+                vol.Optional(ATTR_Y1): vol.Coerce(float),
+                vol.Optional(ATTR_X2): vol.Coerce(float),
+                vol.Optional(ATTR_Y2): vol.Coerce(float),
+                vol.Optional(ATTR_POINTS): vol.All(
+                    cv.ensure_list, [vol.Coerce(float)]
+                ),
+                vol.Optional(ATTR_ZONE_TYPE, default="forbid"): vol.In(
+                    ["forbid", "mop", "line", "carpet_rect"]
+                ),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD_NO_MOP_ZONE,
+        handle_add_no_mop_zone,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Optional(ATTR_X1): vol.Coerce(float),
+                vol.Optional(ATTR_Y1): vol.Coerce(float),
+                vol.Optional(ATTR_X2): vol.Coerce(float),
+                vol.Optional(ATTR_Y2): vol.Coerce(float),
+                vol.Optional(ATTR_POINTS): vol.All(
+                    cv.ensure_list, [vol.Coerce(float)]
+                ),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DELETE_NO_GO_ZONE,
+        handle_delete_no_go_zone,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                vol.Optional(ATTR_INDEX): vol.Coerce(int),
+                vol.Optional(ATTR_ZONE_TYPE): vol.In(
+                    ["forbid", "mop", "line", "carpet_rect"]
+                ),
+                vol.Optional(ATTR_POINTS): vol.All(
+                    cv.ensure_list, [vol.Coerce(float)]
+                ),
+                vol.Optional(ATTR_CLEAR_ALL, default=False): cv.boolean,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEAR_NO_GO_ZONES,
+        handle_clear_no_go_zones,
+        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEAR_NO_MOP_ZONES,
+        handle_clear_no_mop_zones,
+        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
     )
 
     hass.services.async_register(

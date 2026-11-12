@@ -436,21 +436,33 @@ def render_map_advanced(
             draw.polygon(poly, fill=C_ZONE_FILL)
             draw.line(poly + [poly[0]], fill=C_ZONE_LINE, width=max(1, scale // 2))
 
-    # 8. Draw No-Go Zones (Forbidden Areas) & Virtual Walls
+    # 8. Draw No-Go Zones (Forbidden Areas), No-Mop Zones & Virtual Walls
+    C_MOP_NOGO_FILL = (56, 189, 248, 65)
+    C_MOP_NOGO_LINE = (14, 165, 233, 220)
     for zone in no_go_zones or []:
+        ztype = zone.get("type", "forbid") if isinstance(zone, dict) else "forbid"
+        fill_col = C_MOP_NOGO_FILL if ztype == "mop" else C_NOGO_FILL
+        line_col = C_MOP_NOGO_LINE if ztype == "mop" else C_NOGO_LINE
+
         v = (
             (zone.get("vertexs") if isinstance(zone, dict) else None)
             or (zone.get("points") if isinstance(zone, dict) else None)
             or []
         )
-        if len(v) >= 3:
+        if len(v) == 4 and isinstance(v[0], (int, float)):
+            p1 = w2p(v[0], v[1])
+            p2 = w2p(v[2], v[3])
+            rect = [p1, (p2[0], p1[1]), p2, (p1[0], p2[1])]
+            draw.polygon(rect, fill=fill_col)
+            draw.line(rect + [rect[0]], fill=line_col, width=max(1, scale // 2))
+        elif len(v) >= 3 and isinstance(v[0], (list, tuple)):
             poly = [w2p(pt[0], pt[1]) for pt in v]
-            draw.polygon(poly, fill=C_NOGO_FILL)
-            draw.line(poly + [poly[0]], fill=C_NOGO_LINE, width=max(1, scale // 2))
-        elif len(v) == 2:
+            draw.polygon(poly, fill=fill_col)
+            draw.line(poly + [poly[0]], fill=line_col, width=max(1, scale // 2))
+        elif len(v) == 2 and isinstance(v[0], (list, tuple)):
             p1 = w2p(v[0][0], v[0][1])
             p2 = w2p(v[1][0], v[1][1])
-            draw.line([p1, p2], fill=C_NOGO_LINE, width=max(2, scale))
+            draw.line([p1, p2], fill=line_col, width=max(2, scale))
 
     # 9. Draw Charging Dock Station
     if dock_pos and len(dock_pos) >= 2:

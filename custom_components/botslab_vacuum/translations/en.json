@@ -190,6 +190,9 @@
           "ignore_carpet": "Ignore Carpet"
         }
       },
+      "selected_map": {
+        "name": "Selected Map"
+      },
       "active_floor": {
         "name": "Active Floor Map"
       }

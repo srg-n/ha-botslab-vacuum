@@ -188,7 +188,7 @@ class BotslabVacuumApi(BotslabModernClient):
         if self.is_legacy_360:
             props, _ = await self._legacy_360_get_properties(sn, product_key)
             return props
-        return await super().get_desired_property(sn, product_key, prop_name)
+        return await super().get_desired_property(sn, product_key)
 
     async def start_clean(self, sn: str, product_key: str) -> None:
         """Start full cleaning."""

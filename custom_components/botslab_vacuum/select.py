@@ -97,8 +97,8 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
         device: BotslabVacuumDevice,
     ) -> None:
         super().__init__(coordinator, device)
-        self._attr_unique_id = f"{device.device_name}_active_floor"
-        self._attr_translation_key = "active_floor"
+        self._attr_unique_id = f"{device.device_name}_selected_map"
+        self._attr_translation_key = "selected_map"
         self._attr_icon = "mdi:layers-triple-outline"
 
     def _map_display_name(self, m: dict[str, Any], seen: set[str] | None = None) -> str:
@@ -110,7 +110,11 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
     @property
     def options(self) -> list[str]:
         """Return list of available floor map names."""
-        if not self.device or not self.device.saved_maps:
+        if not self.device:
+            return ["Default Map"]
+        if not self.device.saved_maps:
+            if self.device.current_map_id:
+                return [f"Map {self.device.current_map_id}"]
             return ["Default Map"]
         seen: set[str] = set()
         opts: list[str] = []
@@ -123,8 +127,12 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
     @property
     def current_option(self) -> str | None:
         """Return currently active map name."""
-        if not self.device or not self.device.saved_maps:
+        if not self.device:
             return None
+        if not self.device.saved_maps:
+            if self.device.current_map_id:
+                return f"Map {self.device.current_map_id}"
+            return self.options[0]
         cur_id = str(self.device.current_map_id)
         seen: set[str] = set()
         current = None
