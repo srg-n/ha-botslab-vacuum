@@ -105,3 +105,12 @@ async def test_camera_hidden_when_map_disabled(hass: HomeAssistant) -> None:
     assert entity_id_for(hass, "camera", "map_camera") is None
     # The vacuum itself must still be available.
     assert state_for(hass, "vacuum", "vacuum") is not None
+
+
+async def test_camera_publishes_map_ids(hass: HomeAssistant) -> None:
+    """Map IDs are published so map cards can synchronize floor selection."""
+    await _setup(hass)
+    attrs = _map_state(hass).attributes
+    assert "map_id" in attrs
+    assert "saved_map_id" in attrs
+    assert "selected_map_id" in attrs
