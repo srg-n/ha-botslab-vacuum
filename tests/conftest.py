@@ -556,3 +556,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             fixtures = getattr(item, "fixturenames", ())
             if "hass" in fixtures or "init_integration" in fixtures or "config_entry" in fixtures:
                 item.add_marker(skip_marker)
+
+
+if not HAVE_HA:
+    @pytest.fixture
+    def socket_enabled():
+        """Fallback fixture when pytest-homeassistant-custom-component is not installed."""
+        yield
+
