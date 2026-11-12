@@ -415,8 +415,6 @@ def _register_services(hass: HomeAssistant) -> None:
                     all_vacuums.append((runtime.coordinator, dev))
 
         if not entity_ids:
-            if len(all_vacuums) == 1:
-                return [all_vacuums[0]]
             _LOGGER.warning(
                 "%s was called without a target entity, so it was ignored. "
                 "Pass entity_id to choose which robot should run the command.",
