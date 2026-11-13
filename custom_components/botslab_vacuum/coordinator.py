@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 import json
 import logging
@@ -53,6 +53,7 @@ from .const import (
     TANK_STATE_MISSING,
     TANK_STATE_OK,
 )
+from .exceptions import BotslabCommandError
 from .lan_remote import BotslabLanRemoteControl
 from .models import (
     BotslabBaseStation,
@@ -65,6 +66,10 @@ from .qpush import BotslabChinaQPush, BotslabQPush
 from .quc_login import BotslabAuthError, async_login
 
 _LOGGER = logging.getLogger(__name__)
+
+# After a map-area write acknowledged by the robot, keep the local zone list for this
+# long before trusting the (possibly still stale) cloud map document again.
+AREA_WRITE_GRACE_SECONDS = 180
 
 # Standard total lifespans in hours for vacuum robot consumables
 FILTER_MAX_HOURS = 150.0
@@ -279,16 +284,30 @@ def _decode_room_name(raw_name: str) -> str:
 
 
 def _normalize_no_go_zone(zone: dict[str, Any], index: int = 0) -> dict[str, Any]:
-    """Normalize a forbidden / no-mop / virtual wall zone into standard Botslab format."""
+    """Normalize a forbidden / no-mop / virtual wall zone into the standard Botslab format.
+
+    Accepts both the Home Assistant model (``type`` + ``points``) and the raw robot map
+    area (``active`` + ``forbidType`` + ``vertexs``) so the same helper can be used for
+    reading the cloud map and for building the payload sent back to the robot.
+    """
     if not isinstance(zone, dict):
         return {}
-    z_type = str(zone.get("type", "forbid")).lower().strip()
-    if z_type in ("no_go", "forbid", "sweep"):
+    raw_type = str(zone.get("type") or "").strip().lower()
+    active = str(zone.get("active") or "").strip().lower()
+    forbid_type = str(zone.get("forbidType") or "").strip().lower()
+
+    if raw_type in ("no_go", "forbid", "sweep"):
         z_type = "forbid"
-    elif z_type in ("no_mop", "mop"):
+    elif raw_type in ("no_mop", "mop"):
         z_type = "mop"
-    elif z_type in ("wall", "virtual_wall", "line"):
+    elif raw_type in ("wall", "virtual_wall", "line"):
         z_type = "line"
+    elif active == "line":
+        z_type = "line"
+    elif forbid_type == "mop":
+        z_type = "mop"
+    else:
+        z_type = "forbid"
 
     vertexs = zone.get("vertexs")
     points = zone.get("points")
@@ -309,8 +328,15 @@ def _normalize_no_go_zone(zone: dict[str, Any], index: int = 0) -> dict[str, Any
                     [max_x, min_y],
                 ]
     elif vertexs and isinstance(vertexs, list) and len(vertexs) >= 2:
-        xs = [pt[0] for pt in vertexs if isinstance(pt, (list, tuple)) and len(pt) >= 2]
-        ys = [pt[1] for pt in vertexs if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+        real_vertexs = [
+            pt for pt in vertexs if isinstance(pt, (list, tuple)) and len(pt) >= 2
+        ]
+        if z_type == "line":
+            # The [0, 0] padding vertices of a virtual wall are not geometry and would
+            # otherwise stretch its bounding box all the way to the map origin.
+            real_vertexs = [pt for pt in real_vertexs if pt[0] != 0 or pt[1] != 0]
+        xs = [pt[0] for pt in real_vertexs]
+        ys = [pt[1] for pt in real_vertexs]
         if xs and ys:
             norm_points = [int(round(min(xs))), int(round(min(ys))), int(round(max(xs))), int(round(max(ys)))]
         else:
@@ -319,14 +345,62 @@ def _normalize_no_go_zone(zone: dict[str, Any], index: int = 0) -> dict[str, Any
         norm_points = [0, 0, 0, 0]
         vertexs = []
 
-    name = zone.get("name") or f"{z_type}_{index}"
+    name = zone.get("name") or f"rect{index + 1}"
     return {
-        "active": "forbid",
+        "active": zone.get("active") or ("line" if z_type == "line" else "forbid"),
+        "forbidType": zone.get("forbidType") or ("mop" if z_type == "mop" else "all"),
         "type": z_type,
         "name": str(name),
         "vertexs": vertexs,
         "points": norm_points,
     }
+
+
+def _zone_signature(zones: list[dict[str, Any]]) -> list[tuple[str, tuple[int, ...]]]:
+    """Return a comparable, order-independent signature for a list of map areas."""
+    signature: list[tuple[str, tuple[int, ...]]] = []
+    for zone in zones or []:
+        if not isinstance(zone, dict):
+            continue
+        z_type = str(zone.get("type") or "")
+        points = zone.get("points") or [0, 0, 0, 0]
+        try:
+            pts = tuple(int(round(float(p))) for p in points[:4])
+        except (TypeError, ValueError):
+            pts = (0, 0, 0, 0)
+        signature.append((z_type, pts))
+    return sorted(signature)
+
+
+def _areas_for_write(
+    dev: Any, zones: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Append the robot's cleaning zones to an area write.
+
+    Cleaning zones (``active: "normal"``) share the same ``area`` array as forbidden
+    areas and virtual walls, and ``SetZones`` replaces that whole array.  They must be
+    carried along untouched, otherwise saving a no-go zone silently deletes the
+    cleaning zones created from the app or the map card.
+    """
+    preserved: list[dict[str, Any]] = []
+    map_info = getattr(dev, "map_info", None) if dev else None
+    if map_info is not None:
+        preserved = [z for z in (map_info.clean_zones or []) if isinstance(z, dict)]
+    return preserved + list(zones)
+
+
+def _set_device_areas(dev: Any, zones: list[dict[str, Any]]) -> None:
+    """Publish a locally acknowledged area list on the device and its map info.
+
+    Both the vacuum and the camera entity expose ``no_go_zones``; updating both keeps the
+    map card consistent until the robot re-uploads its map package.
+    """
+    if dev is None:
+        return
+    dev.no_go_zones = list(zones)
+    map_info = getattr(dev, "map_info", None)
+    if map_info is not None:
+        map_info.no_go_zones = list(zones)
 
 
 class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevice]]):
@@ -376,6 +450,9 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         self._saved_carpets: dict[str, list[dict[str, Any]]] = {}
         self._multi_maps_cache: dict[str, list[dict[str, Any]]] = {}
         self._saved_no_go_zones: dict[str, list[dict[str, Any]]] = {}
+        # Unix timestamp (with grace) until which a locally acknowledged area write must
+        # not be overwritten by an older cloud map document.
+        self._pending_area_writes: dict[str, float] = {}
 
     def get_map_version(self, sn: str) -> int:
         """Return the current rendered map revision counter for a device."""
@@ -933,17 +1010,38 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             else:
                 c_mode_int = 0
 
-            # Synchronize no-go zones from live map info if not explicitly set in coordinator
+            # The cloud map document is the single source of truth for map areas.
+            # Right after a write the robot still has to re-upload its map package, so
+            # the acknowledged local list is kept until the cloud either matches it or
+            # the grace period expires - never overwrite it with stale data.
             cloud_no_go = dev_map_info.no_go_zones if dev_map_info else []
-            if sn not in self._saved_no_go_zones and cloud_no_go:
-                self._saved_no_go_zones[sn] = [
+            if dev_map_info is not None:
+                cloud_zones = [
                     _normalize_no_go_zone(z, i) for i, z in enumerate(cloud_no_go)
                 ]
+                pending_until = self._pending_area_writes.get(sn)
+                if pending_until is None:
+                    self._saved_no_go_zones[sn] = cloud_zones
+                elif (
+                    _zone_signature(cloud_zones)
+                    == _zone_signature(self._saved_no_go_zones.get(sn, []))
+                    or time.time() >= pending_until
+                ):
+                    self._saved_no_go_zones[sn] = cloud_zones
+                    self._pending_area_writes.pop(sn, None)
 
             active_no_go = list(
                 self._saved_no_go_zones.get(sn)
                 or [_normalize_no_go_zone(z, i) for i, z in enumerate(cloud_no_go)]
             )
+
+            if dev_map_info is not None and sn in self._pending_area_writes:
+                # Keep the vacuum and camera attributes consistent with the acknowledged
+                # write until the robot re-uploads its map. Work on a copy so the API
+                # cache still holds the real cloud state for reconciliation.
+                dev_map_info = replace(
+                    dev_map_info, no_go_zones=list(active_no_go)
+                )
 
             dev = BotslabVacuumDevice(
                 product_key=pk,
@@ -1309,7 +1407,22 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                     # In dry vacuum mode or boost/ignore mode: remove virtual carpet no-mop zones
                     to_send = existing_zones
                 try:
-                    await self.api.set_no_go_zones(sn, dev.product_key, dev.current_map_id, to_send)
+                    await self.api.set_no_go_zones(
+                        sn,
+                        dev.product_key,
+                        dev.current_map_id,
+                        _areas_for_write(dev, to_send),
+                    )
+                    # Remember the acknowledged list so the UI does not show stale areas
+                    # until the robot re-uploads its map package.
+                    written = [
+                        _normalize_no_go_zone(z, i) for i, z in enumerate(to_send)
+                    ]
+                    self._saved_no_go_zones[sn] = written
+                    self._pending_area_writes[sn] = (
+                        time.time() + AREA_WRITE_GRACE_SECONDS
+                    )
+                    _set_device_areas(dev, written)
                 except Exception as err:
                     _LOGGER.debug("Failed to bridge carpets into no-go zones for %s: %s", sn, err)
             self.async_set_updated_data(self.data)
@@ -1338,8 +1451,20 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 ]
                 try:
                     await self.api.set_no_go_zones(
-                        sn, dev.product_key, dev.current_map_id, non_carpet_zones
+                        sn,
+                        dev.product_key,
+                        dev.current_map_id,
+                        _areas_for_write(dev, non_carpet_zones),
                     )
+                    written = [
+                        _normalize_no_go_zone(z, i)
+                        for i, z in enumerate(non_carpet_zones)
+                    ]
+                    self._saved_no_go_zones[sn] = written
+                    self._pending_area_writes[sn] = (
+                        time.time() + AREA_WRITE_GRACE_SECONDS
+                    )
+                    _set_device_areas(dev, written)
                 except Exception as err:
                     _LOGGER.debug("Failed to clear bridged carpets on robot for %s: %s", sn, err)
             self.async_set_updated_data(self.data)
@@ -1430,26 +1555,45 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         except Exception as lan_err:
             _LOGGER.warning("LAN UDP remote drive failed for %s: %s", sn, lan_err)
 
-    async def async_set_no_go_zones(
-        self, sn: str, places: list[dict[str, Any]]
-    ) -> None:
-        """Replace all no-go / forbidden zones."""
-        dev = self.data.get(sn) if self.data else None
-        pk = dev.product_key if dev else ""
-        raw_map_id = dev.current_map_id if dev else 0
+    def _resolve_map_id(self, dev: Any) -> int:
+        """Resolve the map id used by map-area writes (0 when unknown)."""
+        if not dev:
+            return 0
+        raw_map_id = getattr(dev, "current_map_id", 0)
         try:
             map_id = int(raw_map_id) if raw_map_id else 0
         except (ValueError, TypeError):
             map_id = 0
 
-        if map_id == 0 and dev:
-            if str(dev.clean_id).isdigit():
-                map_id = int(dev.clean_id)
-            elif dev.saved_maps:
+        if map_id == 0:
+            clean_id = getattr(dev, "clean_id", "")
+            if str(clean_id).isdigit():
+                map_id = int(clean_id)
+            elif getattr(dev, "saved_maps", None):
                 for m in dev.saved_maps:
                     if m.get("is_cur") and str(m.get("map_id", "")).isdigit():
                         map_id = int(m["map_id"])
                         break
+        return map_id
+
+    async def async_set_no_go_zones(
+        self, sn: str, places: list[dict[str, Any]]
+    ) -> None:
+        """Replace all map areas (no-go / no-mop / virtual wall) on the robot.
+
+        ``SetZones`` is a *full list* write: any area missing from ``places`` is deleted
+        on the robot and an empty list clears every area.  The robot acknowledges the
+        write with an ``ErrorNO`` reply - only that real acknowledgement counts as
+        success; the legacy ``SetFbdPlaces`` path answered ``code 0`` without ever
+        reaching the device and is no longer used.
+        """
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        map_id = self._resolve_map_id(dev)
+        if map_id <= 0:
+            raise BotslabCommandError(
+                "Cannot write map areas: no active map id is known for this vacuum"
+            )
 
         normalized = [
             _normalize_no_go_zone(p, i)
@@ -1457,13 +1601,28 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             if isinstance(p, dict)
         ]
 
-        await self.api.set_no_go_zones(sn, pk, map_id, normalized)
+        await self.api.set_no_go_zones(
+            sn, pk, map_id, _areas_for_write(dev, normalized)
+        )
 
+        # The robot acknowledged the write. Adopt it locally right away so the map card
+        # reflects the change immediately; the poll loop reconciles with the cloud map
+        # document once the robot has re-uploaded its map package.
+        self._pending_area_writes[sn] = time.time() + AREA_WRITE_GRACE_SECONDS
         self._saved_no_go_zones[sn] = list(normalized)
         if dev:
-            dev.no_go_zones = list(normalized)
+            _set_device_areas(dev, normalized)
 
+        # Invalidate the cached map and ask the robot to stream a fresh map package so
+        # the next poll picks up the new areas.
         self.clear_map_cache(sn)
+        try:
+            await self.api.start_sync_map_to_oss(
+                sn, pk, sync_duration=MAP_SYNC_DURATION
+            )
+        except Exception as err:  # noqa: BLE001 - best effort only
+            _LOGGER.debug("Map sync after area write failed for %s: %s", sn, err)
+
         if self.data:
             self.async_set_updated_data(self.data)
         await self.async_request_refresh()

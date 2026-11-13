@@ -439,16 +439,31 @@ def render_map_advanced(
     # 8. Draw No-Go Zones (Forbidden Areas), No-Mop Zones & Virtual Walls
     C_MOP_NOGO_FILL = (56, 189, 248, 65)
     C_MOP_NOGO_LINE = (14, 165, 233, 220)
+    C_WALL_LINE = (59, 130, 246, 255)
     for zone in no_go_zones or []:
-        ztype = zone.get("type", "forbid") if isinstance(zone, dict) else "forbid"
+        if not isinstance(zone, dict):
+            continue
+        ztype = str(zone.get("type") or zone.get("active") or "forbid").lower()
+        if ztype == "line":
+            ztype = "wall"
+
+        v = zone.get("vertexs") or zone.get("points") or []
+        # Virtual walls are stored as two real vertices plus [0, 0] padding points.
+        # Drop the padding before drawing, otherwise the "wall" becomes a polygon
+        # running through the map origin.
+        if isinstance(v, list) and v and isinstance(v[0], (list, tuple)):
+            v = [pt for pt in v if not (len(pt) >= 2 and pt[0] == 0 and pt[1] == 0)]
+
+        if ztype == "wall":
+            if len(v) >= 2 and isinstance(v[0], (list, tuple)):
+                p1 = w2p(v[0][0], v[0][1])
+                p2 = w2p(v[1][0], v[1][1])
+                draw.line([p1, p2], fill=C_WALL_LINE, width=max(2, scale))
+            continue
+
         fill_col = C_MOP_NOGO_FILL if ztype == "mop" else C_NOGO_FILL
         line_col = C_MOP_NOGO_LINE if ztype == "mop" else C_NOGO_LINE
 
-        v = (
-            (zone.get("vertexs") if isinstance(zone, dict) else None)
-            or (zone.get("points") if isinstance(zone, dict) else None)
-            or []
-        )
         if len(v) == 4 and isinstance(v[0], (int, float)):
             p1 = w2p(v[0], v[1])
             p2 = w2p(v[2], v[3])

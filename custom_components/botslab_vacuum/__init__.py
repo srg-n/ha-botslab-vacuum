@@ -693,7 +693,20 @@ def _register_services(hass: HomeAssistant) -> None:
                     coordinator._saved_no_go_zones.get(dev.device_name)
                     or dev.no_go_zones
                 )
-                combined = existing + [z for z in parsed_zones if z not in existing]
+                # Deduplicate on geometry + kind: the robot assigns its own name/tag,
+                # so a plain dict comparison would re-add an identical zone.
+                known = {
+                    (str(z.get("type") or ""), tuple(z.get("points") or []))
+                    for z in existing
+                }
+                combined = existing + [
+                    z
+                    for z in parsed_zones
+                    if (
+                        (str(z.get("type") or ""), tuple(z.get("points") or []))
+                        not in known
+                    )
+                ]
                 await coordinator.async_set_no_go_zones(dev.device_name, combined)
             else:  # replace
                 await coordinator.async_set_no_go_zones(dev.device_name, parsed_zones)

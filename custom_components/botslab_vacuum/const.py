@@ -151,7 +151,30 @@ CMD_CLEAN_ZONE: Final = "21005"
 CMD_SET_MODE: Final = "21003"
 CMD_LOCATE: Final = "21013"
 CMD_RESET_CONSUMABLE: Final = "21016"
-CMD_SET_FBD_PLACES: Final = "SetFbdPlaces"
+CMD_SET_FBD_PLACES: Final = "SetFbdPlaces"  # legacy, silently ignored by the firmware
+
+# --- Map area (forbidden / no-mop / virtual wall) protocol ---
+# Botslab P7 platform (7347e727042a) writes map areas through the TSL service
+# "SetZones".  The legacy "SetFbdPlaces" service still exists in the product DSL but is
+# silently ignored by the firmware (no ErrorNO is returned and nothing is written), so it
+# must not be used.  Verified live against a real S8/S10 (see HANDOFF_REPORT_V3.md).
+SERVICE_SET_ZONES: Final = "SetZones"
+SERVICE_SET_AREAS: Final = "SetAreas"
+SERVICE_MODIFY_AREAS: Final = "ModifyAreas"
+
+# Area kinds as stored by the robot in the map document "area" array.
+AREA_ACTIVE_FORBID: Final = "forbid"   # no-go / no-mop area
+AREA_ACTIVE_LINE: Final = "line"       # virtual wall
+AREA_ACTIVE_NORMAL: Final = "normal"   # inactive area (kept in the list, not applied)
+
+# Area restriction type ("forbidType") as stored by the robot.
+AREA_TYPE_ALL: Final = "all"   # forbidden for every cleaning mode (no-go)
+AREA_TYPE_MOP: Final = "mop"   # forbidden while mopping only (no-mop)
+
+# Home Assistant side zone types used by the map card.
+ZONE_TYPE_FORBID: Final = "forbid"
+ZONE_TYPE_MOP: Final = "mop"
+ZONE_TYPE_LINE: Final = "line"
 
 # Fan speed / Suction mode mapping
 FAN_SPEED_QUIET: Final = "quiet"

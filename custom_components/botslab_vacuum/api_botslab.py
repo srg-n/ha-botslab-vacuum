@@ -20,6 +20,11 @@ from .api_base import (
 )
 from .const import (
     ACTIVE_STATUSES,
+    AREA_ACTIVE_FORBID,
+    AREA_ACTIVE_LINE,
+    AREA_ACTIVE_NORMAL,
+    AREA_TYPE_ALL,
+    AREA_TYPE_MOP,
     AUTH_EXPIRED_CODES,
     EP_GET_DSL,
     EP_OTA_CHECK,
@@ -42,6 +47,7 @@ from .const import (
     SERVICE_SAVE_MAP,
     SERVICE_SEND_REMOTE_CONTROL,
     SERVICE_SET_FROM_MAP,
+    SERVICE_SET_ZONES,
     SERVICE_START_IN_DUST,
     SERVICE_START_MOP_DRY,
     SERVICE_START_MOP_WASH,
@@ -49,6 +55,9 @@ from .const import (
     SERVICE_STOP_MOP_WASH,
     STATUS_CLEANING,
     WATER_LEVEL_TO_INT,
+    ZONE_TYPE_FORBID,
+    ZONE_TYPE_LINE,
+    ZONE_TYPE_MOP,
 )
 from .exceptions import BotslabCommandError
 from .map_util import (
@@ -59,6 +68,221 @@ from .models import BotslabMapInfo, BotslabRoom
 from .quc_login import BotslabApiError, BotslabAuthError
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Map area helpers (forbidden / no-mop / virtual wall areas)
+#
+# The robot stores every map area in the map document "area" array using this
+# schema (verified live against a real Botslab S8/S10):
+#
+#   {"active": "forbid" | "line" | "normal",
+#    "forbidType": "all" | "mop",
+#    "id": 0, "mapId": 28244, "mode": "default",
+#    "name": "rect1", "tag": "tag0",
+#    "vertexs": [[x, y], ...]}
+#
+#   active      forbid  -> forbidden area (no-go when forbidType=all,
+#                           no-mop when forbidType=mop)
+#               line    -> virtual wall (4 vertices, the last two are [0, 0])
+#               normal  -> inactive area (kept in the list but not applied)
+#   forbidType  all     -> forbidden in every cleaning mode
+#               mop     -> forbidden while mopping only
+# ---------------------------------------------------------------------------
+
+
+def _bbox_from_vertexs(vertexs: Any) -> list[int] | None:
+    """Return [x1, y1, x2, y2] (mm) for a list of vertex pairs."""
+    if not isinstance(vertexs, list):
+        return None
+    xs: list[float] = []
+    ys: list[float] = []
+    for pt in vertexs:
+        if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+            try:
+                xs.append(float(pt[0]))
+                ys.append(float(pt[1]))
+            except (TypeError, ValueError):
+                continue
+    if not xs or not ys:
+        return None
+    return [
+        int(round(min(xs))),
+        int(round(min(ys))),
+        int(round(max(xs))),
+        int(round(max(ys))),
+    ]
+
+
+def _rect_to_vertexs(points: Any) -> list[list[int]]:
+    """Convert [x1, y1, x2, y2] (mm) into the 4-vertex rectangle the robot expects."""
+    if not isinstance(points, list) or len(points) < 4:
+        return []
+    try:
+        x1, y1, x2, y2 = (float(points[0]), float(points[1]), float(points[2]), float(points[3]))
+    except (TypeError, ValueError):
+        return []
+    min_x, max_x = int(round(min(x1, x2))), int(round(max(x1, x2)))
+    min_y, max_y = int(round(min(y1, y2))), int(round(max(y1, y2)))
+    return [
+        [min_x, min_y],
+        [min_x, max_y],
+        [max_x, max_y],
+        [max_x, min_y],
+    ]
+
+
+def _map_area_to_ha_zone(area: dict[str, Any]) -> dict[str, Any] | None:
+    """Map a robot map-area entry to the Home Assistant zone model.
+
+    Returns ``None`` for entries that are not areas (e.g. inactive "normal" areas).
+    """
+    active = str(area.get("active") or "").strip().lower()
+    forbid_type = str(area.get("forbidType") or "").strip().lower()
+
+    if active == AREA_ACTIVE_LINE:
+        zone_type = ZONE_TYPE_LINE
+    elif forbid_type == AREA_TYPE_MOP:
+        zone_type = ZONE_TYPE_MOP
+    elif active == AREA_ACTIVE_FORBID or forbid_type == AREA_TYPE_ALL:
+        zone_type = ZONE_TYPE_FORBID
+    elif active == AREA_ACTIVE_NORMAL:
+        # Inactive area: kept by the robot but not applied - do not surface it.
+        return None
+    else:
+        return None
+
+    zone = dict(area)
+    zone["type"] = zone_type
+    vertexs = area.get("vertexs")
+    if isinstance(vertexs, list) and len(vertexs) >= 2:
+        normalized_vertices = [
+            [int(round(float(pt[0]))), int(round(float(pt[1])))]
+            for pt in vertexs
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2
+        ]
+        if zone_type == ZONE_TYPE_LINE:
+            # Virtual walls carry two [0, 0] padding vertices; they are not geometry.
+            normalized_vertices = [
+                pt for pt in normalized_vertices if pt != [0, 0]
+            ]
+        zone["vertexs"] = normalized_vertices
+        vertexs = normalized_vertices
+    bbox = _bbox_from_vertexs(vertexs)
+    if bbox:
+        zone["points"] = bbox
+    return zone
+
+
+def _ha_zone_to_map_area(zone: dict[str, Any], index: int) -> dict[str, Any] | None:
+    """Map a Home Assistant zone to the robot map-area entry used by ``SetZones``."""
+    if not isinstance(zone, dict):
+        return None
+
+    # Cleaning zones (``active: "normal"``) share the same area list as forbidden areas
+    # and virtual walls.  ``SetZones`` replaces the whole list, so entries handed to us
+    # verbatim must be preserved as-is instead of being converted into forbidden areas.
+    raw_active = str(zone.get("active") or "").strip().lower()
+    if raw_active == AREA_ACTIVE_NORMAL and not zone.get("type"):
+        preserved = dict(zone)
+        vertexs_raw = preserved.get("vertexs")
+        vertexs = []
+        if isinstance(vertexs_raw, list):
+            for pt in vertexs_raw:
+                if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                    vertexs.append([int(round(float(pt[0]))), int(round(float(pt[1])))])
+        if not vertexs:
+            return None
+        preserved.update(
+            {
+                "name": str(preserved.get("name") or f"rect{index + 1}"),
+                "id": int(index),
+                "mode": preserved.get("mode") or "default",
+                "active": AREA_ACTIVE_NORMAL,
+                "forbidType": preserved.get("forbidType"),
+                "vertexs": vertexs,
+                "tag": str(preserved.get("tag") or f"tag{index}"),
+            }
+        )
+        return preserved
+
+    zone_type = str(zone.get("type") or ZONE_TYPE_FORBID).strip().lower()
+    if zone_type in ("no_go", "forbid", "sweep"):
+        forbid_type, active = AREA_TYPE_ALL, AREA_ACTIVE_FORBID
+    elif zone_type in ("no_mop", "mop"):
+        forbid_type, active = AREA_TYPE_MOP, AREA_ACTIVE_FORBID
+    elif zone_type in ("wall", "virtual_wall", "line"):
+        forbid_type, active = AREA_TYPE_ALL, AREA_ACTIVE_LINE
+    else:
+        forbid_type, active = AREA_TYPE_ALL, AREA_ACTIVE_FORBID
+
+    vertexs = zone.get("vertexs")
+    if not (isinstance(vertexs, list) and len(vertexs) >= 2):
+        vertexs = _rect_to_vertexs(zone.get("points"))
+    if not vertexs:
+        return None
+
+    if active == AREA_ACTIVE_LINE:
+        # Virtual walls are stored as two real vertices plus two [0, 0] padding points,
+        # even when the caller already supplied four.
+        if len(vertexs) < 2:
+            return None
+        vertexs = [list(vertexs[0]), list(vertexs[1]), [0, 0], [0, 0]]
+
+    return {
+        "name": str(zone.get("name") or f"rect{index + 1}"),
+        "id": int(index),
+        "mode": "default",
+        "active": active,
+        "forbidType": forbid_type,
+        "windMode": None,
+        "cleanTimes": 0,
+        "waterPump": 0,
+        "material": 0,
+        "roomType": None,
+        "vertexs": vertexs,
+        "radius": 0,
+        "tag": f"tag{index}",
+        "relativeRoom": -1,
+    }
+
+
+def _raise_on_error_no(response: Any, action: str) -> dict[str, Any]:
+    """Raise when the robot rejected a command (``ErrorNO`` != 0).
+
+    The synchronous invoke reply nests the device answer either as a JSON string in
+    ``data.result`` or as a mapping directly under ``data``; both shapes are handled so a
+    rejection can never be mistaken for a success.
+    """
+    if not isinstance(response, dict):
+        return {}
+
+    data = response.get("data")
+    if not isinstance(data, dict):
+        data = {}
+
+    result: Any = data.get("result")
+    if isinstance(result, str) and result:
+        try:
+            result = json.loads(result)
+        except (TypeError, ValueError):
+            result = None
+
+    for payload in (result, data, response):
+        if isinstance(payload, dict) and payload.get("ErrorNO") is not None:
+            error_no = payload.get("ErrorNO")
+            if error_no not in (0, "0"):
+                raise BotslabCommandError(
+                    f"{action} rejected by the robot (ErrorNO={error_no})"
+                )
+            break
+
+    code = response.get("code")
+    if code not in (0, "0", None):
+        raise BotslabCommandError(
+            f"{action} failed with code {code}: {data.get('errmsg') or response.get('msg')}"
+        )
+    return response
 
 
 def _get_map_renderer() -> Any:
@@ -545,19 +769,17 @@ class BotslabModernClient(BotslabBaseApiClient):
         raw_area = map_json.get("area") or map_json.get("zones") or []
         no_go = []
         for a in raw_area:
-            if isinstance(a, dict) and a.get("active") == "forbid":
-                zone_dict = dict(a)
-                v = zone_dict.get("vertexs")
-                if v and isinstance(v, list) and len(v) >= 2 and "points" not in zone_dict:
-                    xs = [pt[0] for pt in v if isinstance(pt, (list, tuple)) and len(pt) >= 2]
-                    ys = [pt[1] for pt in v if isinstance(pt, (list, tuple)) and len(pt) >= 2]
-                    if xs and ys:
-                        zone_dict["points"] = [min(xs), min(ys), max(xs), max(ys)]
-                no_go.append(zone_dict)
+            if not isinstance(a, dict):
+                continue
+            area = _map_area_to_ha_zone(a)
+            if area is None:
+                continue
+            no_go.append(area)
         clean_zones = [
             a
             for a in raw_area
-            if isinstance(a, dict) and a.get("active") != "forbid"
+            if isinstance(a, dict)
+            and str(a.get("active") or "").strip().lower() == AREA_ACTIVE_NORMAL
         ]
         carpets = map_json.get("carpets") or map_json.get("carpet_rect") or []
 
@@ -1249,6 +1471,18 @@ class BotslabModernClient(BotslabBaseApiClient):
         water_level: str | None = None,
     ) -> None:
         """Clean custom rectangular zone(s) via SetZones and StartCleanInZones."""
+        valid_zones = [
+            z
+            for z in (zones or [])
+            if isinstance(z, (list, tuple)) and len(z) >= 4
+        ]
+        if not valid_zones:
+            # Safety guard: StartCleanInZones does not validate the zone list and starts a
+            # full cleaning run when it is empty.  Never send it without real zones.
+            raise BotslabCommandError(
+                "Cannot start zone cleaning: no valid zones were provided"
+            )
+        zones = valid_zones
         if fan_speed:
             await self.set_fan_speed(sn, product_key, fan_speed)
         if water_level:
@@ -1281,6 +1515,18 @@ class BotslabModernClient(BotslabBaseApiClient):
             })
 
         active_ids = [z["id"] for z in zone_objs]
+
+        # Preserve existing forbidden areas / virtual walls: they share the same area
+        # list and would otherwise be deleted by this full-list write.
+        cached_info = self.get_cached_map_info(sn)
+        if cached_info is not None:
+            for area in cached_info.no_go_zones or []:
+                if not isinstance(area, dict):
+                    continue
+                mapped = _ha_zone_to_map_area(area, len(zone_objs))
+                if mapped is not None:
+                    zone_objs.append(mapped)
+
         zones_payload = {
             "zones": zone_objs,
             "activeIds": active_ids,
@@ -1307,9 +1553,23 @@ class BotslabModernClient(BotslabBaseApiClient):
     async def clear_cleaning_zones(
         self, sn: str, product_key: str, map_id: int | str
     ) -> dict[str, Any]:
-        """Clear custom cleaning zones from the robot cloud state."""
+        """Clear custom cleaning zones from the robot cloud state.
+
+        Only cleaning zones are removed; forbidden areas and virtual walls are kept
+        because they share the same area list and ``SetZones`` replaces it entirely.
+        """
+        preserved: list[dict[str, Any]] = []
+        cached_info = self.get_cached_map_info(sn)
+        if cached_info is not None:
+            for area in cached_info.no_go_zones or []:
+                if not isinstance(area, dict):
+                    continue
+                mapped = _ha_zone_to_map_area(area, len(preserved))
+                if mapped is not None:
+                    preserved.append(mapped)
+
         zones_payload = {
-            "zones": [],
+            "zones": preserved,
             "activeIds": [],
             "cleanTimes": 1,
             "isAttrOn": 0,
@@ -1439,64 +1699,42 @@ class BotslabModernClient(BotslabBaseApiClient):
         map_id: int | str,
         places: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Set/replace/clear the forbidden (no-go) zones via SetFbdPlaces."""
+        """Replace the map areas (no-go / no-mop / virtual wall) via ``SetZones``.
+
+        The robot keeps a single list of map areas; the service is a *full list* write -
+        areas missing from ``places`` are removed from the robot.  An empty list clears
+        every area.
+
+        Note: the legacy ``SetFbdPlaces`` service is deliberately not used.  It still
+        exists in the product DSL but the firmware silently ignores it (the cloud answers
+        ``code 0`` without any ``ErrorNO`` and nothing is written to the map).
+        """
         try:
             int_map_id = int(map_id)
         except (ValueError, TypeError):
             int_map_id = 0
+        if int_map_id <= 0:
+            raise BotslabCommandError(
+                "Cannot write map areas: the current map id is unknown"
+            )
 
-        formatted_places: list[dict[str, Any]] = []
+        zones: list[dict[str, Any]] = []
         for idx, place in enumerate(places or []):
-            if not isinstance(place, dict):
-                continue
-            z_type = str(place.get("type", "forbid")).lower()
-            if z_type in ("no_go", "forbid", "sweep"):
-                z_type = "forbid"
-            elif z_type in ("no_mop", "mop"):
-                z_type = "mop"
-            elif z_type in ("wall", "virtual_wall", "line"):
-                z_type = "line"
+            area = _ha_zone_to_map_area(place, idx)
+            if area is not None:
+                zones.append(area)
 
-            vertexs = place.get("vertexs")
-            if not (isinstance(vertexs, list) and len(vertexs) >= 2):
-                pts = place.get("points")
-                if isinstance(pts, list) and len(pts) >= 4:
-                    x1, y1, x2, y2 = pts[:4]
-                    min_x, max_x = int(round(min(x1, x2))), int(round(max(x1, x2)))
-                    min_y, max_y = int(round(min(y1, y2))), int(round(max(y1, y2)))
-                    if z_type == "line":
-                        vertexs = [[min_x, min_y], [max_x, max_y]]
-                    else:
-                        vertexs = [
-                            [min_x, min_y],
-                            [min_x, max_y],
-                            [max_x, max_y],
-                            [max_x, min_y],
-                        ]
-                else:
-                    continue
-
-            name = place.get("name") or f"{z_type}_{idx}"
-            formatted_places.append({
-                "active": "forbid",
-                "type": z_type,
-                "name": str(name),
-                "vertexs": vertexs,
-            })
-
+        payload = {"zones": zones, "activeIds": []}
         res = await self.invoke_sync(
             sn,
             product_key,
-            "SetFbdPlaces",
+            SERVICE_SET_ZONES,
             {
                 "MapID": int_map_id,
-                "FbdPlacesList": json.dumps(formatted_places, separators=(",", ":")),
+                "ZonesList": json.dumps(payload, separators=(",", ":")),
             },
         )
-        code = res.get("code") if isinstance(res, dict) else None
-        if code not in (0, "0", None):
-            _LOGGER.error("SetFbdPlaces failed with code %s: %s", code, res)
-            raise BotslabCommandError(f"SetFbdPlaces failed: {res.get('message') or code}")
+        _raise_on_error_no(res, SERVICE_SET_ZONES)
         return res
 
     async def get_clean_track(
