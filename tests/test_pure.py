@@ -1787,7 +1787,7 @@ def test_manifest_version_is_1_1_6():
 
     manifest_path = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum" / "manifest.json"
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.2.6", "1.2.7", "1.2.8", "1.2.9", "1.3.0")
+    assert data["version"] in ("1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10", "1.1.11", "1.1.12", "1.1.13", "1.1.14", "1.1.15", "1.1.16", "1.1.17", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.2.6", "1.2.7", "1.2.8", "1.2.9", "1.3.0", "1.3.1")
     assert data["categories"] == ["appliances_cleaning.cleaning"]
 
 
@@ -3104,6 +3104,37 @@ async def test_coordinator_lan_remote_drive_integration():
             speed=300,
             target_ip="192.168.1.55",
         )
+
+
+# ------------------------------------------------------- floor map names
+def test_floor_map_entries_single_active_map_uses_select_label():
+    """The vacuum ``maps`` attribute must use the same label as the select entity.
+
+    The map card sends the attribute name straight to ``select.select_option``;
+    a hard-coded placeholder such as "Current Map" is rejected by Home Assistant
+    (``valid options are: Map 28244``), which is exactly the bug this guards.
+    """
+    from custom_components.botslab_vacuum.models import floor_map_entries
+
+    assert floor_map_entries(None, None) == []
+    assert floor_map_entries(None, "28244") == [{"id": 28244, "name": "Map 28244"}]
+    assert floor_map_entries([], 28244) == [{"id": 28244, "name": "Map 28244"}]
+
+
+def test_floor_map_entries_disambiguate_duplicate_names():
+    from custom_components.botslab_vacuum.models import floor_map_entries
+
+    assert floor_map_entries(
+        [
+            {"map_id": "1", "map_name": "Home"},
+            {"map_id": "2", "map_name": "Home"},
+            {"map_id": "3"},
+        ]
+    ) == [
+        {"id": 1, "name": "Home"},
+        {"id": 2, "name": "Home (2)"},
+        {"id": 3, "name": "Map 3"},
+    ]
 
 
 

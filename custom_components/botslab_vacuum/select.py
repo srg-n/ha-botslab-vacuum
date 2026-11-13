@@ -18,7 +18,7 @@ from .const import (
 )
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
-from .models import BotslabVacuumDevice
+from .models import BotslabVacuumDevice, floor_map_entries
 
 PARALLEL_UPDATES: Final = 0
 
@@ -101,28 +101,13 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
         self._attr_translation_key = "selected_map"
         self._attr_icon = "mdi:layers-triple-outline"
 
-    def _map_display_name(self, m: dict[str, Any], seen: set[str] | None = None) -> str:
-        name = str(m.get("map_name") or f"Map {m.get('map_id')}")
-        if seen is not None and name in seen:
-            name = f"{name} ({m.get('map_id')})"
-        return name
-
     @property
     def options(self) -> list[str]:
         """Return list of available floor map names."""
         if not self.device:
             return ["Default Map"]
-        if not self.device.saved_maps:
-            if self.device.current_map_id:
-                return [f"Map {self.device.current_map_id}"]
-            return ["Default Map"]
-        seen: set[str] = set()
-        opts: list[str] = []
-        for m in self.device.saved_maps:
-            name = self._map_display_name(m, seen)
-            seen.add(name)
-            opts.append(name)
-        return opts or ["Default Map"]
+        entries = floor_map_entries(self.device.saved_maps, self.device.current_map_id)
+        return [entry["name"] for entry in entries] or ["Default Map"]
 
     @property
     def current_option(self) -> str | None:
@@ -135,15 +120,12 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
             return self.options[0]
         cur_id = str(self.device.current_map_id)
         cur_clean_id = str(self.device.clean_id)
-        seen: set[str] = set()
         current = None
-        for m in self.device.saved_maps:
-            name = self._map_display_name(m, seen)
-            seen.add(name)
+        for entry, m in zip(floor_map_entries(self.device.saved_maps), self.device.saved_maps):
             m_id = str(m.get("map_id", ""))
             m_clean = str(m.get("clean_id", ""))
             if (cur_id and m_id == cur_id) or (cur_clean_id and m_clean == cur_clean_id) or m.get("is_cur") == 1:
-                current = name
+                current = entry["name"]
         return current or self.options[0]
 
     async def async_select_option(self, option: str) -> None:
@@ -151,11 +133,8 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
         if not self.device:
             return
         target_id = None
-        seen: set[str] = set()
-        for m in self.device.saved_maps:
-            name = self._map_display_name(m, seen)
-            seen.add(name)
-            if name == option:
+        for entry, m in zip(floor_map_entries(self.device.saved_maps), self.device.saved_maps):
+            if entry["name"] == option:
                 target_id = m.get("clean_id") or m.get("map_id")
                 break
         if target_id is not None:

@@ -5,6 +5,54 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def floor_map_name(map_entry: dict[str, Any], seen: set[str] | None = None) -> str:
+    """Return the label used for a floor map across the integration.
+
+    The select entity and the vacuum's ``maps`` attribute must expose the exact same
+    strings, otherwise the map card sends a ``select_option`` value the entity rejects.
+    Duplicate names are disambiguated with the map id.
+    """
+    name = str(map_entry.get("map_name") or f"Map {map_entry.get('map_id')}")
+    if seen is not None and name in seen:
+        name = f"{name} ({map_entry.get('map_id')})"
+    return name
+
+
+def floor_map_entries(
+    saved_maps: list[dict[str, Any]] | None,
+    current_map_id: Any = None,
+) -> list[dict[str, Any]]:
+    """Return ``{"id", "name"}`` for the floor maps the card and select entity expose.
+
+    When no floor is saved yet the active map is reported with the exact label the
+    select entity uses (``Map <id>``); a hard-coded placeholder such as "Current Map"
+    would be rejected by ``select.select_option``. Duplicate names are disambiguated
+    with the map id.
+    """
+    seen: set[str] = set()
+    entries: list[dict[str, Any]] = []
+    for m in saved_maps or []:
+        name = floor_map_name(m, seen)
+        seen.add(name)
+        raw_id = m.get("map_id", 0)
+        entries.append(
+            {
+                "id": int(raw_id) if str(raw_id).isdigit() else raw_id,
+                "name": name,
+            }
+        )
+    if entries:
+        return entries
+    if current_map_id:
+        return [
+            {
+                "id": int(current_map_id) if str(current_map_id).isdigit() else current_map_id,
+                "name": f"Map {current_map_id}",
+            }
+        ]
+    return []
+
+
 @dataclass(slots=True)
 class BotslabRoom:
     """Represents a defined room in the vacuum's map.

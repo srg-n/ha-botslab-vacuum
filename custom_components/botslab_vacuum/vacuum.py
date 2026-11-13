@@ -25,7 +25,7 @@ from .const import (
 )
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
-from .models import BotslabVacuumDevice
+from .models import BotslabVacuumDevice, floor_map_entries
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -156,16 +156,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             "mopping_pad_installed": dev.mop_installed,
             "water_tank_installed": dev.water_tank_installed,
             "current_map_id": dev.current_map_id,
-            "maps": [
-                {
-                    "id": int(m["map_id"]) if str(m.get("map_id", "")).isdigit() else m.get("map_id", 0),
-                    "name": str(m.get("map_name") or f"Map {m.get('map_id', 0)}"),
-                }
-                for m in dev.saved_maps
-            ] if dev.saved_maps else (
-                [{"id": int(dev.current_map_id) if str(dev.current_map_id).isdigit() else 1, "name": "Current Map"}]
-                if dev.current_map_id else []
-            ),
+            "maps": floor_map_entries(dev.saved_maps, dev.current_map_id),
             "selected_map_id": int(dev.current_map_id) if (dev.current_map_id and str(dev.current_map_id).isdigit()) else dev.current_map_id,
             "selected_map": int(dev.current_map_id) if (dev.current_map_id and str(dev.current_map_id).isdigit()) else dev.current_map_id,
             "clean_id": dev.clean_id,
