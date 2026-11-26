@@ -377,6 +377,8 @@ class BotslabVacuumDevice:
     current_map_id: str = ""
     clean_id: str = ""
     error_code: int = 0
+    raw_error_code: int = 0
+    error_message: str | None = None
     total_cleaning_area_sqm: float = 0.0
     total_cleaning_time_minutes: int = 0
     tasks_total_count: int = 0

@@ -85,7 +85,9 @@
           "11": "Charging abnormal or dock contacts dirty",
           "12": "Robot trapped or stuck",
           "13": "Water tank empty",
-          "14": "Mop bracket / pad missing"
+          "14": "Mop bracket / pad missing",
+          "in_trouble": "Robot stuck or faulted (no error code)",
+          "unknown": "Unknown fault (see attributes)"
         }
       },
       "mop_installed": {

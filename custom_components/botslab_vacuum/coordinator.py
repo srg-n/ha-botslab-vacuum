@@ -88,6 +88,34 @@ def _find_first_prop(
     return default
 
 
+def _extract_error_info(props: dict[str, Any]) -> tuple[int, str | None]:
+    """Extract numeric hardware error code and optional cloud error message from props."""
+    raw_val = _find_first_prop(
+        props,
+        ("ErrorCode", "error_code", "errorCode", "FaultCode", "fault_code", "ErrorNO", "errorState"),
+        0,
+    )
+    if isinstance(raw_val, list):
+        raw_val = raw_val[-1] if raw_val else 0
+    elif isinstance(raw_val, dict):
+        raw_val = raw_val.get("code", raw_val.get("errorCode", 0))
+
+    err_code = 0
+    if raw_val is not None and not isinstance(raw_val, bool):
+        try:
+            err_code = int(raw_val)
+        except (TypeError, ValueError):
+            err_code = 0
+
+    raw_msg = _find_first_prop(
+        props,
+        ("ErrorMsg", "errorMsg", "error_msg", "FaultMsg", "fault_msg", "errorDesc", "troubleMsg"),
+        None,
+    )
+    err_msg = str(raw_msg).strip() if isinstance(raw_msg, str) and raw_msg.strip() else None
+    return err_code, err_msg
+
+
 def _parse_consumable_lifetime(
     raw_val: Any, max_hours: float, is_legacy_360: bool | None = None
 ) -> tuple[int, float]:
@@ -670,7 +698,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             tasks_count = int(props.get("TasksTotalCount", 0) or 0)
             clean_sub_status = props.get("CleanSubStatus")
             current_loc = props.get("CurrentLocation")
-            err_code = int(props.get("ErrorCode", 0) or 0)
+            err_code, err_msg = _extract_error_info(props)
             if self.api.is_legacy_360:
                 if err_code > 0:
                     status = STATUS_ERROR
@@ -1105,6 +1133,8 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 current_map_id=map_id,
                 clean_id=clean_id,
                 error_code=active_error_code,
+                raw_error_code=err_code,
+                error_message=err_msg,
                 total_cleaning_area_sqm=round(total_area, 1),
                 total_cleaning_time_minutes=(
                     round(total_time / 60)

@@ -452,6 +452,7 @@ export const CARD_COMPANION_ENTITIES = {
   selfCleanArea: { platform: 'number', key: DREAME_NUMBERS.SELF_CLEAN_AREA.key },
   selfCleanTime: { platform: 'number', key: DREAME_NUMBERS.SELF_CLEAN_TIME.key },
   stateSensor: { platform: 'sensor', key: DREAME_SENSORS.STATE.key },
+  errorCodeSensor: { platform: 'sensor', key: 'error_code' },
   customizedCleaning: { platform: 'switch', key: DREAME_SWITCHES.CUSTOMIZED_CLEANING.key },
   selectedMap: { platform: 'select', key: DREAME_SELECTS.SELECTED_MAP.key },
 } as const satisfies Record<string, CompanionEntityRef>;

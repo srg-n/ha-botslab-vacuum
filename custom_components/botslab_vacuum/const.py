@@ -124,6 +124,64 @@ ERROR_CODE_DESCRIPTIONS: Final[dict[int, str]] = {
     14: "Mop bracket / pad missing",
 }
 
+ERROR_CODE_OPTIONS: Final[list[str]] = [
+    *(str(i) for i in range(15)),
+    "in_trouble",
+    "unknown",
+]
+
+
+def _coerce_error_int(value: object) -> int:
+    """Safely convert an error code value to int, returning 0 for non-integers."""
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (float, str)):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def resolve_error_option(error_code: int, status: str = "") -> str:
+    """Map numeric error code and status to a valid error_code ENUM option."""
+    code = _coerce_error_int(error_code)
+    if 1 <= code <= 14:
+        return str(code)
+    if code >= 15:
+        return "unknown"
+    if status == "error":
+        return "in_trouble"
+    return "0"
+
+
+def describe_error(
+    error_code: int,
+    status: str = "",
+    raw_error_code: int = 0,
+    error_message: str | None = None,
+) -> str:
+    """Return a human-readable fault description without masking InTrouble as Normal."""
+    code = _coerce_error_int(error_code)
+    raw_code = _coerce_error_int(raw_error_code)
+    msg = error_message.strip() if isinstance(error_message, str) and error_message.strip() else None
+
+    if code > 0:
+        if code in ERROR_CODE_DESCRIPTIONS:
+            return ERROR_CODE_DESCRIPTIONS[code]
+        if msg:
+            return f"{msg} (Code {code})"
+        return f"Error {code}"
+    if status == "error":
+        if msg:
+            return msg
+        if raw_code < 0:
+            return f"Robot stuck or faulted (InTrouble, code {raw_code})"
+        return "Robot stuck or faulted (InTrouble)"
+    return "Normal"
+
 # Clean sub-status descriptions (English baseline)
 CLEAN_SUB_STATUS_DESCRIPTIONS: Final[dict[int, str]] = {
     0: "Standard cleaning",

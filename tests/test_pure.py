@@ -3526,6 +3526,51 @@ async def test_quc_login_response_does_not_log_tokens():
             assert any("QUC decrypted response errno" in log_str for log_str in logged_strings)
 
 
+def test_fault_extraction_and_error_description():
+    """Verify fault extraction, negative code filtering, InTrouble handling, and translation parity."""
+    from pathlib import Path
+    from custom_components.botslab_vacuum.const import (
+        ERROR_CODE_OPTIONS,
+        STATUS_DOCKED,
+        STATUS_ERROR,
+        describe_error,
+        resolve_error_option,
+    )
+    from custom_components.botslab_vacuum.coordinator import _extract_error_info
+
+    # Multi-key extraction
+    assert _extract_error_info({"ErrorCode": -2406}) == (-2406, None)
+    assert _extract_error_info({"FaultCode": "102", "FaultMsg": "Lidar blocked"}) == (102, "Lidar blocked")
+    assert _extract_error_info({"errorState": [0, 5]}) == (5, None)
+    assert _extract_error_info({"ErrorCode": "bad", "ErrorMsg": "   "}) == (0, None)
+    assert _extract_error_info({"ErrorCode": True}) == (0, None)
+
+    # ENUM option resolution (must never fall outside ERROR_CODE_OPTIONS)
+    assert resolve_error_option(0, STATUS_DOCKED) == "0"
+    assert resolve_error_option(5, STATUS_ERROR) == "5"
+    assert resolve_error_option(0, STATUS_ERROR) == "in_trouble"
+    assert resolve_error_option(102, STATUS_ERROR) == "unknown"
+    assert resolve_error_option(2001, STATUS_ERROR) == "unknown"
+
+    # Human-readable error descriptions must never report "Normal" during STATUS_ERROR
+    assert describe_error(0, STATUS_DOCKED) == "Normal"
+    assert describe_error(5, STATUS_ERROR) == "Main roller brush tangled or stuck"
+    assert describe_error(102, STATUS_ERROR) == "Error 102"
+    assert describe_error(102, STATUS_ERROR, 102, "Bumper stuck") == "Bumper stuck (Code 102)"
+    in_trouble_desc = describe_error(0, STATUS_ERROR, -2406)
+    assert "InTrouble" in in_trouble_desc and in_trouble_desc != "Normal"
+    assert describe_error(0, STATUS_ERROR, 0, "Wheel suspended") == "Wheel suspended"
+
+    # Translation parity for all ERROR_CODE_OPTIONS across strings, en, and tr
+    comp_dir = Path(__file__).parent.parent / "custom_components" / "botslab_vacuum"
+    for rel in ("strings.json", "translations/en.json", "translations/tr.json"):
+        data = json.loads((comp_dir / rel).read_text(encoding="utf-8"))
+        states = data["entity"]["sensor"]["error_code"]["state"]
+        for opt in ERROR_CODE_OPTIONS:
+            assert opt in states, f"Missing error_code state '{opt}' in {rel}"
+
+
+
 
 
 

@@ -85,7 +85,9 @@
           "11": "Şarj istasyonu temas noktaları kirli veya şarj olmuyor",
           "12": "Robot engeller arasında sıkıştı",
           "13": "Su haznesi boş",
-          "14": "Paspas plakası takılı değil"
+          "14": "Paspas plakası takılı değil",
+          "in_trouble": "Robot sıkıştı veya arıza verdi (hata kodu yok)",
+          "unknown": "Bilinmeyen arıza kodu (özniteliklere bakın)"
         }
       },
       "mop_installed": {

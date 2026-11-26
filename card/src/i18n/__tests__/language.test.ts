@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { normalizeChromeLanguage, resolveBackendLanguage, resolveChromeLanguage } from '../language';
-import { fetchIntegrationTranslations, resolveEntityLabel, resolveStatusLabel } from '../integrationTranslations';
+import { fetchIntegrationTranslations, resolveEntityLabel, resolveErrorLabel, resolveStatusLabel } from '../integrationTranslations';
 import { validateConfig } from '@/utils/typeGuards';
 
 describe('resolveChromeLanguage', () => {
@@ -69,6 +69,23 @@ describe('integration labels', () => {
         chromeLabel: 'Child Lock',
       })
     ).toBe('Child Lock');
+  });
+
+  it('resolves localized error_code labels and falls back cleanly for unknown codes', () => {
+    const trResources = {
+      'component.botslab_vacuum.entity.sensor.error_code.state.5': 'Ana rulo fırça sıkıştı veya saç dolandı',
+      'component.botslab_vacuum.entity.sensor.error_code.state.in_trouble': 'Robot sıkıştı veya arıza verdi (hata kodu yok)',
+      'component.botslab_vacuum.entity.sensor.error_code.state.unknown': 'Bilinmeyen arıza kodu (özniteliklere bakın)',
+    };
+    expect(resolveErrorLabel(trResources, '5', 'Main roller brush tangled or stuck')).toBe(
+      'Ana rulo fırça sıkıştı veya saç dolandı'
+    );
+    expect(resolveErrorLabel(trResources, 'in_trouble', 'Robot stuck or faulted (InTrouble)')).toBe(
+      'Robot sıkıştı veya arıza verdi (hata kodu yok)'
+    );
+    expect(resolveErrorLabel(trResources, 'unknown', 'Error 102')).toBe('Error 102');
+    expect(resolveErrorLabel(trResources, 'unknown', 'Normal')).toBe('Bilinmeyen arıza kodu (özniteliklere bakın)');
+    expect(resolveErrorLabel(trResources, '0', 'Normal')).toBeNull();
   });
 });
 

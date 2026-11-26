@@ -4,6 +4,10 @@ export function vacuumStatusKey(rawState: string): string {
   return `component.${INTEGRATION}.entity.sensor.state.state.${rawState}`;
 }
 
+export function vacuumErrorKey(errorState: string): string {
+  return `component.${INTEGRATION}.entity.sensor.error_code.state.${errorState}`;
+}
+
 export function entityNameKey(platform: string, key: string): string {
   return `component.${INTEGRATION}.entity.${platform}.${key}.name`;
 }
@@ -20,6 +24,24 @@ function lookup(resources: Record<string, string>, key: string): string | null {
 
 export function resolveStatusLabel(resources: Record<string, string>, rawState: string): string {
   return lookup(resources, vacuumStatusKey(rawState)) ?? formatFallbackStatus(rawState);
+}
+
+export function resolveErrorLabel(
+  resources: Record<string, string>,
+  errorState: string | undefined,
+  fallbackDescription?: unknown
+): string | null {
+  if (errorState && errorState !== '0' && errorState !== 'unknown') {
+    const translated = lookup(resources, vacuumErrorKey(errorState));
+    if (translated) return translated;
+  }
+  if (typeof fallbackDescription === 'string' && fallbackDescription.trim() && fallbackDescription !== 'Normal') {
+    return fallbackDescription.trim();
+  }
+  if (errorState && errorState !== '0') {
+    return lookup(resources, vacuumErrorKey(errorState)) ?? formatFallbackStatus(errorState);
+  }
+  return null;
 }
 
 export function resolveEntityLabel({

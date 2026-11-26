@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ERROR_CODE_DESCRIPTIONS, STATUS_ERROR
+from .const import STATUS_ERROR, describe_error
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
 from .models import BotslabVacuumDevice
@@ -68,11 +68,17 @@ class BotslabProblemBinarySensor(BotslabVacuumEntity, BinarySensorEntity):
         if not self.device:
             return {"error_code": 0, "error_type": "Normal"}
         code = self.device.error_code or 0
-        error_desc = ERROR_CODE_DESCRIPTIONS.get(
-            code, f"Error {code}" if code else "Normal"
+        error_desc = describe_error(
+            code,
+            self.device.status,
+            self.device.raw_error_code,
+            self.device.error_message,
         )
-        return {
+        attrs: dict[str, Any] = {
             "error_code": code,
             "error_type": error_desc,
             "status": self.device.status,
         }
+        if self.device.raw_error_code and self.device.raw_error_code != code:
+            attrs["raw_error_code"] = self.device.raw_error_code
+        return attrs

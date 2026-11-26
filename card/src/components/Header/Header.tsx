@@ -1,7 +1,7 @@
 import { Settings } from 'lucide-react';
 import { useTranslation } from '@/hooks';
-import { useAreaUnit, useEntity, useMachineState } from '@/contexts';
-import { resolveStatusLabel } from '@/i18n';
+import { useAreaUnit, useDeviceEntities, useEntity, useHass, useMachineState } from '@/contexts';
+import { resolveErrorLabel, resolveStatusLabel } from '@/i18n';
 import { useIntegrationTranslations } from '@/hooks/useEntityLabel';
 import { getAttr, isNumber } from '@/utils';
 import {
@@ -21,10 +21,22 @@ interface HeaderProps {
 export function Header({ deviceName, onSettingsClick }: HeaderProps) {
   const { t } = useTranslation();
   const areaUnit = useAreaUnit();
+  const hass = useHass();
   const entity = useEntity();
-  const { rawState } = useMachineState();
+  const { get } = useDeviceEntities();
+  const { phase, rawState } = useMachineState();
   const resources = useIntegrationTranslations();
   const statusText = resolveStatusLabel(resources, rawState);
+  const errorEntityId = get('sensor', 'error_code');
+  const errorEntityState = errorEntityId ? hass.states[errorEntityId]?.state : undefined;
+  const rawAttrCode = entity.attributes.error_code;
+  const fallbackErrorState =
+    typeof rawAttrCode === 'number' && rawAttrCode > 0 ? String(rawAttrCode) : phase === 'error' ? 'in_trouble' : undefined;
+  const errorLabel =
+    phase === 'error' || rawState === 'error'
+      ? resolveErrorLabel(resources, errorEntityState ?? fallbackErrorState, entity.attributes.error_type)
+      : null;
+  const displayStatusText = errorLabel ? `${statusText} — ${errorLabel}` : statusText;
   const cleanedArea = getAttr(entity.attributes.cleaned_area ?? entity.attributes.cleaning_area ?? entity.attributes.cleaned_area_sqm, 0);
   const cleaningTime = getAttr(entity.attributes.cleaning_time ?? entity.attributes.cleaning_time_minutes, 0);
   const rawBattery = entity.attributes.battery ?? entity.attributes.battery_level;
@@ -47,7 +59,7 @@ export function Header({ deviceName, onSettingsClick }: HeaderProps) {
       <div className="header__top">
         <div className="header__title-wrapper">
           <h2 className="header__title">{deviceName}</h2>
-          <p className="header__status">{statusText}</p>
+          <p className="header__status">{displayStatusText}</p>
         </div>
         {onSettingsClick && (
           <button className="header__settings-btn" onClick={onSettingsClick} type="button" aria-label="Settings">

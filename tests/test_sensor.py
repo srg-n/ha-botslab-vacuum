@@ -133,6 +133,35 @@ async def test_problem_binary_sensor(hass: HomeAssistant) -> None:
     assert problem.attributes.get("error_code") == 5
     assert problem.attributes.get("error_type") == "Main roller brush tangled or stuck"
 
+    error_sensor = state_for(hass, "sensor", "error_code")
+    assert error_sensor is not None
+    assert error_sensor.state == "5"
+    assert error_sensor.attributes.get("error_code") == 5
+
+    # Simulate InTrouble (WorkingStatus=9) with negative ErrorCode (-2406 -> error_code=0)
+    dev.status = "error"
+    dev.error_code = 0
+    dev.raw_error_code = -2406
+    coordinator.async_set_updated_data({TEST_SN: dev})
+
+    problem = state_for(hass, "binary_sensor", "problem")
+    assert problem.state == "on"
+    assert "InTrouble" in problem.attributes.get("error_type", "")
+    assert problem.attributes.get("raw_error_code") == -2406
+
+    error_sensor = state_for(hass, "sensor", "error_code")
+    assert error_sensor.state == "in_trouble"
+
+    # Simulate an unmapped positive error code >= 15 (must not fail ENUM validation)
+    dev.error_code = 102
+    dev.raw_error_code = 102
+    coordinator.async_set_updated_data({TEST_SN: dev})
+
+    error_sensor = state_for(hass, "sensor", "error_code")
+    assert error_sensor.state == "unknown"
+    assert error_sensor.attributes.get("error_code") == 102
+    assert error_sensor.attributes.get("error_type") == "Error 102"
+
 
 async def test_entities_have_unique_ids(hass: HomeAssistant) -> None:
     """Every entity is uniquely identified."""

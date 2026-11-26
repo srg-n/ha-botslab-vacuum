@@ -2,7 +2,7 @@ import { locales, type SupportedLanguage } from './locales';
 import { logger } from '@/utils/logger';
 
 export { normalizeChromeLanguage, resolveBackendLanguage, resolveChromeLanguage } from './language';
-export { resolveEntityLabel, resolveStatusLabel } from './integrationTranslations';
+export { resolveEntityLabel, resolveErrorLabel, resolveStatusLabel } from './integrationTranslations';
 
 // Type for nested translation objects
 type TranslationValue = string | { [key: string]: TranslationValue };

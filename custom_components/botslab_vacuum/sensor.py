@@ -17,11 +17,17 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import ERROR_CODE_OPTIONS, describe_error, resolve_error_option
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
 from .models import BotslabVacuumDevice
 
 PARALLEL_UPDATES: Final = 0
+
+
+def _error_code_state(dev: BotslabVacuumDevice) -> str:
+    """Map device fault state to a valid error_code ENUM option."""
+    return resolve_error_option(dev.error_code or 0, dev.status)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -129,9 +135,9 @@ SENSOR_DESCRIPTIONS: tuple[BotslabSensorEntityDescription, ...] = (
         translation_key="error_code",
         icon="mdi:alert-circle-outline",
         device_class=SensorDeviceClass.ENUM,
-        options=[str(i) for i in range(15)],
+        options=ERROR_CODE_OPTIONS,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda dev: str(dev.error_code or 0),
+        value_fn=_error_code_state,
     ),
     BotslabSensorEntityDescription(
         key="mop_installed",
@@ -260,6 +266,21 @@ class BotslabSensor(BotslabVacuumEntity, SensorEntity):
             return {"remaining_hours": c.side_brush_left_hours, "used_hours": c.side_brush_used_hours}
         if self.entity_description.key == "sensor_dirtiness":
             return {"remaining_hours": c.sensor_left_hours, "used_hours": c.sensor_used_hours}
+        if self.entity_description.key == "error_code":
+            code = self.device.error_code or 0
+            attrs: dict[str, Any] = {
+                "error_code": code,
+                "error_type": describe_error(
+                    code,
+                    self.device.status,
+                    self.device.raw_error_code,
+                    self.device.error_message,
+                ),
+                "status": self.device.status,
+            }
+            if self.device.raw_error_code and self.device.raw_error_code != code:
+                attrs["raw_error_code"] = self.device.raw_error_code
+            return attrs
         return None
 
 

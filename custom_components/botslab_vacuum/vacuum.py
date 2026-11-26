@@ -22,6 +22,7 @@ from .const import (
     STATUS_IDLE,
     STATUS_PAUSED,
     STATUS_RETURNING,
+    describe_error,
 )
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
@@ -167,6 +168,13 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             "dock_position": dev.dock_position,
             "no_go_zones": dev.no_go_zones,
             "error_code": dev.error_code,
+            "raw_error_code": dev.raw_error_code if isinstance(dev.raw_error_code, int) and not isinstance(dev.raw_error_code, bool) else 0,
+            "error_type": describe_error(
+                dev.error_code,
+                dev.status,
+                dev.raw_error_code,
+                dev.error_message,
+            ),
             "available_rooms": [
                 {
                     "id": r.room_id,
