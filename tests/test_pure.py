@@ -3082,6 +3082,103 @@ async def test_switch_floor_map_modern_recover_recorded_map():
     )
 
 
+def test_parse_recorded_maps_wrapped_dict():
+    """Verify _parse_recorded_maps unwraps Botslab S8 {'RecordedMaps': [...]} JSON strings."""
+    import json
+    from custom_components.botslab_vacuum.coordinator import _parse_recorded_maps
+
+    wrapped_payload = json.dumps(
+        {
+            "RecordedMaps": [
+                {
+                    "BinFileMd5": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "BookmarkFlag": False,
+                    "CleanID": "TESTSN001-1762520599",
+                    "FileID": "176284716256524707",
+                    "Nickname": "",
+                    "PermBinSaveUrl": None,
+                    "PermSaveUrl": None,
+                    "RecoverBinUrl": "aliyun://bucket/long/bin1",
+                    "Url": "aliyun://bucket/long/map1",
+                    "ValidUntil": "1790000000",
+                },
+                {
+                    "BinFileMd5": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "BookmarkFlag": True,
+                    "CleanID": "TESTSN001-1779015758",
+                    "FileID": "177944169527932720",
+                    "Nickname": "Upstairs",
+                    "PermBinSaveUrl": "aliyun://bucket/180days/bin2",
+                    "PermSaveUrl": "aliyun://bucket/180days/map2",
+                    "RecoverBinUrl": "aliyun://bucket/long/bin2",
+                    "Url": "aliyun://bucket/long/map2",
+                    "ValidUntil": "1795000000",
+                },
+            ]
+        }
+    )
+
+    parsed = _parse_recorded_maps(wrapped_payload, current_clean_id="TESTSN001-1779015758")
+    assert len(parsed) == 2
+    assert parsed[0]["clean_id"] == "TESTSN001-1762520599"
+    assert parsed[0]["map_name"] == "Map 1"
+    assert parsed[0]["file_id"] == "176284716256524707"
+    assert parsed[0]["recover_bin_url"] == "aliyun://bucket/long/bin1"
+    assert parsed[0]["bin_file_md5"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert parsed[0]["is_cur"] == 0
+
+    assert parsed[1]["clean_id"] == "TESTSN001-1779015758"
+    assert parsed[1]["map_name"] == "Upstairs"
+    assert parsed[1]["bookmark"] is True
+    assert parsed[1]["url"] == "aliyun://bucket/180days/map2"
+    assert parsed[1]["recover_bin_url"] == "aliyun://bucket/180days/bin2"
+    assert parsed[1]["is_cur"] == 1
+
+
+@pytest.mark.asyncio
+async def test_switch_floor_map_retries_full_descriptor_and_preserves_real_error():
+    """Verify switch_floor_map retries with recorded-map metadata and never masks errors with missing SetFromMap."""
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api_botslab import BotslabModernClient
+    from custom_components.botslab_vacuum.const import SERVICE_RECOVER_RECORDED_MAP
+    from custom_components.botslab_vacuum.exceptions import BotslabCommandError
+
+    client = MagicMock(spec=BotslabModernClient)
+    # 1st call (CleanID only) rejected -> 2nd call (full descriptor) succeeds
+    client.invoke_sync = AsyncMock(
+        side_effect=[
+            {"code": 202016, "msg": "input dsl err: missing RecoverBinUrl"},
+            {"code": 0, "data": {"ErrorNO": 0}, "msg": "ok"},
+        ]
+    )
+    entry = {
+        "clean_id": "TESTSN001-1762520599",
+        "recover_bin_url": "aliyun://bucket/long/bin1",
+        "bin_file_md5": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "url": "aliyun://bucket/long/map1",
+        "file_id": "176284716256524707",
+    }
+    res = await BotslabModernClient.switch_floor_map(
+        client, "SN123", "PK123", "TESTSN001-1762520599", map_entry=entry
+    )
+    assert res["code"] == 0
+    assert client.invoke_sync.call_count == 2
+    assert client.invoke_sync.call_args_list[1].args[2] == SERVICE_RECOVER_RECORDED_MAP
+    assert client.invoke_sync.call_args_list[1].args[3]["RecoverBinUrl"] == "aliyun://bucket/long/bin1"
+
+    # When numeric ID fails RecoverRecordedMap and SetFromMap does not exist, surface the real error
+    client2 = MagicMock(spec=BotslabModernClient)
+    client2.invoke_sync = AsyncMock(
+        side_effect=[
+            {"code": 0, "data": {"ErrorNO": 500}},
+            {"code": 0, "data": {"ErrorNO": 500}},
+            {"code": 202016, "msg": "input dsl err:product test dsl service SetFromMap does not exist"},
+        ]
+    )
+    with pytest.raises(BotslabCommandError, match="ErrorNO=500"):
+        await BotslabModernClient.switch_floor_map(client2, "SN123", "PK123", "28244")
+
+
 @pytest.mark.asyncio
 async def test_coordinator_lan_remote_drive_integration():
     """Verify coordinator.async_remote_control_drive invokes BotslabLanRemoteControl."""

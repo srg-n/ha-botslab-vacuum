@@ -318,6 +318,16 @@ def _response_succeeded(response: Any) -> bool:
         return False
 
 
+def _is_missing_dsl_service(response: Any) -> bool:
+    """Return True when Botslab cloud reports that a TSL DSL service does not exist (code 202016)."""
+    if not isinstance(response, dict):
+        return False
+    code = response.get("code")
+    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    msg = str(data.get("errmsg") or response.get("msg") or "").lower()
+    return str(code) == "202016" and "does not exist" in msg
+
+
 def _get_map_renderer() -> Any:
     mod = sys.modules.get("custom_components.botslab_vacuum.api")
     if mod and hasattr(mod, "render_map_advanced"):
@@ -2134,7 +2144,24 @@ class BotslabModernClient(BotslabBaseApiClient):
             ) as resp:
                 data = await resp.json(content_type=None)
                 if isinstance(data, dict) and data.get("code") == 0:
-                    return data.get("data") or {}
+                    inner = data.get("data") or {}
+                    if isinstance(inner, str):
+                        try:
+                            inner = json.loads(inner)
+                        except ValueError:
+                            return {}
+                    if isinstance(inner, dict) and "dsl" in inner:
+                        raw_dsl = inner.get("dsl")
+                        if isinstance(raw_dsl, str):
+                            try:
+                                parsed_dsl = json.loads(raw_dsl)
+                                if isinstance(parsed_dsl, dict):
+                                    return parsed_dsl
+                            except ValueError:
+                                pass
+                        elif isinstance(raw_dsl, dict):
+                            return raw_dsl
+                    return inner if isinstance(inner, dict) else {}
         except Exception as err:
             _LOGGER.debug("Failed to fetch TSL DSL schema for %s: %s", product_key, err)
         return {}
@@ -2214,40 +2241,90 @@ class BotslabModernClient(BotslabBaseApiClient):
             ) as resp:
                 data = await resp.json(content_type=None)
                 if isinstance(data, dict) and data.get("code") == 0:
-                    return data.get("data") or {}
+                    inner = data.get("data") or {}
+                    if isinstance(inner, str):
+                        try:
+                            inner = json.loads(inner)
+                        except ValueError:
+                            return {}
+                    if isinstance(inner, dict) and "dsl" in inner:
+                        raw_dsl = inner.get("dsl")
+                        if isinstance(raw_dsl, str):
+                            try:
+                                parsed_dsl = json.loads(raw_dsl)
+                                if isinstance(parsed_dsl, dict):
+                                    return parsed_dsl
+                            except ValueError:
+                                pass
+                        elif isinstance(raw_dsl, dict):
+                            return raw_dsl
+                    return inner if isinstance(inner, dict) else {}
         except Exception as err:
             _LOGGER.debug("Failed to fetch multi maps for %s: %s", sn, err)
         return {}
 
     async def switch_floor_map(
-        self, sn: str, product_key: str, map_id: int | str
+        self,
+        sn: str,
+        product_key: str,
+        map_id: int | str,
+        map_entry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Switch active map to a saved floor."""
-        # 1. Primary: Modern Botslab TSL RecoverRecordedMap with CleanID
         clean_id_str = str(map_id).strip()
+        # 1. Primary: Modern Botslab TSL RecoverRecordedMap with CleanID
         res = await self.invoke_sync(
             sn, product_key, SERVICE_RECOVER_RECORDED_MAP, {"CleanID": clean_id_str}
         )
         if _response_succeeded(res):
             return res
 
-        # 2. Try with integer mapId if CleanID was rejected or returned ErrorNO != 0
+        # 1b. If RecoverRecordedMap exists on this model and we have full recorded-map metadata
+        # (RecoverBinUrl / BinFileMd5 / FileID / Url), retry with the full descriptor.
+        if not _is_missing_dsl_service(res) and isinstance(map_entry, dict):
+            full_payload: dict[str, Any] = {"CleanID": clean_id_str}
+            if map_entry.get("recover_bin_url"):
+                full_payload["RecoverBinUrl"] = str(map_entry["recover_bin_url"])
+            if map_entry.get("bin_file_md5"):
+                full_payload["BinFileMd5"] = str(map_entry["bin_file_md5"])
+            if map_entry.get("url"):
+                full_payload["Url"] = str(map_entry["url"])
+            if map_entry.get("file_id"):
+                full_payload["FileID"] = str(map_entry["file_id"])
+            if len(full_payload) > 1:
+                res_full = await self.invoke_sync(
+                    sn, product_key, SERVICE_RECOVER_RECORDED_MAP, full_payload
+                )
+                if _response_succeeded(res_full):
+                    return res_full
+                res = res_full
+
+        # Parse numeric MapID if available (do NOT send bogus mapId=0 for string CleanIDs)
         try:
-            int_map_id = int(map_id)
+            int_map_id = int(clean_id_str)
         except (ValueError, TypeError):
             int_map_id = 0
 
-        res_map = await self.invoke_sync(
-            sn, product_key, SERVICE_RECOVER_RECORDED_MAP, {"mapId": int_map_id}
-        )
-        if _response_succeeded(res_map):
-            return res_map
+        # 2. Try with integer mapId only when map_id is actually numeric and service exists
+        if int_map_id > 0 and not _is_missing_dsl_service(res):
+            res_map = await self.invoke_sync(
+                sn, product_key, SERVICE_RECOVER_RECORDED_MAP, {"mapId": int_map_id}
+            )
+            if _response_succeeded(res_map):
+                return res_map
 
-        # 3. Fallback to legacy SetFromMap for older models
-        res_legacy = await self.invoke_sync(
-            sn, product_key, SERVICE_SET_FROM_MAP, {"MapID": int_map_id}
-        )
-        return _raise_on_error_no(res_legacy, "switch_floor_map")
+        # 3. Fallback to legacy SetFromMap only when numeric MapID is available
+        if int_map_id > 0:
+            res_legacy = await self.invoke_sync(
+                sn, product_key, SERVICE_SET_FROM_MAP, {"MapID": int_map_id}
+            )
+            if _response_succeeded(res_legacy):
+                return res_legacy
+            # Never mask the real RecoverRecordedMap error when SetFromMap does not exist on this model
+            if not _is_missing_dsl_service(res_legacy):
+                return _raise_on_error_no(res_legacy, "switch_floor_map")
+
+        return _raise_on_error_no(res, "switch_floor_map")
 
     async def save_map(self, sn: str, product_key: str, name: str) -> dict[str, Any]:
         """Save current floor map."""
@@ -2259,31 +2336,38 @@ class BotslabModernClient(BotslabBaseApiClient):
         self, sn: str, product_key: str, map_id: int | str
     ) -> dict[str, Any]:
         """Delete saved floor map."""
-        # 1. Primary: Modern Botslab TSL DeleteRecordedMap with CleanID
         clean_id_str = str(map_id).strip()
+        # 1. Primary: Modern Botslab TSL DeleteRecordedMap with CleanID
         res = await self.invoke_sync(
             sn, product_key, SERVICE_DELETE_RECORDED_MAP, {"CleanID": clean_id_str}
         )
         if _response_succeeded(res):
             return res
 
-        # 2. Try with integer mapId
         try:
-            int_map_id = int(map_id)
+            int_map_id = int(clean_id_str)
         except (ValueError, TypeError):
             int_map_id = 0
 
-        res_map = await self.invoke_sync(
-            sn, product_key, SERVICE_DELETE_RECORDED_MAP, {"mapId": int_map_id}
-        )
-        if _response_succeeded(res_map):
-            return res_map
+        # 2. Try with integer mapId only when numeric and service exists
+        if int_map_id > 0 and not _is_missing_dsl_service(res):
+            res_map = await self.invoke_sync(
+                sn, product_key, SERVICE_DELETE_RECORDED_MAP, {"mapId": int_map_id}
+            )
+            if _response_succeeded(res_map):
+                return res_map
 
-        # 3. Fallback to legacy deleteMap
-        res_legacy = await self.invoke_sync(
-            sn, product_key, SERVICE_DELETE_MAP, {"MapID": int_map_id}
-        )
-        return _raise_on_error_no(res_legacy, "delete_map")
+        # 3. Fallback to legacy deleteMap only when numeric
+        if int_map_id > 0:
+            res_legacy = await self.invoke_sync(
+                sn, product_key, SERVICE_DELETE_MAP, {"MapID": int_map_id}
+            )
+            if _response_succeeded(res_legacy):
+                return res_legacy
+            if not _is_missing_dsl_service(res_legacy):
+                return _raise_on_error_no(res_legacy, "delete_map")
+
+        return _raise_on_error_no(res, "delete_map")
 
     async def rename_map(
         self, sn: str, product_key: str, map_id: int | str, name: str

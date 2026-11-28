@@ -483,12 +483,16 @@ class BotslabVacuumApi(BotslabModernClient):
         return await super().get_multi_maps(sn, product_key)
 
     async def switch_floor_map(
-        self, sn: str, product_key: str, map_id: int | str
+        self,
+        sn: str,
+        product_key: str,
+        map_id: int | str,
+        map_entry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Switch active floor map."""
         if self.is_legacy_360:
             return {}
-        return await super().switch_floor_map(sn, product_key, map_id)
+        return await super().switch_floor_map(sn, product_key, map_id, map_entry=map_entry)
 
     async def save_map(self, sn: str, product_key: str, name: str) -> dict[str, Any]:
         """Save floor map."""

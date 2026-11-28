@@ -16,6 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     FAN_SPEEDS,
+    FAN_SPEEDS_360_TO_HA,
     STATUS_CLEANING,
     STATUS_DOCKED,
     STATUS_ERROR,
@@ -169,8 +170,8 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             "water_tank_installed": dev.water_tank_installed,
             "current_map_id": dev.current_map_id,
             "maps": floor_map_entries(dev.saved_maps, dev.current_map_id),
-            "selected_map_id": int(dev.current_map_id) if (dev.current_map_id and str(dev.current_map_id).isdigit()) else dev.current_map_id,
-            "selected_map": int(dev.current_map_id) if (dev.current_map_id and str(dev.current_map_id).isdigit()) else dev.current_map_id,
+            "selected_map_id": self._selected_map_id(dev),
+            "selected_map": self._selected_map_id(dev),
             "clean_id": dev.clean_id,
             "clean_sub_status": dev.clean_sub_status,
             "current_location": dev.current_location,
@@ -198,6 +199,23 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             "product_key": dev.product_key,
         }
         return ensure_safe_attribute_size(attrs)
+
+    @staticmethod
+    def _selected_map_id(dev: BotslabVacuumDevice) -> Any:
+        """Return the active map identifier matching both saved_maps entries and numeric MapIDs."""
+        active_id: Any = dev.current_map_id
+        if dev.saved_maps:
+            cur_entry = next(
+                (m for m in dev.saved_maps if isinstance(m, dict) and m.get("is_cur") == 1),
+                None,
+            )
+            if cur_entry is not None:
+                cur_mid = cur_entry.get("map_id") or cur_entry.get("clean_id")
+                if cur_mid not in (None, ""):
+                    active_id = cur_mid
+        if active_id is not None and str(active_id).strip().isdigit():
+            return int(str(active_id).strip())
+        return active_id
 
     async def async_start(self) -> None:
         """Start or resume cleaning."""
@@ -244,6 +262,7 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
         if not self.device:
             return
         normalized = str(fan_speed).strip().lower()
+        normalized = FAN_SPEEDS_360_TO_HA.get(normalized, normalized)
         if normalized not in FAN_SPEEDS:
             raise ServiceValidationError(
                 f"Invalid fan speed '{fan_speed}'. Expected one of: {', '.join(FAN_SPEEDS)}"

@@ -127,7 +127,12 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
         if not map_id_val:
             map_id_val = "live"
         attrs["map_id"] = map_id_val
-        attrs["saved_map_id"] = map_id_val
+        saved_map_val = (
+            str(device.clean_id).strip()
+            if (device and getattr(device, "clean_id", None) and str(device.clean_id).strip())
+            else map_id_val
+        )
+        attrs["saved_map_id"] = saved_map_val
         attrs["selected_map_id"] = map_id_val
         attrs["selected_map"] = map_id_val
         if info.dock_position:

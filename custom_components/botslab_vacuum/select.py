@@ -140,6 +140,8 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
         """Switch active floor to selected map."""
         if not self.device:
             return
+        if option == self.current_option:
+            return
         target_id = None
         entries = floor_map_entries(self.device.saved_maps, self.device.current_map_id)
         for idx, entry in enumerate(entries):

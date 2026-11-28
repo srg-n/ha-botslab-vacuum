@@ -212,22 +212,50 @@ def _parse_base_station(info: Any) -> BotslabBaseStation:
     )
 
 
+def _unwrap_recorded_maps_list(raw_maps: Any) -> list[Any]:
+    """Unwrap RecordedMapList payloads whether bare list or wrapped dict (e.g. {'RecordedMaps': [...]})."""
+    if isinstance(raw_maps, str):
+        try:
+            raw_maps = json.loads(raw_maps)
+        except Exception:
+            return []
+    if isinstance(raw_maps, list):
+        return raw_maps
+    if isinstance(raw_maps, dict):
+        for key in (
+            "RecordedMaps",
+            "recordedMaps",
+            "recorded_maps",
+            "map_list",
+            "MapList",
+            "maps",
+            "list",
+            "items",
+        ):
+            val = raw_maps.get(key)
+            if isinstance(val, list):
+                return val
+        nested = raw_maps.get("data")
+        if nested is not None and nested is not raw_maps:
+            return _unwrap_recorded_maps_list(nested)
+    return []
+
+
 def _parse_recorded_maps(
     raw_maps: Any, current_clean_id: str = "", current_map_id: str = ""
 ) -> list[dict[str, Any]]:
     """Parse RecordedMapList from device shadow props into standard saved_maps list."""
     if not raw_maps:
         return []
-    if isinstance(raw_maps, str):
-        try:
-            raw_maps = json.loads(raw_maps)
-        except Exception:
-            return []
-    if not isinstance(raw_maps, list):
+    items = _unwrap_recorded_maps_list(raw_maps)
+    if not items:
         return []
 
+    cur_clean = str(current_clean_id or "").strip()
+    cur_map = str(current_map_id or "").strip()
+
     result: list[dict[str, Any]] = []
-    for idx, item in enumerate(raw_maps):
+    for idx, item in enumerate(items):
         if not isinstance(item, dict):
             continue
         clean_id = str(
@@ -248,8 +276,12 @@ def _parse_recorded_maps(
             or item.get("name")
             or ""
         ).strip()
+        perm_url = str(item.get("PermSaveUrl") or "").strip()
+        perm_bin_url = str(item.get("PermBinSaveUrl") or "").strip()
         bookmark = bool(
             item.get("BookmarkFlag", item.get("bookmarkFlag", item.get("bookmark", False)))
+            or perm_url
+            or perm_bin_url
         )
 
         if raw_name:
@@ -259,29 +291,44 @@ def _parse_recorded_maps(
         else:
             name = f"Map {idx + 1}"
 
+        file_id = str(item.get("FileID") or item.get("fileId") or item.get("file_id") or "").strip()
+        url = perm_url or str(item.get("Url") or item.get("url") or "").strip()
+        recover_bin_url = perm_bin_url or str(
+            item.get("RecoverBinUrl") or item.get("recoverBinUrl") or ""
+        ).strip()
+        bin_file_md5 = str(item.get("BinFileMd5") or item.get("binFileMd5") or "").strip()
+        valid_until = str(item.get("ValidUntil") or item.get("validUntil") or "").strip()
+
         is_cur = (
             1
             if (
                 clean_id
                 and (
-                    clean_id == str(current_clean_id).strip()
-                    or clean_id == str(current_map_id).strip()
+                    (cur_clean and clean_id == cur_clean)
+                    or (cur_map and clean_id == cur_map)
                 )
             )
             else 0
         )
 
-        result.append(
-            {
-                "map_id": clean_id,
-                "clean_id": clean_id,
-                "map_name": name,
-                "name": name,
-                "is_cur": is_cur,
-                "bookmark": bookmark,
-                "url": str(item.get("Url") or item.get("url") or ""),
-            }
-        )
+        entry: dict[str, Any] = {
+            "map_id": clean_id,
+            "clean_id": clean_id,
+            "map_name": name,
+            "name": name,
+            "is_cur": is_cur,
+            "bookmark": bookmark,
+            "url": url,
+        }
+        if file_id:
+            entry["file_id"] = file_id
+        if recover_bin_url:
+            entry["recover_bin_url"] = recover_bin_url
+        if bin_file_md5:
+            entry["bin_file_md5"] = bin_file_md5
+        if valid_until:
+            entry["valid_until"] = valid_until
+        result.append(entry)
 
     return result
 
@@ -951,7 +998,17 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                     has_carpet_mode = True
                 if any(k in props for k in ("notDisturb", "NotDisturb")):
                     has_dnd = True
-                if any(k in props for k in ("multiMap", "multi_map", "MultiMap", "MapPkgOssInfo")):
+                if any(
+                    k in props
+                    for k in (
+                        "multiMap",
+                        "multi_map",
+                        "MultiMap",
+                        "MapPkgOssInfo",
+                        "RecordedMapList",
+                        "recordedMapList",
+                    )
+                ):
                     has_multi_map = True
 
                 if any(k in props for k in ("StartInDust", "dustCollectionMode", "autoDust", "DustBagStatus")):
@@ -984,7 +1041,12 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                     has_carpet_mode = True
                 if "notDisturb" in properties:
                     has_dnd = True
-                if "SetFromMap" in services or "multi_map_room_list" in services:
+                if (
+                    "SetFromMap" in services
+                    or "RecoverRecordedMap" in services
+                    or "multi_map_room_list" in services
+                    or "RecordedMapList" in properties
+                ):
                     has_multi_map = True
 
                 if "StartInDust" in services:
@@ -1049,13 +1111,8 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 if not saved_maps and not self.api.is_legacy_360:
                     try:
                         mm_dict = await self.api.get_multi_maps(sn, pk)
-                        raw_mm_list = (
-                            mm_dict.get("map_list")
-                            if isinstance(mm_dict, dict)
-                            else (mm_dict if isinstance(mm_dict, list) else None)
-                        )
-                        if raw_mm_list:
-                            saved_maps = _parse_recorded_maps(raw_mm_list, clean_id, map_id)
+                        if mm_dict:
+                            saved_maps = _parse_recorded_maps(mm_dict, clean_id, map_id)
                             if saved_maps:
                                 self._multi_maps_cache[sn] = saved_maps
                     except Exception as mm_err:
@@ -1063,6 +1120,24 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                         saved_maps = self._multi_maps_cache.get(sn, [])
                 elif not saved_maps:
                     saved_maps = self._multi_maps_cache.get(sn, [])
+
+                # On Botslab S8/S10, the live active map (MapPkgOssInfo) may not yet appear
+                # inside RecordedMapList. Prepend it so the active floor is shown as selected
+                # alongside all recorded/saved floors.
+                active_id = str(map_id or clean_id or "").strip()
+                if saved_maps and active_id and not any(m.get("is_cur") == 1 for m in saved_maps):
+                    saved_maps = [
+                        {
+                            "map_id": active_id,
+                            "clean_id": str(clean_id or active_id).strip(),
+                            "map_name": f"Map {active_id}",
+                            "name": f"Map {active_id}",
+                            "is_cur": 1,
+                            "bookmark": False,
+                            "url": "",
+                        },
+                        *saved_maps,
+                    ]
 
             # Child lock, DND, Carpet Mode
             child_lock = bool(props.get("childLock", props.get("ChildLock", False)))
@@ -1668,7 +1743,26 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         """Switch active floor map, invalidate stale caches, and sync the new map."""
         dev = self.data.get(sn) if self.data else None
         pk = dev.product_key if dev else ""
-        await self.api.switch_floor_map(sn, pk, map_id)
+        target_str = str(map_id).strip()
+        matched_entry: dict[str, Any] | None = None
+        if dev and dev.saved_maps:
+            for item in dev.saved_maps:
+                if not isinstance(item, dict):
+                    continue
+                if target_str in (
+                    str(item.get("clean_id", "")).strip(),
+                    str(item.get("map_id", "")).strip(),
+                ):
+                    if any(
+                        item.get(k)
+                        for k in ("recover_bin_url", "bin_file_md5", "file_id", "url")
+                    ):
+                        matched_entry = item
+                    break
+        if matched_entry is not None:
+            await self.api.switch_floor_map(sn, pk, map_id, map_entry=matched_entry)
+        else:
+            await self.api.switch_floor_map(sn, pk, map_id)
         # Drop stale floor caches immediately so old floor polygons/image cannot stick.
         self.clear_map_cache(sn)
         for cache_attr in ("_cleaning_paths", "_saved_no_go_zones", "_pending_area_writes"):
