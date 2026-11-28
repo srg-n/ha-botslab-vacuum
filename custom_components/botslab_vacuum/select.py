@@ -8,6 +8,7 @@ from typing import Any, Final
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -118,27 +119,43 @@ class BotslabActiveFloorSelect(BotslabVacuumEntity, SelectEntity):
             if self.device.current_map_id:
                 return f"Map {self.device.current_map_id}"
             return self.options[0]
-        cur_id = str(self.device.current_map_id)
-        cur_clean_id = str(self.device.clean_id)
-        current = None
-        for entry, m in zip(floor_map_entries(self.device.saved_maps), self.device.saved_maps):
-            m_id = str(m.get("map_id", ""))
-            m_clean = str(m.get("clean_id", ""))
-            if (cur_id and m_id == cur_id) or (cur_clean_id and m_clean == cur_clean_id) or m.get("is_cur") == 1:
-                current = entry["name"]
-        return current or self.options[0]
+        cur_id = str(self.device.current_map_id or "").strip()
+        cur_clean_id = str(self.device.clean_id or "").strip()
+        fallback_current = None
+        for entry, m in zip(
+            floor_map_entries(self.device.saved_maps, self.device.current_map_id),
+            self.device.saved_maps,
+        ):
+            m_id = str(m.get("map_id", "")).strip()
+            m_clean = str(m.get("clean_id", "")).strip()
+            if (cur_id and (m_id == cur_id or m_clean == cur_id)) or (
+                cur_clean_id and (m_clean == cur_clean_id or m_id == cur_clean_id)
+            ):
+                return entry["name"]
+            if m.get("is_cur") == 1 and fallback_current is None:
+                fallback_current = entry["name"]
+        return fallback_current or self.options[0]
 
     async def async_select_option(self, option: str) -> None:
         """Switch active floor to selected map."""
         if not self.device:
             return
         target_id = None
-        for entry, m in zip(floor_map_entries(self.device.saved_maps), self.device.saved_maps):
+        entries = floor_map_entries(self.device.saved_maps, self.device.current_map_id)
+        for idx, entry in enumerate(entries):
             if entry["name"] == option:
-                target_id = m.get("clean_id") or m.get("map_id")
+                if idx < len(self.device.saved_maps):
+                    m = self.device.saved_maps[idx]
+                    target_id = m.get("clean_id") or m.get("map_id") or entry["id"]
+                else:
+                    target_id = entry["id"]
                 break
-        if target_id is not None:
+        if target_id is not None and str(target_id).strip() != "":
             await self.coordinator.async_switch_floor_map(self.device.device_name, target_id)
+            return
+        raise ServiceValidationError(
+            f"Unknown floor map '{option}'. Available maps: {', '.join(self.options)}"
+        )
 
 
 class BotslabSelect(BotslabVacuumEntity, SelectEntity):
@@ -167,7 +184,12 @@ class BotslabSelect(BotslabVacuumEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
-        if not self.device or option not in self.entity_description.options:
+        if not self.device:
             return
+        if option not in self.entity_description.options:
+            raise ServiceValidationError(
+                f"Invalid option '{option}' for {self.entity_description.key}. "
+                f"Expected one of: {', '.join(self.entity_description.options)}"
+            )
         await self.entity_description.select_fn(self.coordinator, self.device, option)
         await self.coordinator.async_request_refresh()

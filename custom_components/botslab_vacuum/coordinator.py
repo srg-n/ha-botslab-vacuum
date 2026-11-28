@@ -732,9 +732,17 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             if last_map_map is not None:
                 if map_id:
                     previous_map_id = last_map_map.get(sn)
-                    if self.api.is_legacy_360 and previous_map_id and previous_map_id != map_id:
+                    if previous_map_id and previous_map_id != map_id:
+                        _LOGGER.info(
+                            "Floor map changed for %s (%s -> %s); invalidating map cache",
+                            sn,
+                            previous_map_id,
+                            map_id,
+                        )
                         self.clear_map_cache(sn)
                         self._cleaning_paths.pop(sn, None)
+                        self._saved_no_go_zones.pop(sn, None)
+                        self._pending_area_writes.pop(sn, None)
                     last_map_map[sn] = map_id
                 elif sn in last_map_map:
                     map_id = last_map_map[sn]
@@ -907,6 +915,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                                 try:
                                     _LOGGER.info("No map cached on startup for %s; triggering initial StartSyncMapPkgToOss", sn)
                                     await self.api.start_map_sync(sn, pk, 60)
+                                    self.watch_map_update(sn)
                                 except Exception as sync_err:
                                     _LOGGER.debug("Initial map sync trigger error: %s", sync_err)
                     except Exception as err:
@@ -1040,9 +1049,15 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
                 if not saved_maps and not self.api.is_legacy_360:
                     try:
                         mm_dict = await self.api.get_multi_maps(sn, pk)
-                        if isinstance(mm_dict, dict) and "map_list" in mm_dict:
-                            saved_maps = mm_dict["map_list"]
-                            self._multi_maps_cache[sn] = saved_maps
+                        raw_mm_list = (
+                            mm_dict.get("map_list")
+                            if isinstance(mm_dict, dict)
+                            else (mm_dict if isinstance(mm_dict, list) else None)
+                        )
+                        if raw_mm_list:
+                            saved_maps = _parse_recorded_maps(raw_mm_list, clean_id, map_id)
+                            if saved_maps:
+                                self._multi_maps_cache[sn] = saved_maps
                     except Exception as mm_err:
                         _LOGGER.debug("Multi-map fetch failed for %s: %s", sn, mm_err)
                         saved_maps = self._multi_maps_cache.get(sn, [])
@@ -1364,6 +1379,82 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             _loop(), name=f"watch_state_{sn}"
         )
 
+    def watch_map_update(
+        self,
+        sn: str,
+        expected_map_id: str | None = None,
+        max_attempts: int = 8,
+        interval: float = 2.5,
+    ) -> None:
+        """Briefly poll after a map sync or floor switch until the new map package lands."""
+        if not getattr(self, "hass", None) or not hasattr(self.hass, "async_create_task"):
+            return
+        task_key = f"map_{sn}"
+        old_task = self._burst_poll_tasks.get(task_key)
+        if old_task and not old_task.done():
+            old_task.cancel()
+
+        initial_version = self._map_version.get(sn, 0)
+        target_id = str(expected_map_id).strip() if expected_map_id else ""
+
+        async def _loop() -> None:
+            try:
+                for attempt in range(1, max_attempts + 1):
+                    await asyncio.sleep(interval)
+                    self.clear_map_cache(sn)
+                    await self.async_refresh()
+                    dev = self.data.get(sn) if self.data else None
+                    new_version = self._map_version.get(sn, 0)
+                    cur_id = str(dev.current_map_id or dev.clean_id or "").strip() if dev else ""
+                    has_image = bool(dev and dev.map_image_bytes)
+                    if target_id:
+                        if has_image and cur_id == target_id:
+                            _LOGGER.debug(
+                                "Floor map %s ready for %s at attempt %d",
+                                target_id,
+                                sn,
+                                attempt,
+                            )
+                            break
+                    elif has_image and new_version > initial_version:
+                        _LOGGER.debug(
+                            "Updated map ready for %s at attempt %d (v%d)",
+                            sn,
+                            attempt,
+                            new_version,
+                        )
+                        break
+            except asyncio.CancelledError:
+                _LOGGER.debug("Map update watch cancelled for %s", sn)
+            except Exception as err:
+                _LOGGER.debug("Map update watch error for %s: %s", sn, err)
+            finally:
+                self._burst_poll_tasks.pop(task_key, None)
+
+        self._burst_poll_tasks[task_key] = self.hass.async_create_task(
+            _loop(), name=f"watch_map_{sn}"
+        )
+
+    async def async_shutdown(self) -> None:
+        """Cancel any pending background burst-poll / map-watch tasks on unload."""
+        tasks = list(self._burst_poll_tasks.values())
+        self._burst_poll_tasks.clear()
+        for task in tasks:
+            if task and not task.done():
+                task.cancel()
+
+    async def async_sync_map(self, sn: str, duration: int = 60) -> None:
+        """Force the vacuum to upload a fresh map package and refresh the cached render."""
+        dev = self.data.get(sn) if self.data else None
+        pk = dev.product_key if dev else ""
+        self.clear_map_cache(sn)
+        try:
+            await self.api.start_map_sync(sn, pk, duration)
+        except Exception as err:  # noqa: BLE001 - still refresh cloud map
+            _LOGGER.debug("start_map_sync failed for %s: %s", sn, err)
+        await self.async_request_refresh()
+        self.watch_map_update(sn)
+
     @property
     def routines(self) -> list[dict[str, Any]]:
         """Return list of saved cleaning routines from config entry options."""
@@ -1574,11 +1665,32 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             self.async_set_updated_data(self.data)
 
     async def async_switch_floor_map(self, sn: str, map_id: int | str) -> None:
-        """Switch active floor map."""
+        """Switch active floor map, invalidate stale caches, and sync the new map."""
         dev = self.data.get(sn) if self.data else None
         pk = dev.product_key if dev else ""
         await self.api.switch_floor_map(sn, pk, map_id)
+        # Drop stale floor caches immediately so old floor polygons/image cannot stick.
+        self.clear_map_cache(sn)
+        for cache_attr in ("_cleaning_paths", "_saved_no_go_zones", "_pending_area_writes"):
+            cache = getattr(self, cache_attr, None)
+            if isinstance(cache, dict):
+                cache.pop(sn, None)
+        target_id = str(map_id).strip()
+        if dev and target_id:
+            dev.current_map_id = target_id
+            dev.map_image_bytes = None
+            dev.map_info = None
+            dev.rooms = []
+            dev.no_go_zones = []
+        if target_id and isinstance(getattr(self, "_last_map_id", None), dict):
+            self._last_map_id[sn] = target_id
+        # Ask the robot to push the newly loaded floor's map package to OSS right away.
+        try:
+            await self.api.start_sync_map_to_oss(sn, pk, sync_duration=60)
+        except Exception as err:  # noqa: BLE001 - best effort
+            _LOGGER.debug("Map sync after floor switch failed for %s: %s", sn, err)
         await self.async_request_refresh()
+        self.watch_map_update(sn, expected_map_id=target_id or None)
 
     async def async_save_floor_map(self, sn: str, name: str) -> None:
         """Save current floor map."""
@@ -1720,18 +1832,28 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
     ) -> None:
         """Add a forbidden zone, mop forbidden zone, or virtual wall."""
         dev = self.data.get(sn) if self.data else None
+        is_line = zone_type in ("line", "wall", "virtual_wall")
         min_x, max_x = int(round(min(x1, x2))), int(round(max(x1, x2)))
         min_y, max_y = int(round(min(y1, y2))), int(round(max(y1, y2)))
-        new_zone = _normalize_no_go_zone({
+        raw_zone: dict[str, Any] = {
             "type": zone_type,
             "points": [min_x, min_y, max_x, max_y],
-        })
+        }
+        if is_line:
+            # Preserve exact diagonal endpoints rather than sorting x/y independently
+            raw_zone["vertexs"] = [
+                [int(round(x1)), int(round(y1))],
+                [int(round(x2)), int(round(y2))],
+            ]
+        new_zone = _normalize_no_go_zone(raw_zone)
         current_zones = list(
             self._saved_no_go_zones.get(sn) or (dev.no_go_zones if dev else [])
         )
         # Avoid duplicate zone
         if not any(
-            z.get("points") == new_zone["points"] and z.get("type") == new_zone["type"]
+            z.get("points") == new_zone["points"]
+            and z.get("type") == new_zone["type"]
+            and (not is_line or z.get("vertexs") == new_zone.get("vertexs"))
             for z in current_zones
         ):
             current_zones.append(new_zone)
@@ -1745,7 +1867,7 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
         points: list[float] | None = None,
         clear_all: bool = False,
     ) -> None:
-        """Delete specific no-go zone by index, type, points, or clear all."""
+        """Delete specific no-go zone by points, index, type, or clear all."""
         if clear_all:
             await self.async_set_no_go_zones(sn, [])
             return
@@ -1755,18 +1877,60 @@ class BotslabVacuumCoordinator(DataUpdateCoordinator[dict[str, BotslabVacuumDevi
             self._saved_no_go_zones.get(sn) or (dev.no_go_zones if dev else [])
         )
 
-        if index is not None and 0 <= index < len(current_zones):
-            current_zones.pop(index)
-        elif points is not None and len(points) >= 4:
-            pts = [int(round(p)) for p in points[:4]]
-            current_zones = [z for z in current_zones if z.get("points") != pts]
-        elif zone_type is not None:
+        norm_type: str | None = None
+        if zone_type is not None:
             norm_type = (
                 "mop"
                 if zone_type in ("no_mop", "mop")
                 else ("line" if zone_type in ("wall", "virtual_wall", "line") else "forbid")
             )
-            current_zones = [z for z in current_zones if z.get("type") != norm_type]
+
+        def _points_match(z: dict[str, Any], target_pts: list[int]) -> bool:
+            z_pts = z.get("points")
+            if not isinstance(z_pts, (list, tuple)) or len(z_pts) < 4:
+                return False
+            try:
+                z_norm = [
+                    min(int(round(z_pts[0])), int(round(z_pts[2]))),
+                    min(int(round(z_pts[1])), int(round(z_pts[3]))),
+                    max(int(round(z_pts[0])), int(round(z_pts[2]))),
+                    max(int(round(z_pts[1])), int(round(z_pts[3]))),
+                ]
+            except (ValueError, TypeError):
+                return False
+            return all(abs(a - b) <= 2 for a, b in zip(z_norm, target_pts))
+
+        removed = False
+        if points is not None and len(points) >= 4:
+            target_pts = [
+                min(int(round(points[0])), int(round(points[2]))),
+                min(int(round(points[1])), int(round(points[3]))),
+                max(int(round(points[0])), int(round(points[2]))),
+                max(int(round(points[1])), int(round(points[3]))),
+            ]
+            # Prefer exact index if it matches the requested geometry
+            if (
+                index is not None
+                and 0 <= index < len(current_zones)
+                and _points_match(current_zones[index], target_pts)
+                and (norm_type is None or current_zones[index].get("type") == norm_type)
+            ):
+                current_zones.pop(index)
+                removed = True
+            else:
+                for i, z in enumerate(current_zones):
+                    if _points_match(z, target_pts) and (
+                        norm_type is None or z.get("type") == norm_type
+                    ):
+                        current_zones.pop(i)
+                        removed = True
+                        break
+
+        if not removed:
+            if index is not None and 0 <= index < len(current_zones):
+                current_zones.pop(index)
+            elif norm_type is not None:
+                current_zones = [z for z in current_zones if z.get("type") != norm_type]
 
         await self.async_set_no_go_zones(sn, current_zones)
 

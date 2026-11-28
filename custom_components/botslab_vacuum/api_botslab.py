@@ -285,6 +285,17 @@ def _raise_on_error_no(response: Any, action: str) -> dict[str, Any]:
     return response
 
 
+def _response_succeeded(response: Any) -> bool:
+    """Return True only if both envelope ``code`` and inner ``ErrorNO`` indicate success."""
+    if not isinstance(response, dict) or response.get("code") not in (0, "0"):
+        return False
+    try:
+        _raise_on_error_no(response, "check")
+        return True
+    except BotslabCommandError:
+        return False
+
+
 def _get_map_renderer() -> Any:
     mod = sys.modules.get("custom_components.botslab_vacuum.api")
     if mod and hasattr(mod, "render_map_advanced"):
@@ -511,6 +522,7 @@ class BotslabModernClient(BotslabBaseApiClient):
         inner = data.get("data") or data.get("result") or {}
         signs = inner.get("extend", {}).get("s3_signs", {})
         if signs:
+            self._cached_s3_signs_by_sn[sn] = dict(signs)
             self.cached_s3_signs.update(signs)
 
         result_raw = inner.get("result")
@@ -556,6 +568,7 @@ class BotslabModernClient(BotslabBaseApiClient):
         inner = data.get("data") or data.get("result") or {}
         signs = inner.get("s3_signs") or {}
         if signs:
+            self._cached_s3_signs_by_sn[sn] = dict(signs)
             self.cached_s3_signs.update(signs)
 
         props: dict[str, Any] = {}
@@ -699,12 +712,32 @@ class BotslabModernClient(BotslabBaseApiClient):
             record = await self.get_latest_clean_record(sn)
             return (record if record and usable(record) else None), props
 
-        map_url = self._parse_oss_info(props.get("MapPkgOssInfo")).get("Url")
+        oss_info = self._parse_oss_info(props.get("MapPkgOssInfo"))
+        map_url = oss_info.get("Url")
+        active_ids = {
+            str(v).strip()
+            for v in (oss_info.get("MapID"), oss_info.get("CleanID"))
+            if v is not None and str(v).strip() not in ("", "0")
+        }
+
+        # Prefer fresh signs returned by this poll (or this device's latest signs)
+        # so stale URLs from previously viewed floors cannot hijack map selection.
+        device_signs: dict[str, str] = {}
+        if sn in self._cached_s3_signs_by_sn:
+            device_signs.update(self._cached_s3_signs_by_sn[sn])
+        elif self.cached_s3_signs:
+            device_signs.update(self.cached_s3_signs)
+        if signs:
+            device_signs.update(signs)
 
         candidates: list[tuple[dict[str, Any], str, str]] = []
 
         async def consider(url: str, label: str) -> None:
-            signed = signs.get(url) or self.cached_s3_signs.get(url)
+            signed = (
+                (signs or {}).get(url)
+                or device_signs.get(url)
+                or self.cached_s3_signs.get(url)
+            )
             document = await self._fetch_signed_json(url, signed)
             if document and (document.get("smartArea") or document.get("map")):
                 candidates.append((document, label, url))
@@ -712,11 +745,7 @@ class BotslabModernClient(BotslabBaseApiClient):
         if map_url:
             await consider(map_url, "current map")
 
-        all_sign_urls = dict(self.cached_s3_signs)
-        if signs:
-            all_sign_urls.update(signs)
-
-        for url in all_sign_urls:
+        for url in device_signs:
             if url == map_url:
                 continue
             tail = url.rsplit("/", 2)
@@ -732,6 +761,23 @@ class BotslabModernClient(BotslabBaseApiClient):
         if not candidates:
             return None, props
 
+        def _matches_active_floor(doc: dict[str, Any], source: str) -> bool:
+            if source == "current map" or not active_ids:
+                return True
+            doc_ids = {
+                str(v).strip()
+                for v in (
+                    doc.get("mapId"),
+                    doc.get("map_id"),
+                    doc.get("cleanId"),
+                    doc.get("clean_id"),
+                )
+                if v is not None and str(v).strip() not in ("", "0")
+            }
+            if not doc_ids:
+                return True
+            return bool(doc_ids & active_ids)
+
         with_raster = [c for c in candidates if usable(c[0])]
         pool = with_raster or candidates
 
@@ -742,6 +788,11 @@ class BotslabModernClient(BotslabBaseApiClient):
             or raw_status in ACTIVE_STATUSES
         )
 
+        # Restrict to candidates belonging to the active floor when possible.
+        floor_pool = [c for c in pool if _matches_active_floor(c[0], c[1])]
+        if floor_pool:
+            pool = floor_pool
+
         if is_active_cleaning:
             live_pool = [
                 c for c in pool
@@ -749,6 +800,29 @@ class BotslabModernClient(BotslabBaseApiClient):
             ]
             if live_pool:
                 pool = live_pool
+        else:
+            # When idle/switched floor, keep the active MapPkgOssInfo.Url candidate
+            # authoritative if it has a usable raster + rooms so an unrelated cached
+            # floor object with more vertices cannot override it.
+            current_candidates = [
+                c for c in pool if c[1] == "current map" and usable(c[0])
+            ]
+            if current_candidates:
+                cur_doc = current_candidates[0][0]
+                if self._map_quality(cur_doc)[1] > 0:
+                    same_id_candidates = [
+                        c
+                        for c in pool
+                        if c[1] == "current map"
+                        or (
+                            active_ids
+                            and any(
+                                str(c[0].get(k) or "").strip() in active_ids
+                                for k in ("mapId", "map_id", "cleanId", "clean_id")
+                            )
+                        )
+                    ]
+                    pool = same_id_candidates or current_candidates
 
         best_doc, best_source, _ = max(pool, key=lambda c: self._map_quality(c[0]))
         vertices, room_count = self._map_quality(best_doc)
@@ -768,9 +842,9 @@ class BotslabModernClient(BotslabBaseApiClient):
             )
 
         if not usable(best_doc):
-            for doc, _, _ in pool:
+            for doc, _, _ in candidates:
                 if usable(doc):
-                    merged = dict(doc)
+                    merged = dict(best_doc)
                     for key in ("map", "width", "height", "x_min", "y_min", "resolution"):
                         if key in doc:
                             merged[key] = doc[key]
@@ -856,6 +930,17 @@ class BotslabModernClient(BotslabBaseApiClient):
         ]
         carpets = map_json.get("carpets") or map_json.get("carpet_rect") or []
 
+        raw_doc_map_id = (
+            map_json.get("mapId")
+            or map_json.get("map_id")
+            or map_json.get("cleanId")
+            or map_json.get("clean_id")
+            or ""
+        )
+        doc_map_id = str(raw_doc_map_id).strip()
+        if doc_map_id == "0":
+            doc_map_id = ""
+
         return BotslabMapInfo(
             width=int(width),
             height=int(height),
@@ -867,6 +952,7 @@ class BotslabModernClient(BotslabBaseApiClient):
             no_go_zones=no_go,
             clean_zones=clean_zones,
             carpets=carpets if isinstance(carpets, list) else [],
+            map_id=doc_map_id,
         )
 
     async def fetch_rooms(self, sn: str, product_key: str) -> list[BotslabRoom]:
@@ -894,9 +980,13 @@ class BotslabModernClient(BotslabBaseApiClient):
         self._cached_robot_pose = None
         self._cached_is_active = False
         if sn:
+            self._cached_render_by_sn.pop(sn, None)
+            self._cached_s3_signs_by_sn[sn] = {}
             self._cached_map_info.pop(sn, None)
             self._cached_rooms.pop(sn, None)
         else:
+            self._cached_render_by_sn.clear()
+            self._cached_s3_signs_by_sn.clear()
             self._cached_map_info.clear()
             self._cached_rooms.clear()
 
@@ -910,23 +1000,40 @@ class BotslabModernClient(BotslabBaseApiClient):
         is_zone_cleaning: bool = False,
     ) -> bytes | None:
         """Fetch, decompress and render high-resolution map with live overlays."""
+        dev_cache = self._cached_render_by_sn.get(sn, {})
         map_json, props = await self.get_map_json(sn, product_key)
         if not map_json:
-            return self._cached_map_bytes
+            return dev_cache.get("bytes") if dev_cache else self._cached_map_bytes
 
         map_info = self._build_map_info(map_json)
         oss_info = self._parse_oss_info(props.get("MapPkgOssInfo"))
-        upload_id = str(
+        oss_map_id = str(oss_info.get("MapID") or "").strip()
+        if oss_map_id == "0":
+            oss_map_id = ""
+        oss_clean_id = str(oss_info.get("CleanID") or "").strip()
+        resolved_map_id = (
+            oss_map_id
+            or oss_clean_id
+            or (map_info.map_id if map_info else "")
+        )
+        if map_info and resolved_map_id:
+            map_info.map_id = resolved_map_id
+
+        base_upload_id = str(
             oss_info.get("UploadID")
             or oss_info.get("CleanID")
             or map_json.get("cleanId")
             or map_json.get("clean_id")
             or ""
         )
-
+        oss_url = str(oss_info.get("Url") or "")
         if self.is_legacy_360:
             # Map contents can change within the same cleaning session.
             upload_id = f"{sn}:{map_json.get('mapId')}:{map_json.get('pathId')}:{hashlib.sha256(str(map_json).encode()).hexdigest()}"
+        elif base_upload_id or resolved_map_id or oss_url:
+            upload_id = f"{sn}:{resolved_map_id}:{base_upload_id}:{oss_url}"
+        else:
+            upload_id = ""
 
         if not cleaning_path:
             for pk in ("posArray", "PosArray", "cleanPath", "clean_path", "track", "path"):
@@ -936,22 +1043,23 @@ class BotslabModernClient(BotslabBaseApiClient):
                     break
 
         curr_pose_tuple = tuple(round(x, 1) for x in robot_pose[:2]) if robot_pose and len(robot_pose) >= 2 else None
-        cached_pose_tuple = tuple(round(x, 1) for x in self._cached_robot_pose[:2]) if self._cached_robot_pose and len(self._cached_robot_pose) >= 2 else None
+        cached_pose = dev_cache.get("pose")
+        cached_pose_tuple = tuple(round(x, 1) for x in cached_pose[:2]) if cached_pose and len(cached_pose) >= 2 else None
         path_len = len(cleaning_path) if cleaning_path else 0
-        cached_path_len = getattr(self, "_cached_path_len", 0)
+        cached_path_len = int(dev_cache.get("path_len", 0))
         is_zc = bool(is_zone_cleaning)
-        cached_is_zc = getattr(self, "_cached_is_zone_cleaning", False)
+        cached_is_zc = bool(dev_cache.get("is_zc", False))
 
         if (
             upload_id
-            and upload_id == self._cached_upload_id
-            and self._cached_map_bytes
+            and upload_id == dev_cache.get("upload_id")
+            and dev_cache.get("bytes")
             and curr_pose_tuple == cached_pose_tuple
-            and is_active == self._cached_is_active
+            and is_active == bool(dev_cache.get("is_active", False))
             and is_zc == cached_is_zc
             and path_len == cached_path_len
         ):
-            return self._cached_map_bytes
+            return dev_cache["bytes"]
 
         try:
             width = int(map_json["width"])
@@ -1019,6 +1127,15 @@ class BotslabModernClient(BotslabBaseApiClient):
             self._cached_map_info[sn] = map_info
             if map_info and map_info.rooms:
                 self._cached_rooms[sn] = map_info.rooms
+            self._cached_render_by_sn[sn] = {
+                "upload_id": upload_id,
+                "bytes": png_bytes,
+                "pose": list(robot_pose) if robot_pose else None,
+                "is_active": is_active,
+                "is_zc": is_zc,
+                "path_len": path_len,
+            }
+            # Mirror onto scalar attributes for backwards-compatibility
             self._cached_upload_id = upload_id
             self._cached_map_bytes = png_bytes
             self._cached_robot_pose = list(robot_pose) if robot_pose else None
@@ -1028,7 +1145,7 @@ class BotslabModernClient(BotslabBaseApiClient):
             return png_bytes
         except Exception as err:
             _LOGGER.warning("Map decoding failed: %s", err)
-            return self._cached_map_bytes
+            return dev_cache.get("bytes") if dev_cache else self._cached_map_bytes
 
     async def get_map_info(self, sn: str, product_key: str) -> BotslabMapInfo | None:
         """Return cached map geometry, fetching it if the cache is empty."""
@@ -1373,7 +1490,18 @@ class BotslabModernClient(BotslabBaseApiClient):
 
         raw_oss = props.get("MapPkgOssInfo")
         oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
-        map_id = int(oss_info.get("MapID", 28239))
+        raw_map_id = (
+            oss_info.get("MapID")
+            or props.get("MapID")
+            or map_json.get("mapId")
+            or map_json.get("MapID")
+        )
+        if raw_map_id is None:
+            raise BotslabApiError("Cannot clean rooms: active MapID is unavailable")
+        try:
+            map_id = int(raw_map_id)
+        except (ValueError, TypeError) as err:
+            raise BotslabApiError(f"Cannot clean rooms: invalid MapID {raw_map_id!r}") from err
         session_clean_id = (
             oss_info.get("CleanID")
             or map_json.get("CleanID")
@@ -1571,18 +1699,19 @@ class BotslabModernClient(BotslabBaseApiClient):
         water_level: str | None = None,
     ) -> None:
         """Clean custom rectangular zone(s) via SetZones and StartCleanInZones."""
-        valid_zones = [
-            z
-            for z in (zones or [])
-            if isinstance(z, (list, tuple)) and len(z) >= 4
-        ]
+        valid_zones: list[list[int]] = []
+        for z in (zones or []):
+            if isinstance(z, (list, tuple)) and len(z) >= 4:
+                x1, x2 = int(round(min(float(z[0]), float(z[2])))), int(round(max(float(z[0]), float(z[2]))))
+                y1, y2 = int(round(min(float(z[1]), float(z[3])))), int(round(max(float(z[1]), float(z[3]))))
+                if x1 != x2 and y1 != y2:
+                    valid_zones.append([x1, y1, x2, y2])
         if not valid_zones:
             # Safety guard: StartCleanInZones does not validate the zone list and starts a
             # full cleaning run when it is empty.  Never send it without real zones.
             raise BotslabCommandError(
                 "Cannot start zone cleaning: no valid zones were provided"
             )
-        zones = valid_zones
         if fan_speed:
             await self.set_fan_speed(sn, product_key, fan_speed)
         if water_level:
@@ -1591,19 +1720,34 @@ class BotslabModernClient(BotslabBaseApiClient):
         props, _ = await self.get_property_extended(sn, product_key)
         raw_oss = props.get("MapPkgOssInfo")
         oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
-        map_id = int(oss_info.get("MapID", 28239))
+        cached_info = self.get_cached_map_info(sn)
+        raw_map_id = (
+            oss_info.get("MapID")
+            or props.get("MapID")
+            or (cached_info.map_id if cached_info else None)
+            or 0
+        )
+        try:
+            map_id = int(raw_map_id)
+        except (ValueError, TypeError):
+            map_id = 0
+        if map_id <= 0:
+            raise BotslabCommandError(
+                "Cannot start zone cleaning: active map ID is unknown"
+            )
 
-        wp = WATER_LEVEL_TO_INT.get(water_level, 0) if water_level else 0
+        wp = WATER_LEVEL_TO_INT.get(str(water_level).lower(), 0) if water_level else 0
+        wind_mode = str(fan_speed).lower() if fan_speed else "auto"
         zone_objs = []
-        for i, z in enumerate(zones):
-            x1, y1, x2, y2 = int(z[0]), int(z[1]), int(z[2]), int(z[3])
+        for i, z in enumerate(valid_zones):
+            x1, y1, x2, y2 = z[0], z[1], z[2], z[3]
             zone_objs.append({
                 "name": f"rect{i+1}",
                 "id": i + 1,
                 "mode": None,
                 "active": "normal",
                 "forbidType": None,
-                "windMode": "auto",
+                "windMode": wind_mode,
                 "cleanTimes": repeat_times,
                 "waterPump": wp,
                 "material": 0,
@@ -1617,15 +1761,17 @@ class BotslabModernClient(BotslabBaseApiClient):
         active_ids = [z["id"] for z in zone_objs]
 
         # Preserve existing forbidden areas / virtual walls: they share the same area
-        # list and would otherwise be deleted by this full-list write.
-        cached_info = self.get_cached_map_info(sn)
+        # list and would otherwise be deleted by this full-list write. Start their IDs
+        # strictly after max(active_ids) so they never collide with activeIds.
+        next_preserved_idx = len(zone_objs) + 1
         if cached_info is not None:
             for area in cached_info.no_go_zones or []:
                 if not isinstance(area, dict):
                     continue
-                mapped = _ha_zone_to_map_area(area, len(zone_objs))
+                mapped = _ha_zone_to_map_area(area, next_preserved_idx)
                 if mapped is not None:
                     zone_objs.append(mapped)
+                    next_preserved_idx += 1
 
         zones_payload = {
             "zones": zone_objs,
@@ -1689,7 +1835,21 @@ class BotslabModernClient(BotslabBaseApiClient):
         props, _ = await self.get_property_extended(sn, product_key)
         raw_oss = props.get("MapPkgOssInfo")
         oss_info = json.loads(raw_oss) if isinstance(raw_oss, str) else (raw_oss or {})
-        map_id = int(oss_info.get("MapID", 28239))
+        cached_info = self.get_cached_map_info(sn)
+        raw_map_id = (
+            oss_info.get("MapID")
+            or props.get("MapID")
+            or (cached_info.map_id if cached_info else None)
+            or 0
+        )
+        try:
+            map_id = int(raw_map_id)
+        except (ValueError, TypeError):
+            map_id = 0
+        if map_id <= 0:
+            raise BotslabCommandError(
+                "Cannot go to target location: active map ID is unknown"
+            )
         await self.invoke_sync(
             sn, product_key, "SetTargetPos", {"MapID": map_id, "Pos_X": int(x), "Pos_Y": int(y)}
         )
@@ -1987,10 +2147,10 @@ class BotslabModernClient(BotslabBaseApiClient):
         res = await self.invoke_sync(
             sn, product_key, SERVICE_RECOVER_RECORDED_MAP, {"CleanID": clean_id_str}
         )
-        if isinstance(res, dict) and res.get("code") == 0:
+        if _response_succeeded(res):
             return res
 
-        # 2. Try with integer mapId if CleanID didn't succeed
+        # 2. Try with integer mapId if CleanID was rejected or returned ErrorNO != 0
         try:
             int_map_id = int(map_id)
         except (ValueError, TypeError):
@@ -1999,13 +2159,14 @@ class BotslabModernClient(BotslabBaseApiClient):
         res_map = await self.invoke_sync(
             sn, product_key, SERVICE_RECOVER_RECORDED_MAP, {"mapId": int_map_id}
         )
-        if isinstance(res_map, dict) and res_map.get("code") == 0:
+        if _response_succeeded(res_map):
             return res_map
 
         # 3. Fallback to legacy SetFromMap for older models
-        return await self.invoke_sync(
+        res_legacy = await self.invoke_sync(
             sn, product_key, SERVICE_SET_FROM_MAP, {"MapID": int_map_id}
         )
+        return _raise_on_error_no(res_legacy, "switch_floor_map")
 
     async def save_map(self, sn: str, product_key: str, name: str) -> dict[str, Any]:
         """Save current floor map."""
@@ -2022,7 +2183,7 @@ class BotslabModernClient(BotslabBaseApiClient):
         res = await self.invoke_sync(
             sn, product_key, SERVICE_DELETE_RECORDED_MAP, {"CleanID": clean_id_str}
         )
-        if isinstance(res, dict) and res.get("code") == 0:
+        if _response_succeeded(res):
             return res
 
         # 2. Try with integer mapId
@@ -2034,13 +2195,14 @@ class BotslabModernClient(BotslabBaseApiClient):
         res_map = await self.invoke_sync(
             sn, product_key, SERVICE_DELETE_RECORDED_MAP, {"mapId": int_map_id}
         )
-        if isinstance(res_map, dict) and res_map.get("code") == 0:
+        if _response_succeeded(res_map):
             return res_map
 
         # 3. Fallback to legacy deleteMap
-        return await self.invoke_sync(
+        res_legacy = await self.invoke_sync(
             sn, product_key, SERVICE_DELETE_MAP, {"MapID": int_map_id}
         )
+        return _raise_on_error_no(res_legacy, "delete_map")
 
     async def rename_map(
         self, sn: str, product_key: str, map_id: int | str, name: str

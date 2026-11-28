@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { CircularButton, Accordion } from '@/components/common';
 import { useTranslation, useRoomSettings } from '@/hooks';
 import { useHass, useIsRtl, useConfig, useDeviceEntities } from '@/contexts';
@@ -55,12 +55,9 @@ function RoomWetnessSlider({
   wetLabel,
   disabled = false,
 }: RoomWetnessSliderProps) {
-  const [localValue, setLocalValue] = useState(value);
+  const [dragValue, setDragValue] = useState<number | null>(null);
+  const localValue = dragValue ?? value;
   const isRtl = useIsRtl();
-
-  useEffect(() => {
-    setLocalValue(value);
-  }, [value]);
 
   const percent = ((localValue - min) / (max - min)) * 100;
   const thumbWidth = 20;
@@ -68,14 +65,15 @@ function RoomWetnessSlider({
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!disabled) {
-      setLocalValue(parseInt(e.target.value));
+      setDragValue(parseInt(e.target.value, 10));
     }
   };
 
   const handleCommit = () => {
-    if (!disabled && localValue !== value) {
-      onChange(localValue);
+    if (!disabled && dragValue !== null && dragValue !== value) {
+      onChange(dragValue);
     }
+    setDragValue(null);
   };
 
   const gradientDirection = isRtl ? 'to left' : 'to right';
@@ -98,6 +96,7 @@ function RoomWetnessSlider({
             onChange={handleChange}
             onMouseUp={handleCommit}
             onTouchEnd={handleCommit}
+            onBlur={handleCommit}
             disabled={disabled}
             className="cleaning-mode-modal__slider"
             style={{
@@ -214,7 +213,12 @@ export function CustomizeMode() {
   const config = useConfig();
   const { get } = useDeviceEntities();
 
-  const mapEntityId = resolveMapEntityId(config.map_entity, get('camera', 'map'), hass, config.entity);
+  const mapEntityId = resolveMapEntityId(
+    config.map_entity,
+    get('camera', 'cleaning_map') ?? get('camera', 'map'),
+    hass,
+    config.entity
+  );
   const rooms = mapEntityId ? parseRoomsFromCamera(hass, mapEntityId, config.room_names) : [];
 
   const { roomSettings, setSuctionLevel, setWetnessLevel, setCleaningTimes } =

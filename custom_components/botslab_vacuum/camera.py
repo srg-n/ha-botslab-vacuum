@@ -119,7 +119,11 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
             "resolution": info.resolution,
         }
         device = self.device
-        map_id_val = (device.current_map_id or device.clean_id) if device else ""
+        map_id_val = (
+            str(info.map_id).strip()
+            if getattr(info, "map_id", "")
+            else ((device.current_map_id or device.clean_id) if device else "")
+        )
         if not map_id_val:
             map_id_val = "live"
         attrs["map_id"] = map_id_val
@@ -134,7 +138,6 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
                     "y": float(info.dock_position[1]),
                     "a": 0.0,
                 }
-        device = self.device
         if device and device.robot_pose and len(device.robot_pose) >= 2:
             attrs["vacuum_position"] = {
                 "x": float(device.robot_pose[0]),
@@ -145,8 +148,12 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
             simp_path = simplify_points(device.cleaning_path, epsilon=100.0, max_points=100)
             attrs["cleaning_path"] = simp_path
             attrs["path"] = simp_path
-        if info.no_go_zones:
-            attrs["no_go_zones"] = info.no_go_zones
+        active_no_go = (
+            info.no_go_zones
+            if info.no_go_zones
+            else (device.no_go_zones if device and device.no_go_zones else [])
+        )
+        attrs["no_go_zones"] = active_no_go
         ws = ""
         if device and device.props:
             ws = str(device.props.get("WorkingStatus", "")).strip().lower()
@@ -184,7 +191,18 @@ class BotslabMapCamera(BotslabVacuumEntity, Camera):
             )
             if map_bytes:
                 device.map_image_bytes = map_bytes
-                device.map_info = self.coordinator.api.get_cached_map_info(device.device_name)
+                map_info = self.coordinator.api.get_cached_map_info(device.device_name)
+                device.map_info = map_info
+                if map_info and map_info.rooms:
+                    device.rooms = map_info.rooms
+                    self.coordinator._rooms_cache[device.device_name] = map_info.rooms
+                if self.coordinator._map_cache.get(device.device_name) != map_bytes:
+                    self.coordinator._map_version[device.device_name] = (
+                        self.coordinator._map_version.get(device.device_name, 0) + 1
+                    )
+                self.coordinator._map_cache[device.device_name] = map_bytes
+                if getattr(self, "hass", None) is not None and getattr(self, "entity_id", None):
+                    self.async_write_ha_state()
             return map_bytes
         except Exception as err:  # noqa: BLE001 - surfaced through the log
             _LOGGER.debug("Map fetch for camera %s failed: %s", self._attr_unique_id, err)

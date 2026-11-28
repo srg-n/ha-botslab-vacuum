@@ -22,6 +22,9 @@ export const tr: Translation = {
   // Map Selector
   map_selector: {
     unknown: 'Bilinmeyen Harita',
+    sync_map: 'Haritayı yenile',
+    switching: 'Değiştiriliyor…',
+    floors_count: '{{count}} kat',
   },
 
   // Vacuum Map
@@ -33,9 +36,17 @@ export const tr: Translation = {
     diagnostic_image_failed: 'Harita görseli yüklenemedi',
     looking_for: 'Aranan: {{entity}}',
     room_overlay: 'Temizlenecek odaları seçmek için oda numaralarına dokunun',
-    zone_overlay_create: 'Temizlik bölgesi oluşturmak için haritaya dokunun',
-    zone_overlay_resize: 'Yeniden boyutlandırmak için kenarları sürükleyin. Yeni bölge eklemek için haritaya dokunun.',
-    clear_zone: 'Bölgeyi temizle',
+    zone_overlay_create: 'Temizlik bölgesi çizmek için haritada sürükleyin veya dokunun',
+    zone_overlay_resize: 'Taşımak için sürükleyin, köşe veya kenarlardan boyutlandırın',
+    nogo_overlay_create: 'Yasak alan çizmek için haritada sürükleyin veya dokunun',
+    nogo_overlay_resize: 'Yasak alanı taşıyın veya boyutlandırın, ardından kaydedin',
+    nomop_overlay_create: 'Paspas yasak alanı çizmek için sürükleyin veya dokunun',
+    nomop_overlay_resize: 'Paspas yasak alanı taşıyın veya boyutlandırın, ardından kaydedin',
+    clear_zone: 'Bölgeyi kaldır',
+    clear_all_zones: 'Tümünü temizle',
+    zones_selected: '{{count}} bölge',
+    zones_selected_plural: '{{count}} bölge',
+    max_zones_reached: 'En fazla {{count}} bölge seçilebilir',
     switch_to_list: 'Liste görünümüne geç',
     switch_to_map: 'Harita görünümüne geç',
     room_list_overlay: 'Temizlenecek odaları seçmek için dokunun',
@@ -49,6 +60,7 @@ export const tr: Translation = {
     no_mop: 'Paspas Yasak',
     virtual_wall: 'Sanal Duvar',
     delete_zone: 'Yasak Alanı Sil',
+    switching_floor: 'Kat haritası yükleniyor…',
   },
 
   // Mode Tabs
@@ -56,6 +68,8 @@ export const tr: Translation = {
     room: 'Oda',
     all: 'Tümü',
     zone: 'Bölge',
+    no_go: 'Yasak Alan',
+    no_mop: 'Paspas Yasak',
   },
 
   // Action Buttons
@@ -65,7 +79,14 @@ export const tr: Translation = {
     clean_rooms: '{{count}} Odayı Temizle',
     clean_rooms_plural: '{{count}} Odayı Temizle',
     select_rooms: 'Oda Seç',
+    select_zone: 'Bölge Seç',
     zone_clean: 'Bölge Temizliği',
+    clean_zones: '{{count}} Bölgeyi Temizle',
+    clean_zones_plural: '{{count}} Bölgeyi Temizle',
+    save_no_go: 'Yasak Alanı Kaydet',
+    save_no_go_plural: '{{count}} Yasak Alanı Kaydet',
+    save_no_mop: 'Paspas Yasak Alanı Kaydet',
+    save_no_mop_plural: '{{count}} Paspas Yasak Alanı Kaydet',
     pause: 'Duraklat',
     resume: 'Devam Et',
     stop: 'Şarja Dön',
@@ -97,6 +118,10 @@ export const tr: Translation = {
     no_mop_zone_saved: 'Paspas yasak alanı kaydedildi',
     wall_saved: 'Sanal duvar kaydedildi',
     zone_deleted: 'Yasaklı alan silindi',
+    syncing_map: 'Harita süpürgeden güncelleniyor…',
+    switching_map: 'Harita {{name}} olarak değiştiriliyor…',
+    map_switch_failed: 'Harita değiştirilemedi',
+    map_sync_failed: 'Harita güncellenemedi',
     operation_failed: 'İşlem başarısız: {{error}}',
   },
 

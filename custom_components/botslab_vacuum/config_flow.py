@@ -71,6 +71,17 @@ class BotslabCaptchaView(HomeAssistantView):
 
     def __init__(self) -> None:
         self.captchas: dict[str, bytes] = {}
+        self._timestamps: dict[str, float] = {}
+
+    def store(self, flow_id: str, image: bytes) -> None:
+        """Store captcha image bytes and prune entries older than 10 minutes."""
+        now = time.monotonic()
+        expired = [k for k, ts in self._timestamps.items() if now - ts > 600.0]
+        for key in expired:
+            self._timestamps.pop(key, None)
+            self.captchas.pop(key, None)
+        self.captchas[flow_id] = image
+        self._timestamps[flow_id] = now
 
     async def get(self, request: web.Request, flow_id: str) -> web.Response:
         """Return captcha image bytes if available."""
@@ -158,7 +169,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 try:
                     view = self._get_or_register_captcha_view()
                     image_bytes, sc = await async_get_captcha(session, region, m2)
-                    view.captchas[self.flow_id] = image_bytes
+                    view.store(self.flow_id, image_bytes)
                     self._captcha_data = {
                         "email": email,
                         "password": password,
@@ -251,7 +262,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 try:
                     view = self._get_or_register_captcha_view()
                     image_bytes, sc = await async_get_captcha(session, region, m2)
-                    view.captchas[self.flow_id] = image_bytes
+                    view.store(self.flow_id, image_bytes)
                     self._captcha_data = {
                         "email": email,
                         "password": password,
@@ -282,7 +293,11 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle reconfiguration of the integration."""
-        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        entry = (
+            self._get_reconfigure_entry()
+            if hasattr(self, "_get_reconfigure_entry")
+            else self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        )
         assert entry is not None
         errors: dict[str, str] = {}
 
@@ -335,7 +350,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 try:
                     view = self._get_or_register_captcha_view()
                     image_bytes, sc = await async_get_captcha(session, region, m2)
-                    view.captchas[self.flow_id] = image_bytes
+                    view.store(self.flow_id, image_bytes)
                     self._captcha_data = {
                         "email": email,
                         "password": password,
@@ -502,7 +517,7 @@ class BotslabVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
                 try:
                     view = self._get_or_register_captcha_view()
                     image_bytes, sc = await async_get_captcha(session, region, m2)
-                    view.captchas[self.flow_id] = image_bytes
+                    view.store(self.flow_id, image_bytes)
                     self._captcha_data["sc"] = sc
                 except Exception as err:
                     _LOGGER.exception("Failed to refresh captcha: %s", err)

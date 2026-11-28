@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { SLIDER_CONFIG } from '@/constants';
 import { useIsRtl } from '@/contexts';
 import { selectOptionKey } from '@/utils';
@@ -24,13 +24,9 @@ export function WetnessSlider({
   wetLabel,
   disabled = false,
 }: WetnessSliderProps) {
-  const [localValue, setLocalValue] = useState(wetnessLevel);
+  const [dragValue, setDragValue] = useState<number | null>(null);
+  const localValue = dragValue ?? wetnessLevel;
   const isRtl = useIsRtl();
-
-  // Sync local state when prop changes (e.g., entity update from HA)
-  useEffect(() => {
-    setLocalValue(wetnessLevel);
-  }, [wetnessLevel]);
   const { MIN, MAX } = SLIDER_CONFIG.WETNESS;
   const percent = ((localValue - MIN) / (MAX - MIN)) * 100;
   const thumbWidth = 20;
@@ -38,14 +34,15 @@ export function WetnessSlider({
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!disabled) {
-      setLocalValue(parseInt(e.target.value));
+      setDragValue(parseInt(e.target.value, 10));
     }
   };
 
   const handleCommit = () => {
-    if (!disabled && localValue !== wetnessLevel) {
-      onChangeWetness(entityId, localValue);
+    if (!disabled && dragValue !== null && dragValue !== wetnessLevel) {
+      onChangeWetness(entityId, dragValue);
     }
+    setDragValue(null);
   };
 
   const gradientDirection = isRtl ? 'to left' : 'to right';
@@ -70,6 +67,7 @@ export function WetnessSlider({
             onChange={handleChange}
             onMouseUp={handleCommit}
             onTouchEnd={handleCommit}
+            onBlur={handleCommit}
             disabled={disabled}
             className="cleaning-mode-modal__slider"
             style={{

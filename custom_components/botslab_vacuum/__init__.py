@@ -4,11 +4,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import ATTR_AREA_ID, ATTR_DEVICE_ID
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
@@ -102,6 +103,15 @@ from .coordinator import BotslabRuntimeData, BotslabVacuumCoordinator
 from .qpush import BotslabChinaQPush, BotslabQPush
 
 _LOGGER = logging.getLogger(__name__)
+
+BotslabConfigEntry: TypeAlias = "ConfigEntry[BotslabRuntimeData]"
+
+# Shared target selector fields so services work with entity_id, device_id, and area_id
+_TARGET_SCHEMA_FIELDS: dict[Any, Any] = {
+    vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+    vol.Optional(ATTR_DEVICE_ID): cv.ensure_list,
+    vol.Optional(ATTR_AREA_ID): cv.ensure_list,
+}
 
 # Frontend cards bundled in ./www and auto-registered so dashboards work zero-config
 _CARDS = ["botslab-routines-card.js", "botslab-vacuum-map-card.js"]
@@ -211,7 +221,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: BotslabConfigEntry) -> bool:
     """Set up Botslab Vacuum from a config entry."""
     await _register_frontend(hass)
     session = async_get_clientsession(hass)
@@ -305,23 +315,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def _async_options_updated(hass: HomeAssistant, entry: BotslabConfigEntry) -> None:
     """Reload the entry after its options changed."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
+async def async_unload_entry(hass: HomeAssistant, entry: BotslabConfigEntry) -> bool:
+    """Unload a config entry and cancel all background listeners."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        runtime: BotslabRuntimeData = entry.runtime_data
-        if runtime.qpush is not None:
-            await runtime.qpush.stop()
-        if runtime.qpush_task and not runtime.qpush_task.done():
-            runtime.qpush_task.cancel()
+        runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
+        if runtime is not None:
+            if runtime.coordinator is not None:
+                await runtime.coordinator.async_shutdown()
+            if runtime.qpush is not None:
+                await runtime.qpush.stop()
+            if runtime.qpush_task and not runtime.qpush_task.done():
+                runtime.qpush_task.cancel()
         entry.runtime_data = None
 
     return unload_ok
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    config_entry: BotslabConfigEntry,
+    device_entry: dr.DeviceEntry,
+) -> bool:
+    """Allow removing a stale Botslab device from the HA Device Registry."""
+    runtime: BotslabRuntimeData | None = getattr(config_entry, "runtime_data", None)
+    if not runtime or not runtime.coordinator or not runtime.coordinator.data:
+        return True
+    active_sns = set(runtime.coordinator.data.keys())
+    return not any(
+        domain == DOMAIN and identifier in active_sns
+        for domain, identifier in device_entry.identifiers
+    )
 
 
 def _parse_room_ids(raw: Any) -> list[str]:
@@ -362,6 +391,16 @@ def _parse_room_ids(raw: Any) -> list[str]:
     return [str(raw).strip()]
 
 
+def _normalize_rect_zone(coords: list[float]) -> list[float] | None:
+    """Return canonical [min_x, min_y, max_x, max_y] or None if degenerate."""
+    x1, y1, x2, y2 = float(coords[0]), float(coords[1]), float(coords[2]), float(coords[3])
+    min_x, max_x = min(x1, x2), max(x1, x2)
+    min_y, max_y = min(y1, y2), max(y1, y2)
+    if min_x == max_x or min_y == max_y:
+        return None
+    return [min_x, min_y, max_x, max_y]
+
+
 def _parse_zones(raw: Any) -> list[list[float]]:
     """Normalize zone inputs (nested list, flat 4-tuple, JSON string, dict) into list of [x1, y1, x2, y2]."""
     if raw is None:
@@ -375,16 +414,25 @@ def _parse_zones(raw: Any) -> list[list[float]]:
             return _parse_zones(parsed)
         except Exception:
             return []
+    if isinstance(raw, dict):
+        raw = [raw]
     if isinstance(raw, (list, tuple)):
         if not raw:
             return []
-        if len(raw) == 4 and all(isinstance(c, (int, float)) for c in raw):
-            return [[float(c) for c in raw]]
+        if len(raw) == 4 and all(
+            isinstance(c, (int, float)) and not isinstance(c, bool) for c in raw
+        ):
+            rect = _normalize_rect_zone([float(c) for c in raw])
+            return [rect] if rect is not None else []
         zones: list[list[float]] = []
         for item in raw:
             if isinstance(item, (list, tuple)) and len(item) >= 4:
                 try:
-                    zones.append([float(item[0]), float(item[1]), float(item[2]), float(item[3])])
+                    rect = _normalize_rect_zone(
+                        [float(item[0]), float(item[1]), float(item[2]), float(item[3])]
+                    )
+                    if rect is not None:
+                        zones.append(rect)
                 except (ValueError, TypeError):
                     pass
             elif isinstance(item, dict):
@@ -394,11 +442,72 @@ def _parse_zones(raw: Any) -> list[list[float]]:
                 y2 = item.get("y2", item.get("y_max", item.get("p2_y")))
                 if None not in (x1, y1, x2, y2):
                     try:
-                        zones.append([float(x1), float(y1), float(x2), float(y2)])
+                        rect = _normalize_rect_zone([float(x1), float(y1), float(x2), float(y2)])
+                        if rect is not None:
+                            zones.append(rect)
                     except (ValueError, TypeError):
                         pass
         return zones
     return []
+
+
+def _validate_clean_zones(value: Any) -> list[list[float]]:
+    """Voluptuous validator for clean_zone ``zones`` field.
+
+    Accepts ``[[x1, y1, x2, y2], ...]``, a flat ``[x1, y1, x2, y2]``, or dicts
+    with ``x1/y1/x2/y2`` keys while rejecting malformed sequences with vol.Invalid.
+    """
+    if isinstance(value, (list, tuple)):
+        if len(value) == 4 and all(
+            isinstance(c, (int, float)) and not isinstance(c, bool) for c in value
+        ):
+            rect = _normalize_rect_zone([float(c) for c in value])
+            if rect is None:
+                raise vol.Invalid("Zone must have non-zero width and height")
+            return [rect]
+        if not value:
+            raise vol.Invalid("At least one zone is required")
+        parsed: list[list[float]] = []
+        for item in value:
+            if isinstance(item, (list, tuple)):
+                if len(item) != 4:
+                    raise vol.Invalid(
+                        f"Each zone must have exactly 4 coordinates [x1, y1, x2, y2], got {len(item)}"
+                    )
+                try:
+                    coords = [float(c) for c in item]
+                except (ValueError, TypeError) as err:
+                    raise vol.Invalid("Zone coordinates must be numbers") from err
+                rect = _normalize_rect_zone(coords)
+                if rect is None:
+                    raise vol.Invalid("Zone must have non-zero width and height")
+                parsed.append(rect)
+            elif isinstance(item, dict):
+                pts = item.get("points")
+                if isinstance(pts, (list, tuple)) and len(pts) == 4:
+                    try:
+                        coords = [float(c) for c in pts]
+                    except (ValueError, TypeError) as err:
+                        raise vol.Invalid("Zone coordinates must be numbers") from err
+                else:
+                    x1 = item.get("x1", item.get("x_min", item.get("p1_x")))
+                    y1 = item.get("y1", item.get("y_min", item.get("p1_y")))
+                    x2 = item.get("x2", item.get("x_max", item.get("p2_x")))
+                    y2 = item.get("y2", item.get("y_max", item.get("p2_y")))
+                    if None in (x1, y1, x2, y2):
+                        raise vol.Invalid("Zone dict must contain x1, y1, x2, and y2 or points")
+                    try:
+                        coords = [float(x1), float(y1), float(x2), float(y2)]
+                    except (ValueError, TypeError) as err:
+                        raise vol.Invalid("Zone coordinates must be numbers") from err
+                rect = _normalize_rect_zone(coords)
+                if rect is None:
+                    raise vol.Invalid("Zone must have non-zero width and height")
+                parsed.append(rect)
+            else:
+                raise vol.Invalid("Invalid zone entry; expected [x1, y1, x2, y2]")
+        return parsed
+    raise vol.Invalid("Expected a list of [x1, y1, x2, y2] zone rectangles")
 
 
 def _register_services(hass: HomeAssistant) -> None:
@@ -407,31 +516,37 @@ def _register_services(hass: HomeAssistant) -> None:
         return
 
     def _targets(call: ServiceCall) -> list[tuple[BotslabVacuumCoordinator, Any]]:
-        """Resolve a service call to the devices it should affect."""
-        raw_entity_ids = (
+        """Resolve a service call (entity_id, device_id, or area_id) to target devices."""
+        def _as_str_list(raw: Any) -> list[str]:
+            if isinstance(raw, str):
+                return [e.strip() for e in raw.split(",") if e.strip()]
+            if isinstance(raw, (list, tuple, set)):
+                return [str(e).strip() for e in raw if e]
+            return []
+
+        entity_ids = _as_str_list(
             call.data.get(ATTR_ENTITY_ID)
             or call.data.get("entity_ids")
             or call.data.get("entity")
             or []
         )
-        if isinstance(raw_entity_ids, str):
-            entity_ids = [e.strip() for e in raw_entity_ids.split(",") if e.strip()]
-        elif isinstance(raw_entity_ids, (list, tuple, set)):
-            entity_ids = [str(e).strip() for e in raw_entity_ids if e]
-        else:
-            entity_ids = []
+        device_ids = _as_str_list(call.data.get(ATTR_DEVICE_ID) or [])
+        area_ids = _as_str_list(call.data.get(ATTR_AREA_ID) or [])
 
         all_vacuums: list[tuple[BotslabVacuumCoordinator, Any]] = []
+        by_sn: dict[str, tuple[BotslabVacuumCoordinator, Any]] = {}
         for entry in hass.config_entries.async_entries(DOMAIN):
             runtime: BotslabRuntimeData | None = getattr(entry, "runtime_data", None)
             if runtime and runtime.coordinator and runtime.coordinator.data:
                 for dev in runtime.coordinator.data.values():
-                    all_vacuums.append((runtime.coordinator, dev))
+                    pair = (runtime.coordinator, dev)
+                    all_vacuums.append(pair)
+                    by_sn[dev.device_name] = pair
 
-        if not entity_ids:
+        if not entity_ids and not device_ids and not area_ids:
             _LOGGER.warning(
-                "%s was called without a target entity, so it was ignored. "
-                "Pass entity_id to choose which robot should run the command.",
+                "%s was called without a target entity, device, or area, so it was ignored. "
+                "Pass entity_id, device_id, or area_id to choose which robot should run the command.",
                 call.service,
             )
             return []
@@ -440,7 +555,46 @@ def _register_services(hass: HomeAssistant) -> None:
         devices = dr.async_get(hass)
 
         selected: list[tuple[BotslabVacuumCoordinator, Any]] = []
+        selected_sns: set[str] = set()
         unknown: list[str] = []
+
+        def _add_pair(pair: tuple[BotslabVacuumCoordinator, Any]) -> None:
+            sn = pair[1].device_name
+            if sn not in selected_sns:
+                selected_sns.add(sn)
+                selected.append(pair)
+
+        def _resolve_device_entry(device_entry: dr.DeviceEntry | None) -> bool:
+            if not device_entry:
+                return False
+            serial = next(
+                (
+                    identifier
+                    for domain, identifier in device_entry.identifiers
+                    if domain == DOMAIN
+                ),
+                None,
+            )
+            if serial and serial in by_sn:
+                _add_pair(by_sn[serial])
+                return True
+            return False
+
+        for area_id in area_ids:
+            area_matched = False
+            for dev_entry in dr.async_entries_for_area(devices, area_id):
+                if _resolve_device_entry(dev_entry):
+                    area_matched = True
+            for ent_entry in er.async_entries_for_area(entities, area_id):
+                if ent_entry.platform == DOMAIN and ent_entry.device_id:
+                    if _resolve_device_entry(devices.async_get(ent_entry.device_id)):
+                        area_matched = True
+            if not area_matched:
+                unknown.append(f"area:{area_id}")
+
+        for device_id in device_ids:
+            if not _resolve_device_entry(devices.async_get(device_id)):
+                unknown.append(f"device:{device_id}")
 
         for entity_id in entity_ids:
             matched = False
@@ -459,7 +613,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 runtime = getattr(entry, "runtime_data", None)
                 device = runtime.coordinator.data.get(serial) if runtime and serial else None
                 if runtime and device:
-                    selected.append((runtime.coordinator, device))
+                    _add_pair((runtime.coordinator, device))
                     matched = True
 
             if not matched:
@@ -478,14 +632,14 @@ def _register_services(hass: HomeAssistant) -> None:
                         or slug_title in low_id
                         or low_id in slug_title
                     ):
-                        selected.append((coord, dev))
+                        _add_pair((coord, dev))
                         matched = True
                         break
 
             # If still not matched, but there is only a single Botslab vacuum in the entire system,
             # safely map any generic target (e.g. vacuum.botslab_vacuum) to this single device.
             if not matched and len(all_vacuums) == 1:
-                selected.append(all_vacuums[0])
+                _add_pair(all_vacuums[0])
                 matched = True
 
             if not matched:
@@ -506,6 +660,7 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_clean_rooms(call: ServiceCall) -> None:
         raw_rooms = (
             call.data.get(ATTR_ROOM_IDS)
+            or call.data.get("segments")
             or call.data.get("room_id")
             or call.data.get("rooms")
             or call.data.get("selection")
@@ -631,7 +786,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def handle_sync_map(call: ServiceCall) -> None:
         for coordinator, dev in _targets(call):
-            await coordinator.api.start_map_sync(dev.device_name, dev.product_key, 60)
+            await coordinator.async_sync_map(dev.device_name)
 
     async def handle_goto_location(call: ServiceCall) -> None:
         raw_x = call.data.get(ATTR_X) or call.data.get("point_x") or 0
@@ -663,9 +818,27 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_reset_consumable(call: ServiceCall) -> None:
         consumable = call.data.get(ATTR_CONSUMABLE_TYPE) or call.data.get("consumable")
         if not consumable:
-            return
+            raise ServiceValidationError("reset_consumable requires a consumable_type")
         for coordinator, dev in _targets(call):
             await coordinator.reset_consumable(dev.device_name, consumable)
+
+    def _extract_area_coords(call: ServiceCall, service_name: str) -> tuple[float, float, float, float]:
+        pts = call.data.get(ATTR_POINTS)
+        if pts is not None:
+            if not isinstance(pts, (list, tuple)) or len(pts) < 4:
+                raise ServiceValidationError(
+                    f"{service_name} requires 4 coordinates in points [x1, y1, x2, y2]"
+                )
+            return float(pts[0]), float(pts[1]), float(pts[2]), float(pts[3])
+        x1 = call.data.get(ATTR_X1)
+        y1 = call.data.get(ATTR_Y1)
+        x2 = call.data.get(ATTR_X2)
+        y2 = call.data.get(ATTR_Y2)
+        if None in (x1, y1, x2, y2):
+            raise ServiceValidationError(
+                f"{service_name} requires either points=[x1, y1, x2, y2] or x1, y1, x2, y2"
+            )
+        return float(x1), float(y1), float(x2), float(y2)
 
     async def handle_set_no_go_zones(call: ServiceCall) -> None:
         zones = call.data.get(ATTR_ZONES, [])
@@ -681,13 +854,20 @@ def _register_services(hass: HomeAssistant) -> None:
             for z in zones or []:
                 if isinstance(z, dict):
                     parsed_zones.append(z)
-                elif len(z) >= 4:
-                    min_x, max_x = int(round(min(z[0], z[2]))), int(round(max(z[0], z[2])))
-                    min_y, max_y = int(round(min(z[1], z[3]))), int(round(max(z[1], z[3])))
-                    parsed_zones.append({
+                elif isinstance(z, (list, tuple)) and len(z) >= 4:
+                    x1, y1, x2, y2 = float(z[0]), float(z[1]), float(z[2]), float(z[3])
+                    min_x, max_x = int(round(min(x1, x2))), int(round(max(x1, x2)))
+                    min_y, max_y = int(round(min(y1, y2))), int(round(max(y1, y2)))
+                    entry_zone: dict[str, Any] = {
                         "type": zone_type,
                         "points": [min_x, min_y, max_x, max_y],
-                    })
+                    }
+                    if zone_type in ("line", "wall", "virtual_wall"):
+                        entry_zone["vertexs"] = [
+                            [int(round(x1)), int(round(y1))],
+                            [int(round(x2)), int(round(y2))],
+                        ]
+                    parsed_zones.append(entry_zone)
 
             if mode == "add":
                 existing = list(
@@ -714,28 +894,14 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def handle_add_no_go_zone(call: ServiceCall) -> None:
         zone_type = call.data.get(ATTR_ZONE_TYPE, "forbid")
-        pts = call.data.get(ATTR_POINTS)
-        if pts and len(pts) >= 4:
-            x1, y1, x2, y2 = pts[0], pts[1], pts[2], pts[3]
-        else:
-            x1 = call.data.get(ATTR_X1, 0)
-            y1 = call.data.get(ATTR_Y1, 0)
-            x2 = call.data.get(ATTR_X2, 0)
-            y2 = call.data.get(ATTR_Y2, 0)
+        x1, y1, x2, y2 = _extract_area_coords(call, SERVICE_ADD_NO_GO_ZONE)
         for coordinator, dev in _targets(call):
             await coordinator.async_add_no_go_zone(
                 dev.device_name, x1, y1, x2, y2, zone_type=zone_type
             )
 
     async def handle_add_no_mop_zone(call: ServiceCall) -> None:
-        pts = call.data.get(ATTR_POINTS)
-        if pts and len(pts) >= 4:
-            x1, y1, x2, y2 = pts[0], pts[1], pts[2], pts[3]
-        else:
-            x1 = call.data.get(ATTR_X1, 0)
-            y1 = call.data.get(ATTR_Y1, 0)
-            x2 = call.data.get(ATTR_X2, 0)
-            y2 = call.data.get(ATTR_Y2, 0)
+        x1, y1, x2, y2 = _extract_area_coords(call, SERVICE_ADD_NO_MOP_ZONE)
         for coordinator, dev in _targets(call):
             await coordinator.async_add_no_go_zone(
                 dev.device_name, x1, y1, x2, y2, zone_type="mop"
@@ -866,7 +1032,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_clean_rooms,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Optional(ATTR_ROOM_IDS): cv.ensure_list,
                 vol.Optional(ATTR_ROOM_NAMES): vol.All(cv.ensure_list, [cv.string]),
                 vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.Coerce(int),
@@ -885,14 +1051,8 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_clean_zone,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
-                vol.Required(ATTR_ZONES): vol.All(
-                    cv.ensure_list,
-                    # Each zone is an (x1, y1, x2, y2) rectangle. Coercing the
-                    # whole list to float would reject every valid zone, so the
-                    # coercion belongs on the individual coordinates.
-                    [vol.ExactSequence((vol.Coerce(float),) * 4)],
-                ),
+                **_TARGET_SCHEMA_FIELDS,
+                vol.Required(ATTR_ZONES): _validate_clean_zones,
                 vol.Optional(ATTR_REPEAT_TIMES, default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
                 vol.Optional(ATTR_FAN_SPEED): cv.string,
                 vol.Optional(ATTR_WATER_LEVEL): cv.string,
@@ -910,7 +1070,7 @@ def _register_services(hass: HomeAssistant) -> None:
         SERVICE_SET_WATER_LEVEL,
         handle_set_water_level,
         schema=vol.Schema(
-            {vol.Optional(ATTR_ENTITY_ID): cv.ensure_list, vol.Required(ATTR_WATER_LEVEL): cv.string}
+            {**_TARGET_SCHEMA_FIELDS, vol.Required(ATTR_WATER_LEVEL): cv.string}
         ),
     )
 
@@ -919,7 +1079,7 @@ def _register_services(hass: HomeAssistant) -> None:
         SERVICE_SET_MOP_MODE,
         handle_set_mop_mode,
         schema=vol.Schema(
-            {vol.Optional(ATTR_ENTITY_ID): cv.ensure_list, vol.Required(ATTR_MOP_MODE): cv.string}
+            {**_TARGET_SCHEMA_FIELDS, vol.Required(ATTR_MOP_MODE): cv.string}
         ),
     )
 
@@ -927,14 +1087,14 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_REFRESH_ROOMS,
         handle_refresh_rooms,
-        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+        schema=vol.Schema({**_TARGET_SCHEMA_FIELDS}),
     )
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_SYNC_MAP,
         handle_sync_map,
-        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+        schema=vol.Schema({**_TARGET_SCHEMA_FIELDS}),
     )
 
     hass.services.async_register(
@@ -943,7 +1103,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_goto_location,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Optional(ATTR_X): vol.Coerce(float),
                 vol.Optional(ATTR_Y): vol.Coerce(float),
             },
@@ -955,12 +1115,12 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_LOCATE,
         handle_locate,
-        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+        schema=vol.Schema({**_TARGET_SCHEMA_FIELDS}),
     )
 
     reset_consumable_schema = vol.Schema(
         {
-            vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+            **_TARGET_SCHEMA_FIELDS,
             vol.Optional(ATTR_CONSUMABLE_TYPE): cv.string,
             vol.Optional("consumable"): cv.string,
         }
@@ -986,7 +1146,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_set_no_go_zones,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Optional(ATTR_ZONES, default=[]): vol.All(
                     cv.ensure_list,
                 ),
@@ -1004,7 +1164,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_add_no_go_zone,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Optional(ATTR_X1): vol.Coerce(float),
                 vol.Optional(ATTR_Y1): vol.Coerce(float),
                 vol.Optional(ATTR_X2): vol.Coerce(float),
@@ -1025,7 +1185,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_add_no_mop_zone,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Optional(ATTR_X1): vol.Coerce(float),
                 vol.Optional(ATTR_Y1): vol.Coerce(float),
                 vol.Optional(ATTR_X2): vol.Coerce(float),
@@ -1043,7 +1203,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_delete_no_go_zone,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Optional(ATTR_INDEX): vol.Coerce(int),
                 vol.Optional(ATTR_ZONE_TYPE): vol.In(
                     ["forbid", "mop", "line", "carpet_rect"]
@@ -1060,14 +1220,14 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_CLEAR_NO_GO_ZONES,
         handle_clear_no_go_zones,
-        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+        schema=vol.Schema({**_TARGET_SCHEMA_FIELDS}),
     )
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_CLEAR_NO_MOP_ZONES,
         handle_clear_no_mop_zones,
-        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+        schema=vol.Schema({**_TARGET_SCHEMA_FIELDS}),
     )
 
     hass.services.async_register(
@@ -1076,7 +1236,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_set_schedule,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Required(ATTR_TIME): cv.string,
                 vol.Required(ATTR_DAYS): vol.All(cv.ensure_list, [vol.All(vol.Coerce(int), vol.Range(min=0, max=6))]),
                 vol.Optional(ATTR_ROOM_IDS, default=[]): vol.All(cv.ensure_list, [cv.string]),
@@ -1096,7 +1256,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_delete_schedule,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Required(ATTR_SLOT): vol.Coerce(int),
             }
         ),
@@ -1108,7 +1268,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_run_schedule,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Required(ATTR_SLOT): vol.Coerce(int),
             }
         ),
@@ -1118,7 +1278,7 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_EMPTY_DUST_BIN,
         handle_empty_dust_bin,
-        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+        schema=vol.Schema({**_TARGET_SCHEMA_FIELDS}),
     )
 
     hass.services.async_register(
@@ -1127,7 +1287,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_wash_mop,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Optional("wash_type", default=0): vol.All(vol.Coerce(int), vol.In([0, 1])),
             }
         ),
@@ -1139,7 +1299,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_dry_mop,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Optional(ATTR_DURATION, default=120): vol.Coerce(int),
             }
         ),
@@ -1151,7 +1311,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_set_carpet_areas,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Required(ATTR_CARPETS): cv.ensure_list,
             }
         ),
@@ -1161,7 +1321,7 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_CLEAR_CARPET_AREAS,
         handle_clear_carpet_areas,
-        schema=vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.ensure_list}),
+        schema=vol.Schema({**_TARGET_SCHEMA_FIELDS}),
     )
 
     hass.services.async_register(
@@ -1170,7 +1330,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_switch_floor_map,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Required(ATTR_MAP_ID): vol.Any(int, cv.string),
             }
         ),
@@ -1182,7 +1342,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_save_floor_map,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Required(ATTR_MAP_NAME): cv.string,
             }
         ),
@@ -1194,7 +1354,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_delete_floor_map,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Required(ATTR_MAP_ID): vol.Any(int, cv.string),
             }
         ),
@@ -1206,7 +1366,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_custom_clean_sequencing,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Required(ATTR_CLEAN_ORDER): cv.ensure_list,
                 vol.Optional("kitchen_toilet_last", default=True): cv.boolean,
             }
@@ -1219,7 +1379,7 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_remote_control_drive,
         schema=vol.Schema(
             {
-                vol.Optional(ATTR_ENTITY_ID): cv.ensure_list,
+                **_TARGET_SCHEMA_FIELDS,
                 vol.Required(ATTR_DIRECTION): vol.Any(
                     vol.All(vol.Coerce(int), vol.Range(min=0, max=4)),
                     cv.string,

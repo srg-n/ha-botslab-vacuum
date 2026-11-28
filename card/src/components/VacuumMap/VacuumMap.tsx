@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { Loader2, Map as MapIcon, Trash2 } from 'lucide-react';
 import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pan-pinch';
 import type {
   AreaSelectionMode,
@@ -8,7 +9,7 @@ import type {
   VacuumPosition,
 } from '@/types/homeassistant';
 import { useTranslation, type MapGeometry } from '@/hooks';
-import { useHass, useMachineState, useConfig, useEntity, useLanguage } from '@/contexts';
+import { useHass, useMachineState, useConfig, useEntity } from '@/contexts';
 import { STORAGE_KEY, isRobotBusy, vacuumStorageKey } from '@/constants';
 import { containedRect, type PictureRect } from '@/utils/zoneConverter';
 import { RoomSegments } from './RoomSegments';
@@ -33,6 +34,7 @@ interface VacuumMapProps {
   onImageError?: (imageToken: string) => void;
   defaultRoomView?: RoomViewMode;
   onZoneDeleted?: (message: string) => void;
+  isFloorSwitching?: boolean;
 }
 
 function measurePicture(img: HTMLImageElement): PictureRect | null {
@@ -95,10 +97,10 @@ export function VacuumMap({
   onImageError,
   defaultRoomView = 'map',
   onZoneDeleted,
+  isFloorSwitching = false,
 }: VacuumMapProps) {
   const { t } = useTranslation();
   const hass = useHass();
-  const lang = useLanguage();
   const config = useConfig();
   const { phase } = useMachineState();
   const entity = useEntity();
@@ -240,7 +242,7 @@ export function VacuumMap({
                 ref={observeImage}
                 src={hass.hassUrl(mapUrl)}
                 alt="Vacuum Map"
-                className="vacuum-map__image"
+                className={`vacuum-map__image ${isFloorSwitching ? 'vacuum-map__image--switching' : ''}`}
                 onLoad={handleImageLoad}
                 onError={handleImageError}
                 draggable={false}
@@ -311,6 +313,9 @@ export function VacuumMap({
                       onZonesChange={onZoneChange}
                       clearZoneLabel={t('vacuum_map.clear_zone')}
                       mode={areaSelectionMode}
+                      transform={transform}
+                      imageWidth={imageDimensions.width}
+                      imageHeight={imageDimensions.height}
                     />
                   )}
                 </div>
@@ -320,9 +325,16 @@ export function VacuumMap({
         </TransformWrapper>
       ) : (
         <div className="vacuum-map__placeholder">
-          {t('vacuum_map.no_map')}
-          <br />
-          <small>{t('vacuum_map.looking_for', { entity: mapEntityId })}</small>
+          <MapIcon size={32} className="vacuum-map__placeholder-icon" />
+          <p className="vacuum-map__placeholder-title">{t('vacuum_map.no_map')}</p>
+          {mapEntityId && <small>{t('vacuum_map.looking_for', { entity: mapEntityId })}</small>}
+        </div>
+      )}
+
+      {isFloorSwitching && mapEntity && mapUrl && (
+        <div className="vacuum-map__switching" role="status" aria-live="polite">
+          <Loader2 size={16} className="vacuum-map__switching-spinner" />
+          <span>{t('vacuum_map.switching_floor')}</span>
         </div>
       )}
 
@@ -338,25 +350,32 @@ export function VacuumMap({
         </>
       )}
 
-      {selectedMode === 'zone' && areaSelectionMode === 'zone' && (
-        <div className="vacuum-map__overlay">
-          {zone.length > 0 ? t('vacuum_map.zone_overlay_resize') : t('vacuum_map.zone_overlay_create')}
-        </div>
-      )}
-
-      {selectedMode === 'zone' && areaSelectionMode === 'no_go' && (
-        <div className="vacuum-map__overlay">
-          {zone.length > 0
-            ? (lang === 'tr' ? 'Yasak alanı boyutlandırmak için kenarları sürükleyin' : 'Drag edges to resize forbidden zone')
-            : (lang === 'tr' ? 'Yasak alan eklemek için haritaya dokunun' : 'Tap the map to create a forbidden zone')}
-        </div>
-      )}
-
-      {selectedMode === 'zone' && areaSelectionMode === 'no_mop' && (
-        <div className="vacuum-map__overlay">
-          {zone.length > 0
-            ? (lang === 'tr' ? 'Paspas yasak alanı boyutlandırmak için kenarları sürükleyin' : 'Drag edges to resize no-mop zone')
-            : (lang === 'tr' ? 'Paspas yasak alan eklemek için haritaya dokunun' : 'Tap the map to create a no-mop zone')}
+      {selectedMode === 'zone' && (
+        <div className="vacuum-map__zone-bar">
+          <span className="vacuum-map__zone-bar-hint">
+            {areaSelectionMode === 'no_go'
+              ? zone.length > 0
+                ? t('vacuum_map.nogo_overlay_resize')
+                : t('vacuum_map.nogo_overlay_create')
+              : areaSelectionMode === 'no_mop'
+                ? zone.length > 0
+                  ? t('vacuum_map.nomop_overlay_resize')
+                  : t('vacuum_map.nomop_overlay_create')
+                : zone.length > 0
+                  ? t('vacuum_map.zone_overlay_resize')
+                  : t('vacuum_map.zone_overlay_create')}
+          </span>
+          {zone.length > 0 && roomSelectionEnabled && (
+            <button
+              type="button"
+              className="vacuum-map__zone-bar-clear"
+              onClick={() => onZoneChange([])}
+              title={t('vacuum_map.clear_all_zones')}
+            >
+              <Trash2 size={13} />
+              <span>{t('vacuum_map.clear_all_zones')}</span>
+            </button>
+          )}
         </div>
       )}
     </div>

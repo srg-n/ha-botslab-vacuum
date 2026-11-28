@@ -1,4 +1,6 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
+import { useTransformContext, useTransformEffect } from 'react-zoom-pan-pinch';
+import { X } from 'lucide-react';
 import type { MapTransform } from '@/utils/mapTransform';
 import { useHass, useEntity } from '@/contexts';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -47,23 +49,40 @@ export function SavedNoGoOverlay({
   const hass = useHass();
   const entity = useEntity();
   const { t } = useTranslation();
+  const transformContext = useTransformContext();
+  const [deletingIndex, setDeletingIndex] = useState<number | null>(null);
+  const [scale, setScale] = useState(transformContext.state.scale);
+
+  useTransformEffect(
+    useCallback((state) => {
+      setScale(state.state.scale);
+    }, [])
+  );
+  const controlScale = 1 / scale;
 
   const handleDeleteZone = useCallback(
     async (zone: SavedNoGoZoneItem, index: number, e: React.MouseEvent) => {
       e.stopPropagation();
       e.preventDefault();
+      if (deletingIndex !== null) return;
 
-      // Point-based identification first: it survives a list reorder between renders,
-      // the index is only used when the zone has no usable geometry.
+      const resolvedPoints =
+        Array.isArray(zone.points) && zone.points.length >= 4
+          ? zone.points
+          : zone.x1 !== undefined && zone.y1 !== undefined && zone.x2 !== undefined && zone.y2 !== undefined
+            ? [Number(zone.x1), Number(zone.y1), Number(zone.x2), Number(zone.y2)]
+            : undefined;
+
       const payload: Record<string, unknown> = {
         entity_id: entity.entity_id,
         zone_type: zone.type,
-        points: zone.points,
+        index,
       };
-      if (!Array.isArray(zone.points) || zone.points.length < 4) {
-        payload.index = index;
+      if (resolvedPoints) {
+        payload.points = resolvedPoints;
       }
 
+      setDeletingIndex(index);
       try {
         await hass.callService('botslab_vacuum', 'delete_no_go_zone', payload);
         onZoneDeleted?.(t('toast.zone_deleted'));
@@ -71,9 +90,11 @@ export function SavedNoGoOverlay({
         logger.error('Failed to delete no-go zone', err);
         const message = err instanceof Error ? err.message : String(err);
         onZoneDeleted?.(t('toast.operation_failed', { error: message }));
+      } finally {
+        setDeletingIndex(null);
       }
     },
-    [hass, entity.entity_id, onZoneDeleted, t]
+    [deletingIndex, hass, entity.entity_id, onZoneDeleted, t]
   );
 
   if (!transform || !imageWidth || !imageHeight || !Array.isArray(noGoZones) || noGoZones.length === 0) {
@@ -149,14 +170,23 @@ export function SavedNoGoOverlay({
             >
               {editable && (
                 <>
-                  <span className="vacuum-map__saved-zone-badge">{t('vacuum_map.virtual_wall')}</span>
+                  <span
+                    className="vacuum-map__saved-zone-badge"
+                    style={{ transform: `translateX(-50%) rotate(calc(-1 * var(--wall-angle, 0deg))) scale(${controlScale})` }}
+                  >
+                    {t('vacuum_map.virtual_wall')}
+                  </span>
                   <button
                     type="button"
                     className="vacuum-map__saved-zone-delete"
+                    style={{ transform: `translate(-50%, -50%) scale(${controlScale})` }}
+                    disabled={deletingIndex === index}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => handleDeleteZone(zone, index, e)}
                     title={t('vacuum_map.delete_zone')}
+                    aria-label={t('vacuum_map.delete_zone')}
                   >
-                    ×
+                    <X size={12} strokeWidth={2.5} />
                   </button>
                 </>
               )}
@@ -190,14 +220,23 @@ export function SavedNoGoOverlay({
           >
             {editable && (
               <>
-                <span className="vacuum-map__saved-zone-badge">{label}</span>
+                <span
+                  className="vacuum-map__saved-zone-badge"
+                  style={{ transform: `scale(${controlScale})`, transformOrigin: 'top left' }}
+                >
+                  {label}
+                </span>
                 <button
                   type="button"
                   className="vacuum-map__saved-zone-delete"
+                  style={{ transform: `scale(${controlScale})`, transformOrigin: 'top right' }}
+                  disabled={deletingIndex === index}
+                  onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => handleDeleteZone(zone, index, e)}
                   title={t('vacuum_map.delete_zone')}
+                  aria-label={t('vacuum_map.delete_zone')}
                 >
-                  ×
+                  <X size={12} strokeWidth={2.5} />
                 </button>
               </>
             )}

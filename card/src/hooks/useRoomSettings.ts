@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { Hass } from '@/types/homeassistant';
 import { logger } from '@/utils/logger';
 
@@ -68,26 +68,26 @@ export function useRoomSettings({
   vacuumEntityId: string;
   rooms: Array<{ id: number; name: string }>;
 }) {
-  const [storedConfigs, setStoredConfigs] = useState<Record<number, StoredRoomConfig>>(() =>
-    readStoredConfigs(vacuumEntityId)
-  );
+  const [store, setStore] = useState<{ entityId: string; configs: Record<number, StoredRoomConfig> }>(() => ({
+    entityId: vacuumEntityId,
+    configs: readStoredConfigs(vacuumEntityId),
+  }));
 
-  useEffect(() => {
-    setStoredConfigs(readStoredConfigs(vacuumEntityId));
-  }, [vacuumEntityId]);
+  const storedConfigs = store.entityId === vacuumEntityId ? store.configs : readStoredConfigs(vacuumEntityId);
 
   const updateRoom = useCallback(
     (roomId: number, patch: Partial<StoredRoomConfig>) => {
-      setStoredConfigs((prev) => {
-        const current = prev[roomId] || {
+      setStore((prev) => {
+        const base = prev.entityId === vacuumEntityId ? prev.configs : readStoredConfigs(vacuumEntityId);
+        const current = base[roomId] || {
           suctionLevel: DEFAULT_SUCTION,
           wetnessLevel: DEFAULT_WETNESS,
           cleaningTimes: DEFAULT_TIMES,
         };
-        const next = { ...prev, [roomId]: { ...current, ...patch } };
+        const next = { ...base, [roomId]: { ...current, ...patch } };
         writeStoredConfigs(vacuumEntityId, next);
         logger.debug('RoomSettings', 'Updated room config:', roomId, patch);
-        return next;
+        return { entityId: vacuumEntityId, configs: next };
       });
     },
     [vacuumEntityId]

@@ -1,7 +1,7 @@
 .action-buttons {
   display: flex;
-  gap: 0.75rem;
-  margin-top: 0.9375rem;
+  gap: 0.625rem;
+  margin-top: 0.75rem;
 
   &__clean,
   &__dock,
@@ -9,48 +9,98 @@
   &__resume,
   &__stop {
     flex: 1;
-    background: var(--accent-bg); // Darker obsidian base
-    border: 0.0625rem solid var(--accent-bg); // Your base color as the "frame"
-    border-radius: 0.875rem;
-    padding: 0.575rem;
+    min-height: 2.75rem;
+    background: var(--surface-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 0.75rem;
+    padding: 0.625rem 0.875rem;
     font-size: 0.9375rem;
     font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    gap: 0.4375rem;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease,
+      transform 0.15s ease,
+      box-shadow 0.15s ease;
     color: var(--text-primary);
 
+    &:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+
+    &:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    &:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--focus-ring);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     &--selected {
-      transform: translateY(-0.125rem);
-      border: 0.0625rem solid var(--toggle-active-border); // Your base color as the "frame"
-      box-shadow:
-        0 0.625rem 1.25rem var(--card-shadow-hover),
-        0 0 0.75rem var(--accent-color-shadow-color) !important;
+      border-color: var(--toggle-active-border);
+      box-shadow: 0 4px 12px var(--accent-color-shadow-color);
     }
   }
 
   &__clean {
     color: var(--text-primary-invert);
     background: var(--accent-color);
+    border-color: var(--accent-color);
+
+    &:hover:not(:disabled) {
+      background: var(--accent-color-hover);
+      border-color: var(--accent-color-hover);
+    }
   }
+
   &__pause {
+    background: var(--accent-bg-secondary);
     color: var(--accent-color);
-    border-color: var(--accent-color-hover);
+    border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
+
+    &:hover:not(:disabled) {
+      background: var(--accent-bg);
+    }
   }
+
   &__resume {
-    color: var(--success-color, #43a047);
-    border-color: color-mix(in srgb, var(--success-color, #43a047) 50%, transparent);
+    background: color-mix(in srgb, var(--success-color, #22c55e) 12%, transparent);
+    color: var(--success-color, #22c55e);
+    border-color: color-mix(in srgb, var(--success-color, #22c55e) 40%, transparent);
+
+    &:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--success-color, #22c55e) 20%, transparent);
+    }
   }
+
   &__stop {
-    color: var(--error-color, #db4437);
-    border-color: color-mix(in srgb, var(--error-color, #db4437) 50%, transparent);
+    background: color-mix(in srgb, var(--error-color, #ef4444) 10%, transparent);
+    color: var(--error-color, #ef4444);
+    border-color: color-mix(in srgb, var(--error-color, #ef4444) 38%, transparent);
+
+    &:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--error-color, #ef4444) 18%, transparent);
+    }
   }
 
   &__dock {
     background: var(--surface-secondary);
-    color: var(--text-secondary);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+
+    &:hover:not(:disabled) {
+      background: var(--surface-bg-hover);
+    }
   }
 }

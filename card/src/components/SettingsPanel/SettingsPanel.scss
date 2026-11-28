@@ -4,11 +4,12 @@
   height: 100%;
 
   &__title {
-    font-size: 1.25rem;
+    font-size: 1.125rem;
     font-weight: 600;
+    letter-spacing: -0.015em;
     margin: 0 0 1rem;
     text-align: center;
-    color: var(--text-primary, #000);
+    color: var(--text-primary);
   }
 
   &__scroll-wrapper {
@@ -32,7 +33,7 @@
     }
 
     &::-webkit-scrollbar-thumb {
-      background: var(--scrollbar-thumb, rgba(0, 0, 0, 0.2));
+      background: var(--scrollbar-thumb);
       border-radius: 2px;
     }
   }

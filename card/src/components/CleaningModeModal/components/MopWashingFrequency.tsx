@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { CircularButton } from '@/components/common';
 import { formatSelectOptionLabel, getSelfCleanFrequencyIcon, selectOptionKey } from '@/utils';
 import { useAreaUnit, useIsRtl } from '@/contexts';
@@ -53,19 +53,12 @@ export function MopWashingFrequency({
   areaDisabled = false,
   timeDisabled = false,
 }: MopWashingFrequencyProps) {
-  const [localArea, setLocalArea] = useState(selfCleanArea);
-  const [localTime, setLocalTime] = useState(selfCleanTime);
+  const [dragArea, setDragArea] = useState<number | null>(null);
+  const [dragTime, setDragTime] = useState<number | null>(null);
+  const localArea = dragArea ?? selfCleanArea;
+  const localTime = dragTime ?? selfCleanTime;
   const areaUnit = useAreaUnit();
   const isRtl = useIsRtl();
-
-  // Sync local state when props change (e.g., entity update from HA)
-  useEffect(() => {
-    setLocalArea(selfCleanArea);
-  }, [selfCleanArea]);
-
-  useEffect(() => {
-    setLocalTime(selfCleanTime);
-  }, [selfCleanTime]);
 
   const frequencyKey = selectOptionKey(selfCleanFrequency);
   const isByArea = frequencyKey === 'by_area';
@@ -87,20 +80,26 @@ export function MopWashingFrequency({
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (isSliderDisabled) return;
-    const value = parseInt(e.target.value);
+    const value = parseInt(e.target.value, 10);
     if (isByArea) {
-      setLocalArea(value);
+      setDragArea(value);
     } else {
-      setLocalTime(value);
+      setDragTime(value);
     }
   };
 
   const handleCommit = () => {
     if (isSliderDisabled) return;
-    if (isByArea && localArea !== selfCleanArea) {
-      onChangeArea(areaEntityId, localArea);
-    } else if (isByTime && localTime !== selfCleanTime) {
-      onChangeTime(timeEntityId, localTime);
+    if (isByArea) {
+      if (dragArea !== null && dragArea !== selfCleanArea) {
+        onChangeArea(areaEntityId, dragArea);
+      }
+      setDragArea(null);
+    } else if (isByTime) {
+      if (dragTime !== null && dragTime !== selfCleanTime) {
+        onChangeTime(timeEntityId, dragTime);
+      }
+      setDragTime(null);
     }
   };
 
@@ -137,6 +136,7 @@ export function MopWashingFrequency({
               onChange={handleChange}
               onMouseUp={handleCommit}
               onTouchEnd={handleCommit}
+              onBlur={handleCommit}
               disabled={isSliderDisabled}
               className="cleaning-mode-modal__slider"
               style={{

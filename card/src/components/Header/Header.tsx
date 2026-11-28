@@ -59,7 +59,7 @@ export function Header({ deviceName, onSettingsClick }: HeaderProps) {
       <div className="header__top">
         <div className="header__title-wrapper">
           <h2 className="header__title">{deviceName}</h2>
-          <p className="header__status">{displayStatusText}</p>
+          <p className={`header__status ${errorLabel ? 'header__status--error' : ''}`}>{displayStatusText}</p>
         </div>
         {onSettingsClick && (
           <button className="header__settings-btn" onClick={onSettingsClick} type="button" aria-label="Settings">
@@ -85,7 +85,7 @@ export function Header({ deviceName, onSettingsClick }: HeaderProps) {
         </div>
         <div className="header__stat">
           <span className="header__stat-icon">{HISTORY_ICON_SVG}</span>
-          <span className="header__stat-value--cleaning-time">
+          <span className="header__stat-value header__stat-value--cleaning-time">
             {cleaningTime} {t('units.minutes')}
           </span>
         </div>

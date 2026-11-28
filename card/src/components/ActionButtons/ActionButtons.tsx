@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { AreaSelectionMode, CleaningSelectionMode, StopAction } from '@/types/homeassistant';
 import { useTranslation, useButtonConfig } from '@/hooks';
-import { useEntity, useMachineState, useLanguage } from '@/contexts';
+import { useEntity, useMachineState } from '@/contexts';
 import { DockPopup } from '@/components/DockPopup';
 import { shouldOpenDockPopup } from '@/utils/dockPopup';
 import { CleanButton, PauseButton, ResumeButton, StopButton, DockButton } from './components';
@@ -32,7 +32,6 @@ export function ActionButtons({
   const { t, getRoomCountTranslation } = useTranslation();
   const { getStopAction } = useButtonConfig();
   const entity = useEntity();
-  const lang = useLanguage();
   const { phase, controls } = useMachineState();
   const [dockPopupOpened, setDockPopupOpened] = useState(false);
 
@@ -46,20 +45,27 @@ export function ActionButtons({
       case 'all':
         return t('actions.clean_all');
       case 'zone':
-        if (areaSelectionMode === 'no_go') return lang === 'tr' ? 'Yasak Alanı Kaydet' : 'Save No-Go Zone';
-        if (areaSelectionMode === 'no_mop') return lang === 'tr' ? 'Paspas Yasak Alanı Kaydet' : 'Save No-Mop Zone';
-        return t('actions.zone_clean');
+        if (areaSelectionMode === 'no_go') {
+          return selectedZonesCount > 1
+            ? t('actions.save_no_go_plural', { count: String(selectedZonesCount) })
+            : t('actions.save_no_go');
+        }
+        if (areaSelectionMode === 'no_mop') {
+          return selectedZonesCount > 1
+            ? t('actions.save_no_mop_plural', { count: String(selectedZonesCount) })
+            : t('actions.save_no_mop');
+        }
+        if (selectedZonesCount === 0) return t('actions.select_zone');
+        return selectedZonesCount === 1
+          ? t('actions.clean_zones', { count: '1' })
+          : t('actions.clean_zones_plural', { count: String(selectedZonesCount) });
       default:
         return t('actions.clean');
     }
   };
 
   const handleStop = () => onStop(stopAction);
-  const hasRequiredSelection =
-    selectedMode !== 'zone' ||
-    (areaSelectionMode === 'no_go' || areaSelectionMode === 'no_mop'
-      ? selectedZonesCount > 0
-      : true);
+  const hasRequiredSelection = selectedMode !== 'zone' || selectedZonesCount > 0;
   const handleDockClick = (): void => {
     if (opensDockPopup) {
       setDockPopupOpened(true);

@@ -12,11 +12,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-_LOGGER = logging.getLogger(__name__)
-
 from .coordinator import BotslabVacuumCoordinator
 from .entity import BotslabVacuumEntity
 from .models import BotslabVacuumDevice
+
+_LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES: Final = 0
 
@@ -46,7 +46,7 @@ BUTTON_DESCRIPTIONS: tuple[BotslabButtonEntityDescription, ...] = (
         key="sync_map",
         translation_key="sync_map",
         icon="mdi:cloud-sync",
-        press_fn=lambda _hass, coord, dev: coord.api.start_map_sync(dev.device_name, dev.product_key, 60),
+        press_fn=lambda _hass, coord, dev: coord.async_sync_map(dev.device_name),
     ),
     BotslabButtonEntityDescription(
         key="reset_filter",

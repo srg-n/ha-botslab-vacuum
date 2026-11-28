@@ -148,6 +148,17 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
             "side_brush_left_hours": dev.consumables.side_brush_left_hours,
             "sensor_dirty_left_hours": dev.consumables.sensor_left_hours,
             "status": dev.status,
+            "started": dev.status in (STATUS_CLEANING, STATUS_PAUSED, STATUS_RETURNING),
+            "segment_cleaning": (
+                dev.status in (STATUS_CLEANING, STATUS_PAUSED)
+                and str((dev.props or {}).get("WorkingStatus", "")).strip().lower()
+                in ("2", "cleaninareas", "room_cleaning", "segment_cleaning")
+            ),
+            "zone_cleaning": (
+                dev.status in (STATUS_CLEANING, STATUS_PAUSED)
+                and str((dev.props or {}).get("WorkingStatus", "")).strip().lower()
+                in ("3", "cleaninzones", "zone_cleaning")
+            ),
             "water_level": dev.water_level,
             "mop_mode": dev.mop_mode,
             "auto_boost": dev.auto_boost,
@@ -230,10 +241,15 @@ class BotslabVacuumRobot(BotslabVacuumEntity, StateVacuumEntity):
 
     async def async_set_fan_speed(self, fan_speed: str, **kwargs: Any) -> None:
         """Set fan speed (quiet, standard, powerful, max)."""
-        if not self.device or fan_speed not in FAN_SPEEDS:
+        if not self.device:
             return
+        normalized = str(fan_speed).strip().lower()
+        if normalized not in FAN_SPEEDS:
+            raise ServiceValidationError(
+                f"Invalid fan speed '{fan_speed}'. Expected one of: {', '.join(FAN_SPEEDS)}"
+            )
         await self.coordinator.api.set_fan_speed(
-            self.device.device_name, self.device.product_key, fan_speed
+            self.device.device_name, self.device.product_key, normalized
         )
         await self.coordinator.async_request_refresh()
 

@@ -18,12 +18,20 @@ class BotslabVacuumEntity(CoordinatorEntity[BotslabVacuumCoordinator]):
         """Initialize the entity."""
         super().__init__(coordinator)
         self._device_sn = device.device_name
+        sw_version = (
+            device.props.get("firmware_version")
+            or device.props.get("sw_version")
+            or device.raw.get("softversion")
+            or device.raw.get("version")
+            or None
+        )
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._device_sn)},
             manufacturer=MANUFACTURER,
             name=device.device_title,
             model=device.model,
             serial_number=self._device_sn,
+            sw_version=str(sw_version) if sw_version else None,
         )
 
     @property

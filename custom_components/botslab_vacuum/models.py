@@ -135,9 +135,25 @@ def floor_map_name(map_entry: dict[str, Any], seen: set[str] | None = None) -> s
     strings, otherwise the map card sends a ``select_option`` value the entity rejects.
     Duplicate names are disambiguated with the map id.
     """
-    name = str(map_entry.get("map_name") or f"Map {map_entry.get('map_id')}")
+    raw_id = (
+        map_entry.get("map_id")
+        or map_entry.get("clean_id")
+        or map_entry.get("CleanID")
+        or map_entry.get("mapId")
+        or map_entry.get("id")
+        or ""
+    )
+    raw_name = (
+        map_entry.get("map_name")
+        or map_entry.get("name")
+        or map_entry.get("Nickname")
+        or map_entry.get("nickname")
+        or map_entry.get("mapName")
+        or ""
+    )
+    name = str(raw_name).strip() or f"Map {raw_id}"
     if seen is not None and name in seen:
-        name = f"{name} ({map_entry.get('map_id')})"
+        name = f"{name} ({raw_id})"
     return name
 
 
@@ -155,21 +171,29 @@ def floor_map_entries(
     seen: set[str] = set()
     entries: list[dict[str, Any]] = []
     for m in saved_maps or []:
+        if not isinstance(m, dict):
+            continue
         name = floor_map_name(m, seen)
         seen.add(name)
-        raw_id = m.get("map_id", 0)
+        raw_id = (
+            m.get("map_id")
+            if m.get("map_id") not in (None, "")
+            else (m.get("clean_id") or m.get("CleanID") or m.get("mapId") or m.get("id") or 0)
+        )
+        raw_id_str = str(raw_id).strip()
         entries.append(
             {
-                "id": int(raw_id) if str(raw_id).isdigit() else raw_id,
+                "id": int(raw_id_str) if raw_id_str.isdigit() else raw_id,
                 "name": name,
             }
         )
     if entries:
         return entries
     if current_map_id:
+        cur_str = str(current_map_id).strip()
         return [
             {
-                "id": int(current_map_id) if str(current_map_id).isdigit() else current_map_id,
+                "id": int(cur_str) if cur_str.isdigit() else current_map_id,
                 "name": f"Map {current_map_id}",
             }
         ]
@@ -266,6 +290,7 @@ class BotslabMapInfo:
     no_go_zones: list[dict[str, Any]] = field(default_factory=list)
     clean_zones: list[dict[str, Any]] = field(default_factory=list)
     carpets: list[dict[str, Any]] = field(default_factory=list)
+    map_id: str = ""
 
     def robot_to_pixel(self, x_mm: float, y_mm: float) -> tuple[float, float]:
         """Convert a robot coordinate (mm) to a pixel on the rendered grid.

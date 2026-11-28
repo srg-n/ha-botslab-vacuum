@@ -113,19 +113,22 @@ export function DreameVacuumCard({ hass, config }: DreameVacuumCardProps) {
     resetRepeatCount,
   } = useCardUIState({ vacuumEntityId: config.entity, defaultMode: config.default_mode });
 
-  const mapEntityId = resolveMapEntityId(config.map_entity, deviceEntities.get('camera', 'map'));
+  const mapEntityId = resolveMapEntityId(
+    config.map_entity,
+    deviceEntities.get('camera', 'cleaning_map') ?? deviceEntities.get('camera', 'map'),
+    hass,
+    config.entity
+  );
   const cameraAttributes = mapEntityId ? hass.states[mapEntityId]?.attributes : undefined;
   const mapFloor = readLiveMapFloor(entity?.attributes.selected_map_id, cameraAttributes, loadedImageKey);
   const mapReady = mapFloor.floorReady && mapFloor.imageReady;
-  if (imageDimensions && mapFloor.imageKey !== loadedImageKey) {
-    setImageDimensions(null);
-  }
+  const activeImageDimensions = mapFloor.imageKey === loadedImageKey ? imageDimensions : null;
 
   const mapGeometry = useMapGeometry({
     hass,
     mapEntityId,
-    imageWidth: imageDimensions?.width ?? 0,
-    imageHeight: imageDimensions?.height ?? 0,
+    imageWidth: activeImageDimensions?.width ?? 0,
+    imageHeight: activeImageDimensions?.height ?? 0,
     roomNames: config.room_names,
   });
   const displayedGeometry = mapReady ? mapGeometry : { rooms: [], rotation: mapGeometry.rotation, transform: null };
@@ -134,7 +137,7 @@ export function DreameVacuumCard({ hass, config }: DreameVacuumCardProps) {
   const isCleaning = entity ? entity.state === 'cleaning' || getAttr(entity.attributes.started, false) : false;
   const isSegmentCleaning = entity ? entity.attributes.segment_cleaning === true : false;
 
-  const acceptedFloorId = useRef<number | null | undefined>(undefined);
+  const acceptedFloorId = useRef<string | number | null | undefined>(undefined);
   useEffect(() => {
     const floorChanged = acceptedFloorId.current !== undefined && acceptedFloorId.current !== mapFloor.floorId;
     if (acceptedFloorId.current === undefined || floorChanged) {
@@ -213,8 +216,8 @@ export function DreameVacuumCard({ hass, config }: DreameVacuumCardProps) {
         const zoneType = areaSelectionMode === 'no_mop' ? 'mop' : 'forbid';
         const success = await handleSaveNoGoZone(
           selectedZones,
-          imageDimensions?.width ?? 0,
-          imageDimensions?.height ?? 0,
+          activeImageDimensions?.width ?? 0,
+          activeImageDimensions?.height ?? 0,
           zoneType
         );
         if (success) setSelectedZones([]);
@@ -244,8 +247,8 @@ export function DreameVacuumCard({ hass, config }: DreameVacuumCardProps) {
         selectedMode,
         selectedRooms,
         selectedZones,
-        imageDimensions?.width,
-        imageDimensions?.height,
+        activeImageDimensions?.width,
+        activeImageDimensions?.height,
         repeatCount,
         roomsConfig
       );
@@ -257,7 +260,7 @@ export function DreameVacuumCard({ hass, config }: DreameVacuumCardProps) {
     areaSelectionMode,
     selectedRooms,
     selectedZones,
-    imageDimensions,
+    activeImageDimensions,
     repeatCount,
     config.entity,
     handleClean,
@@ -322,7 +325,7 @@ export function DreameVacuumCard({ hass, config }: DreameVacuumCardProps) {
           <div className="dreame-vacuum-card__header">
             <Header deviceName={deviceName} onSettingsClick={handleSettingsOpen} />
 
-            <MapSelector />
+            <MapSelector onToast={showToast} isSwitchingFloor={!mapFloor.floorReady} />
 
             {deviceEntities.status === 'error' && (
               <p className="dreame-vacuum-card__diagnostic">{t('errors.entity_discovery_failed')}</p>
@@ -344,6 +347,7 @@ export function DreameVacuumCard({ hass, config }: DreameVacuumCardProps) {
               onImageError={setFailedImageToken}
               defaultRoomView={config.default_room_view}
               onZoneDeleted={showToast}
+              isFloorSwitching={!mapFloor.floorReady}
             />
           </div>
 

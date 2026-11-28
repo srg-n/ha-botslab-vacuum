@@ -1,6 +1,6 @@
 export interface LiveMapFloor {
-  /** Vacuum `selected_map_id` when it is a finite number. */
-  floorId: number | null;
+  /** Vacuum `selected_map_id` (numeric when finite, or raw string ID for non-numeric CleanIDs). */
+  floorId: string | number | null;
   /**
    * Camera attributes describe the selected floor. A missing selection is a single-floor device.
    * The live map carries its own `map_id` and points at the saved map it was built from through
@@ -40,14 +40,17 @@ export function readLiveMapFloor(
   // Otherwise, match against current or saved map ID.
   const floorMatches: boolean = Boolean(
     selected === null ||
-    cameraMapId === null ||
-    cameraSavedMapId === selected ||
-    cameraMapId === selected ||
-    (cameraMapId && selected && String(cameraMapId) === String(selected))
+      cameraMapId === null ||
+      cameraSavedMapId === selected ||
+      cameraMapId === selected ||
+      (cameraMapId && selected && String(cameraMapId) === String(selected))
   );
 
+  const floorId: string | number | null =
+    selected === null ? null : Number.isFinite(Number(selected)) ? Number(selected) : selected;
+
   return {
-    floorId: selected && Number.isFinite(Number(selected)) ? Number(selected) : null,
+    floorId,
     floorReady: floorMatches,
     imageToken,
     imageKey,

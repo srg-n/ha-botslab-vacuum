@@ -20,6 +20,9 @@ export const en = {
   // Map Selector
   map_selector: {
     unknown: 'Unknown Map',
+    sync_map: 'Sync map',
+    switching: 'Switching…',
+    floors_count: '{{count}} floors',
   },
 
   // Vacuum Map
@@ -31,9 +34,17 @@ export const en = {
     diagnostic_image_failed: 'The map image failed to load',
     looking_for: 'Looking for: {{entity}}',
     room_overlay: 'Click on room numbers to select rooms for cleaning',
-    zone_overlay_create: 'Click on the map to place a cleaning zone',
-    zone_overlay_resize: 'Drag edges to resize. Click the map to add another zone.',
-    clear_zone: 'Clear zone',
+    zone_overlay_create: 'Drag on the map to draw a cleaning zone, or tap to place one',
+    zone_overlay_resize: 'Drag to move, use corners or edges to resize, or draw another zone',
+    nogo_overlay_create: 'Drag on the map to draw a forbidden zone, or tap to place one',
+    nogo_overlay_resize: 'Drag to move or resize the forbidden zone, then save',
+    nomop_overlay_create: 'Drag on the map to draw a no-mop zone, or tap to place one',
+    nomop_overlay_resize: 'Drag to move or resize the no-mop zone, then save',
+    clear_zone: 'Remove zone',
+    clear_all_zones: 'Clear all',
+    zones_selected: '{{count}} zone',
+    zones_selected_plural: '{{count}} zones',
+    max_zones_reached: 'Maximum {{count}} zones reached',
     switch_to_list: 'Switch to list view',
     switch_to_map: 'Switch to map view',
     room_list_overlay: 'Tap rooms to select for cleaning',
@@ -47,6 +58,7 @@ export const en = {
     no_mop: 'No-Mop',
     virtual_wall: 'Virtual Wall',
     delete_zone: 'Delete Restricted Zone',
+    switching_floor: 'Loading floor map…',
   },
 
   // Mode Tabs
@@ -54,6 +66,8 @@ export const en = {
     room: 'Room',
     all: 'All',
     zone: 'Zone',
+    no_go: 'No-Go Zone',
+    no_mop: 'No-Mop Zone',
   },
 
   // Action Buttons
@@ -63,7 +77,14 @@ export const en = {
     clean_rooms: 'Clean {{count}} Room',
     clean_rooms_plural: 'Clean {{count}} Rooms',
     select_rooms: 'Select Rooms',
+    select_zone: 'Select Zone',
     zone_clean: 'Zone Clean',
+    clean_zones: 'Clean {{count}} Zone',
+    clean_zones_plural: 'Clean {{count}} Zones',
+    save_no_go: 'Save No-Go Zone',
+    save_no_go_plural: 'Save {{count}} No-Go Zones',
+    save_no_mop: 'Save No-Mop Zone',
+    save_no_mop_plural: 'Save {{count}} No-Mop Zones',
     pause: 'Pause',
     resume: 'Resume',
     stop: 'Return to Dock',
@@ -95,6 +116,10 @@ export const en = {
     no_mop_zone_saved: 'No-mop zone saved',
     wall_saved: 'Virtual wall saved',
     zone_deleted: 'Restricted zone deleted',
+    syncing_map: 'Syncing map from vacuum…',
+    switching_map: 'Switching map to {{name}}…',
+    map_switch_failed: 'Could not switch map',
+    map_sync_failed: 'Could not sync map',
     operation_failed: 'Operation failed: {{error}}',
   },
 

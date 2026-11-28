@@ -1,22 +1,24 @@
 @use '../../styles/rtl' as *;
 
 .room-selection-display {
-  padding: 0.75rem 1rem;
-  background: var(--accent-bg, #e3f2fd);
-  border-radius: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  background: var(--accent-bg-transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 28%, transparent);
+  border-radius: 0.625rem;
   margin-bottom: 0.75rem;
-  font-size: 0.875rem;
-  color: var(--text-primary, #1a1a1a);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--text-primary);
 }
 
 .room-selection-display__label {
   font-weight: 600;
 
-  @include margin-end(0.5rem);
+  @include margin-end(0.375rem);
 
-  color: var(--accent-color, #007aff);
+  color: var(--accent-color);
 }
 
 .room-selection-display__rooms {
-  color: var(--text-secondary, #666666);
+  color: var(--text-secondary);
 }

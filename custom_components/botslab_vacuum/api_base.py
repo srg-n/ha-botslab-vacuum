@@ -188,9 +188,11 @@ class BotslabBaseApiClient:
         self._cached_map_bytes: bytes | None = None
         self._cached_robot_pose: list[float] | None = None
         self._cached_is_active: bool = False
+        self._cached_render_by_sn: dict[str, dict[str, Any]] = {}
         self._cached_rooms: dict[str, Any] = {}
         self._cached_map_info: dict[str, Any] = {}
         self.cached_s3_signs: dict[str, str] = {}
+        self._cached_s3_signs_by_sn: dict[str, dict[str, str]] = {}
         self._firmware_cache: dict[str, str] = {}
 
         # Legacy 360 caches

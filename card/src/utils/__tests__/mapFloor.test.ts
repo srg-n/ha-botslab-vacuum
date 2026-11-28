@@ -82,6 +82,22 @@ describe('readLiveMapFloor', () => {
     expect(current.floorReady).toBe(true);
     expect(current.imageReady).toBe(false);
   });
+
+  it('supports non-numeric string floor IDs for modern CleanID maps', () => {
+    const camera = { map_id: 'floor_upstairs_a', saved_map_id: 'floor_upstairs_a', entity_picture: '/map?v=u' };
+    const loaded = readLiveMapFloor(undefined, camera).imageKey;
+
+    expect(readLiveMapFloor('floor_upstairs_a', camera, loaded)).toMatchObject({
+      floorId: 'floor_upstairs_a',
+      floorReady: true,
+      imageReady: true,
+    });
+
+    expect(readLiveMapFloor('floor_ground_b', camera, loaded)).toMatchObject({
+      floorId: 'floor_ground_b',
+      floorReady: false,
+    });
+  });
 });
 
 describe('resolveCleaningSelection', () => {

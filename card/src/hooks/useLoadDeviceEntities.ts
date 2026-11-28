@@ -35,19 +35,29 @@ function friendlyName(entity: HassEntity | undefined, translationKey: string): s
   return typeof name === 'string' && name.length > 0 ? name : translationKey.replaceAll('_', ' ');
 }
 
+interface LoadState {
+  vacuumEntityId: string;
+  status: DeviceEntities['status'];
+  index: DeviceEntityIndex;
+}
+
 export function useLoadDeviceEntities(hass: Hass, vacuumEntityId: string): DeviceEntities {
-  const [status, setStatus] = useState<DeviceEntities['status']>('loading');
-  const [index, setIndex] = useState<DeviceEntityIndex>(EMPTY_INDEX);
+  const [state, setState] = useState<LoadState>(() => ({
+    vacuumEntityId,
+    status: 'loading',
+    index: EMPTY_INDEX,
+  }));
   const hassRef = useRef(hass);
   const reportedError = useRef(false);
-  hassRef.current = hass;
+
+  useEffect(() => {
+    hassRef.current = hass;
+  });
 
   useEffect(() => {
     let active = true;
     let unsubscribe: (() => void) | undefined;
     reportedError.current = false;
-    setStatus('loading');
-    setIndex(EMPTY_INDEX);
 
     async function load(): Promise<void> {
       const currentHass = hassRef.current;
@@ -61,8 +71,11 @@ export function useLoadDeviceEntities(hass: Hass, vacuumEntityId: string): Devic
         }
         const entries = await currentHass.callWS<EntityRegistryEntry[]>({ type: 'config/entity_registry/list' });
         if (!active) return;
-        setIndex(indexDeviceEntities(entries, vacuum.device_id, curatedCompanionKeys()));
-        setStatus('ready');
+        setState({
+          vacuumEntityId,
+          status: 'ready',
+          index: indexDeviceEntities(entries, vacuum.device_id, curatedCompanionKeys()),
+        });
         reportedError.current = false;
       } catch (error) {
         if (!active) return;
@@ -73,8 +86,11 @@ export function useLoadDeviceEntities(hass: Hass, vacuumEntityId: string): Devic
           );
           reportedError.current = true;
         }
-        setIndex(EMPTY_INDEX);
-        setStatus('error');
+        setState({
+          vacuumEntityId,
+          status: 'error',
+          index: EMPTY_INDEX,
+        });
       }
     }
 
@@ -92,6 +108,10 @@ export function useLoadDeviceEntities(hass: Hass, vacuumEntityId: string): Devic
       unsubscribe?.();
     };
   }, [vacuumEntityId]);
+
+  const isCurrent = state.vacuumEntityId === vacuumEntityId;
+  const status: DeviceEntities['status'] = isCurrent ? state.status : 'loading';
+  const index = isCurrent ? state.index : EMPTY_INDEX;
 
   return useMemo(() => {
     const ready = status === 'ready';

@@ -3,11 +3,14 @@
 .vacuum-map {
   position: relative;
   margin: 0 1.25rem;
-  border-radius: 0.9375rem;
+  border-radius: 0.875rem;
   overflow: hidden;
-  background: transparent !important;
-  box-shadow: none !important;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-color);
   min-height: 18.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 
   // Height budget for the map picture. The cap used to sit on this container while
   // the image kept its width-driven height, so a tall map was simply cut off by
@@ -39,15 +42,36 @@
     height: auto;
     max-height: var(--map-max-height, var(--map-max-height-fallback, none));
     object-fit: contain;
-    border-radius: 0.9375rem;
+    border-radius: 0.875rem;
     user-select: none;
     -webkit-user-drag: none;
+    transition: opacity 0.18s ease;
+
+    &--switching {
+      opacity: 0.45;
+    }
   }
 
   &__placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 2rem 1.25rem;
     color: var(--text-secondary);
     text-align: center;
     font-size: 0.875rem;
+
+    &-icon {
+      color: var(--text-tertiary);
+    }
+
+    &-title {
+      margin: 0;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
 
     small {
       font-size: 0.75rem;
@@ -55,20 +79,105 @@
     }
   }
 
+  &__switching {
+    position: absolute;
+    inset-inline-start: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    border-radius: 0.625rem;
+    background: color-mix(in srgb, var(--surface-bg) 92%, transparent);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 4px 16px var(--card-shadow-hover);
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 12;
+
+    &-spinner {
+      color: var(--accent-color);
+      animation: vacuum-map-spin 0.85s linear infinite;
+    }
+  }
+
   &__overlay {
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: transparent;
-    border-radius: 0.9375rem;
+    inset-inline: 0.75rem;
+    bottom: 0.75rem;
+    background: color-mix(in srgb, var(--surface-bg) 88%, transparent);
+    border: 1px solid var(--border-color);
+    border-radius: 0.625rem;
+    padding: 0.375rem 0.75rem;
+    width: fit-content;
+    max-width: calc(100% - 1.5rem);
+    margin: 0 auto;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.875rem;
+    font-size: 0.75rem;
+    font-weight: 500;
     color: var(--text-secondary);
+    text-align: center;
     pointer-events: none;
+    z-index: 4;
+  }
+
+  &__zone-bar {
+    position: absolute;
+    inset-inline: 0.75rem;
+    bottom: 0.75rem;
+    background: color-mix(in srgb, var(--surface-bg) 92%, transparent);
+    border: 1px solid var(--border-color);
+    border-radius: 0.625rem;
+    padding: 0.375rem 0.625rem;
+    width: fit-content;
+    max-width: calc(100% - 1.5rem);
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.625rem;
+    box-shadow: 0 2px 10px var(--card-shadow);
+    z-index: 12;
+
+    &-hint {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      text-align: center;
+      line-height: 1.3;
+    }
+
+    &-clear {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.375rem;
+      border: 1px solid color-mix(in srgb, var(--error-color, #ef4444) 35%, transparent);
+      background: color-mix(in srgb, var(--error-color, #ef4444) 10%, transparent);
+      color: var(--error-color, #ef4444);
+      font-size: 0.75rem;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+
+      &:hover {
+        background: color-mix(in srgb, var(--error-color, #ef4444) 18%, transparent);
+        border-color: color-mix(in srgb, var(--error-color, #ef4444) 55%, transparent);
+      }
+
+      &:focus-visible {
+        outline: 2px solid var(--error-color, #ef4444);
+        outline-offset: 2px;
+      }
+    }
   }
 
   &__cycles {
@@ -79,54 +188,115 @@
     bottom: 1rem;
     width: 2.5rem;
     height: 2.5rem;
-    border-radius: 25%;
     border-radius: 0.375rem;
   }
 
   &__zone {
     position: absolute;
-    border: 0.1875rem solid var(--accent-color);
+    border: 2px solid var(--accent-color);
     background: repeating-linear-gradient(
       45deg,
-      var(--accent-bg-secondary),
-      var(--accent-bg-secondary) 0.625rem,
-      color-mix(in srgb, var(--accent-color) 5%, transparent) 0.625rem,
-      color-mix(in srgb, var(--accent-color) 5%, transparent) 1.25rem
+      color-mix(in srgb, var(--accent-color) 20%, transparent),
+      color-mix(in srgb, var(--accent-color) 20%, transparent) 0.5rem,
+      color-mix(in srgb, var(--accent-color) 6%, transparent) 0.5rem,
+      color-mix(in srgb, var(--accent-color) 6%, transparent) 1rem
     );
     pointer-events: auto;
     border-radius: 0.5rem;
-    box-shadow: 0 0.125rem 0.75rem var(--accent-shadow);
+    box-shadow: 0 2px 10px var(--accent-shadow);
+    touch-action: none;
+    user-select: none;
+    box-sizing: border-box;
+
+    &--movable {
+      cursor: grab;
+    }
+
+    &--active {
+      cursor: grabbing;
+      border-width: 2.5px;
+      box-shadow: 0 4px 16px var(--accent-shadow);
+      z-index: 6;
+    }
+
+    &--draft {
+      border-style: dashed;
+      pointer-events: none;
+      opacity: 0.9;
+    }
 
     &--nogo {
-      border-color: #ef4444;
+      border-color: var(--error-color, #ef4444);
       background: repeating-linear-gradient(
         45deg,
-        rgba(239, 68, 68, 0.25),
-        rgba(239, 68, 68, 0.25) 0.625rem,
-        rgba(239, 68, 68, 0.08) 0.625rem,
-        rgba(239, 68, 68, 0.08) 1.25rem
+        rgba(239, 68, 68, 0.22),
+        rgba(239, 68, 68, 0.22) 0.5rem,
+        rgba(239, 68, 68, 0.06) 0.5rem,
+        rgba(239, 68, 68, 0.06) 1rem
       );
-      box-shadow: 0 0.125rem 0.75rem rgba(239, 68, 68, 0.4);
+      box-shadow: 0 2px 10px rgba(239, 68, 68, 0.3);
 
-      .vacuum-map__zone-handle {
-        background: #ef4444;
+      .vacuum-map__zone-handle,
+      .vacuum-map__zone-corner {
+        background: var(--error-color, #ef4444);
+      }
+
+      .vacuum-map__zone-badge {
+        background: color-mix(in srgb, var(--error-color, #ef4444) 88%, #000);
       }
     }
 
     &--nomop {
-      border-color: #f59e0b;
+      border-color: var(--warning-color, #f59e0b);
       background: repeating-linear-gradient(
         45deg,
-        rgba(245, 158, 11, 0.25),
-        rgba(245, 158, 11, 0.25) 0.625rem,
-        rgba(245, 158, 11, 0.08) 0.625rem,
-        rgba(245, 158, 11, 0.08) 1.25rem
+        rgba(245, 158, 11, 0.22),
+        rgba(245, 158, 11, 0.22) 0.5rem,
+        rgba(245, 158, 11, 0.06) 0.5rem,
+        rgba(245, 158, 11, 0.06) 1rem
       );
-      box-shadow: 0 0.125rem 0.75rem rgba(245, 158, 11, 0.4);
+      box-shadow: 0 2px 10px rgba(245, 158, 11, 0.3);
 
-      .vacuum-map__zone-handle {
-        background: #f59e0b;
+      .vacuum-map__zone-handle,
+      .vacuum-map__zone-corner {
+        background: var(--warning-color, #f59e0b);
       }
+
+      .vacuum-map__zone-badge {
+        background: color-mix(in srgb, var(--warning-color, #f59e0b) 88%, #000);
+      }
+    }
+  }
+
+  &__zone-badge {
+    position: absolute;
+    top: 0.375rem;
+
+    @include position-start(0.375rem);
+
+    transform-origin: top left;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
+    padding: 0.125rem 0.4375rem;
+    border-radius: 0.3125rem;
+    background: color-mix(in srgb, var(--accent-color) 90%, #000);
+    color: var(--text-primary-invert);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.25;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+
+    &-index {
+      font-weight: 700;
+    }
+
+    &-size {
+      opacity: 0.92;
+      font-weight: 500;
     }
   }
 
@@ -140,7 +310,7 @@
     pointer-events: none;
   }
 
-  // Zone container for click handling inside TransformComponent
+  // Zone container for drag-to-draw & click handling inside TransformComponent
   &__zone-container {
     position: absolute;
     top: 0;
@@ -148,26 +318,28 @@
     width: 100%;
     height: 100%;
     pointer-events: auto;
+    touch-action: none;
+
+    &--drawable {
+      cursor: crosshair;
+    }
   }
 
   &__zone-handle {
     position: absolute;
     background: var(--accent-color);
-    border: 0.125rem solid var(--text-primary-invert);
+    border: 2px solid var(--text-primary-invert);
     border-radius: 0.25rem;
     pointer-events: auto;
-    box-shadow: 0 0.125rem 0.25rem var(--handle-shadow);
-    transition: background 0.2s ease;
+    box-shadow: 0 1px 4px var(--handle-shadow);
+    transition: background 0.15s ease;
     z-index: 10;
     touch-action: none;
 
     &::before {
       content: '';
       position: absolute;
-      top: -0.5rem;
-      left: -0.5rem;
-      right: -0.5rem;
-      bottom: -0.5rem;
+      inset: -0.625rem;
     }
 
     &:hover,
@@ -178,8 +350,8 @@
     // Horizontal strips (top/bottom edges)
     &--top,
     &--bottom {
-      width: 2.5rem;
-      height: 0.5rem;
+      width: 2rem;
+      height: 0.4375rem;
       left: 50%;
       cursor: ns-resize;
     }
@@ -195,8 +367,8 @@
     // Vertical strips (left/right edges)
     &--left,
     &--right {
-      width: 0.5rem;
-      height: 2.5rem;
+      width: 0.4375rem;
+      height: 2rem;
       top: 50%;
       cursor: ew-resize;
     }
@@ -210,6 +382,55 @@
     }
   }
 
+  &__zone-corner {
+    position: absolute;
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 50%;
+    background: var(--accent-color);
+    border: 2px solid var(--text-primary-invert);
+    box-shadow: 0 1px 4px var(--handle-shadow);
+    pointer-events: auto;
+    touch-action: none;
+    z-index: 11;
+    transition: background 0.15s ease;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -0.625rem;
+    }
+
+    &:hover,
+    &:active {
+      background: var(--accent-color-hover);
+    }
+
+    &--nw {
+      top: -0.4375rem;
+
+      @include position-start(-0.4375rem);
+
+      cursor: nwse-resize;
+    }
+
+    &--sw {
+      bottom: -0.4375rem;
+
+      @include position-start(-0.4375rem);
+
+      cursor: nesw-resize;
+    }
+
+    &--se {
+      bottom: -0.4375rem;
+
+      @include position-end(-0.4375rem);
+
+      cursor: nwse-resize;
+    }
+  }
+
   &__zone-clear {
     position: absolute;
     top: -0.75rem;
@@ -219,25 +440,34 @@
     width: 1.5rem;
     height: 1.5rem;
     border-radius: 50%;
-    background: var(--error-color, #db4437);
+    background: var(--error-color, #ef4444);
     color: var(--text-primary-invert);
-    border: 0.125rem solid var(--text-primary-invert);
-    font-size: 1.125rem;
-    font-weight: bold;
+    border: 2px solid var(--text-primary-invert);
     cursor: pointer;
     pointer-events: auto;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 0.125rem 0.5rem var(--error-shadow);
-    transition: background 0.2s ease;
+    box-shadow: 0 2px 6px var(--error-shadow);
+    transition: background 0.15s ease;
     line-height: 1;
     padding: 0;
-    z-index: 11;
+    z-index: 12;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -0.5rem;
+    }
 
     &:hover,
     &:active {
       background: var(--error-color-hover);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent-color);
+      outline-offset: 2px;
     }
   }
 
@@ -257,26 +487,23 @@
 
   &__room-segment {
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: fill 0.15s ease, stroke 0.15s ease;
 
-    // Hover state for unselected rooms - use neutral white highlight
+    // Hover state for unselected rooms
     &:hover:not(&--selected) {
-      fill: rgba(255, 255, 255, 0.15);
+      fill: rgba(255, 255, 255, 0.18);
       stroke: rgba(255, 255, 255, 0.9);
       stroke-width: 3;
-      filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.6));
     }
 
     // Selected state - use accent color
     &--selected {
-      fill: var(--accent-bg, rgba(212, 175, 55, 0.3));
-      stroke: var(--accent-color, #d4af37);
+      fill: var(--accent-bg);
+      stroke: var(--accent-color);
       stroke-width: 3;
 
-      // Hover on selected - slightly brighter accent
       &:hover {
-        fill: var(--accent-bg-hover, rgba(212, 175, 55, 0.45));
-        filter: drop-shadow(0 0 6px var(--accent-color-shadow-color, rgba(212, 175, 55, 0.5)));
+        fill: var(--accent-bg-hover);
       }
     }
   }
@@ -296,35 +523,34 @@
     width: 2rem;
     height: 2rem;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.9);
-    border: 0.125rem solid var(--border-color, #e0e0e0);
+    background: var(--surface-bg);
+    border: 2px solid var(--border-color);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 600;
-    color: var(--text-primary, #1a1a1a);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
     cursor: pointer;
     pointer-events: auto;
-    transition: all 0.2s ease;
-    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.1);
+    transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+    box-shadow: 0 2px 6px var(--card-shadow);
     z-index: 2;
 
     &:hover {
-      transform: translate(-50%, -50%) scale(1.1);
-      background: white;
-      box-shadow: 0 0.25rem 0.5rem rgba(0, 0, 0, 0.15);
+      transform: translate(-50%, -50%) scale(1.08);
+      border-color: var(--accent-color);
     }
 
     &--selected {
       background: var(--accent-color);
       color: var(--text-primary-invert);
-      border-color: var(--accent-color, #d4af37);
-      box-shadow: 0 0.125rem 0.5rem var(--accent-color-shadow-color, rgba(212, 175, 55, 0.4));
+      border-color: var(--accent-color);
+      box-shadow: 0 2px 8px var(--accent-shadow);
 
       &:hover {
-        transform: translate(-50%, -50%) scale(1.1);
-        box-shadow: 0 0.25rem 0.75rem var(--accent-color-shadow-color, rgba(212, 175, 55, 0.5));
+        transform: translate(-50%, -50%) scale(1.08);
       }
     }
   }
@@ -350,27 +576,25 @@
     box-sizing: border-box;
 
     &--nogo {
-      border: 0.125rem dashed #ef4444;
+      border: 2px dashed var(--error-color, #ef4444);
       background: repeating-linear-gradient(
         45deg,
-        rgba(239, 68, 68, 0.2),
-        rgba(239, 68, 68, 0.2) 0.5rem,
-        rgba(239, 68, 68, 0.05) 0.5rem,
-        rgba(239, 68, 68, 0.05) 1rem
+        rgba(239, 68, 68, 0.18),
+        rgba(239, 68, 68, 0.18) 0.5rem,
+        rgba(239, 68, 68, 0.04) 0.5rem,
+        rgba(239, 68, 68, 0.04) 1rem
       );
-      box-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
     }
 
     &--nomop {
-      border: 0.125rem dashed #f59e0b;
+      border: 2px dashed var(--warning-color, #f59e0b);
       background: repeating-linear-gradient(
         45deg,
-        rgba(245, 158, 11, 0.2),
-        rgba(245, 158, 11, 0.2) 0.5rem,
-        rgba(245, 158, 11, 0.05) 0.5rem,
-        rgba(245, 158, 11, 0.05) 1rem
+        rgba(245, 158, 11, 0.18),
+        rgba(245, 158, 11, 0.18) 0.5rem,
+        rgba(245, 158, 11, 0.04) 0.5rem,
+        rgba(245, 158, 11, 0.04) 1rem
       );
-      box-shadow: 0 0 8px rgba(245, 158, 11, 0.3);
     }
 
     // A virtual wall is a segment, not a box: rendered as a rotated line so the
@@ -379,10 +603,9 @@
       height: 0;
       padding: 0;
       border: 0;
-      border-top: 0.1875rem dashed #3b82f6;
+      border-top: 3px dashed #3b82f6;
       border-radius: 0;
       background: none;
-      box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
       transform-origin: 0 50%;
       justify-content: center;
 
@@ -390,7 +613,6 @@
         position: absolute;
         left: 50%;
         bottom: 0.25rem;
-        transform: translateX(-50%) rotate(calc(-1 * var(--wall-angle, 0deg)));
         pointer-events: none;
       }
 
@@ -398,7 +620,6 @@
         position: absolute;
         left: 50%;
         top: 0;
-        transform: translate(-50%, -50%);
       }
     }
 
@@ -407,22 +628,21 @@
       font-weight: 700;
       padding: 0.125rem 0.375rem;
       border-radius: 0.25rem;
-      background: rgba(0, 0, 0, 0.65);
+      background: rgba(15, 23, 42, 0.78);
       color: #fff;
-      backdrop-filter: blur(4px);
       user-select: none;
-      line-height: 1.2;
+      line-height: 1.25;
+      white-space: nowrap;
     }
 
     &-delete {
-      width: 1.25rem;
-      height: 1.25rem;
+      position: relative;
+      width: 1.375rem;
+      height: 1.375rem;
       border-radius: 50%;
-      background: #ef4444;
+      background: var(--error-color, #ef4444);
       color: #fff;
-      border: 1px solid rgba(255, 255, 255, 0.8);
-      font-size: 0.875rem;
-      font-weight: bold;
+      border: 1.5px solid #fff;
       cursor: pointer;
 
       // Re-enable hit testing for the one interactive element in this layer.
@@ -432,13 +652,37 @@
       justify-content: center;
       line-height: 1;
       padding: 0;
-      transition: transform 0.15s ease, background 0.15s ease;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+      transition: background 0.15s ease, opacity 0.15s ease;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+
+      &::before {
+        content: '';
+        position: absolute;
+        inset: -0.5rem;
+      }
 
       &:hover {
-        transform: scale(1.15);
-        background: #dc2626;
+        background: var(--error-color-hover, #dc2626);
+      }
+
+      &:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+
+      &:focus-visible {
+        outline: 2px solid var(--accent-color);
+        outline-offset: 2px;
       }
     }
+  }
+}
+
+@keyframes vacuum-map-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }

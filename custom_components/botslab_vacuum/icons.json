@@ -85,8 +85,8 @@
       }
     },
     "button": {
-      "generate_card": {
-        "default": "mdi:card-text-outline"
+      "locate": {
+        "default": "mdi:map-marker-question"
       },
       "refresh_rooms": {
         "default": "mdi:map-marker-path"
@@ -103,7 +103,7 @@
       "reset_side_brush": {
         "default": "mdi:fan"
       },
-      "reset_sensor": {
+      "reset_sensors": {
         "default": "mdi:radar"
       },
       "empty_dust_bin": {
@@ -126,6 +126,9 @@
       "carpet_mode": {
         "default": "mdi:rug"
       },
+      "selected_map": {
+        "default": "mdi:layers-triple-outline"
+      },
       "active_floor": {
         "default": "mdi:layers-triple-outline"
       }
@@ -136,7 +139,7 @@
       }
     },
     "camera": {
-      "live_map": {
+      "cleaning_map": {
         "default": "mdi:floor-plan"
       }
     }
@@ -148,7 +151,7 @@
     "clean_zone": {
       "service": "mdi:select-drag"
     },
-    "set_water_level": {
+    "set_water_flow": {
       "service": "mdi:water-opacity"
     },
     "set_mop_mode": {
@@ -169,8 +172,32 @@
     "reset_consumable": {
       "service": "mdi:restore"
     },
+    "vacuum_reset_consumable": {
+      "service": "mdi:restore"
+    },
+    "vacuum_clean_segment": {
+      "service": "mdi:floor-plan"
+    },
+    "vacuum_clean_zone": {
+      "service": "mdi:select-drag"
+    },
     "set_no_go_zones": {
       "service": "mdi:vector-square-remove"
+    },
+    "add_no_go_zone": {
+      "service": "mdi:vector-square-plus"
+    },
+    "add_no_mop_zone": {
+      "service": "mdi:water-off-outline"
+    },
+    "delete_no_go_zone": {
+      "service": "mdi:vector-square-minus"
+    },
+    "clear_no_go_zones": {
+      "service": "mdi:vector-square-remove"
+    },
+    "clear_no_mop_zones": {
+      "service": "mdi:water-remove-outline"
     },
     "set_schedule": {
       "service": "mdi:calendar-plus"

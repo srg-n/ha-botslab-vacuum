@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { AreaSelectionMode, CleaningSelectionMode } from '@/types/homeassistant';
 import { useTranslation } from '@/hooks';
-import { useMachineState, useLanguage } from '@/contexts';
+import { useMachineState } from '@/contexts';
 
 interface ModeTabsProps {
   selectedMode: CleaningSelectionMode;
@@ -14,7 +14,6 @@ interface ModeTabsProps {
 export function ModeTabs({ selectedMode, areaSelectionMode = 'zone', onModeChange, onAreaSelectionModeChange }: ModeTabsProps) {
   const { t } = useTranslation();
   const { phase } = useMachineState();
-  const lang = useLanguage();
   const [areaMenuOpened, setAreaMenuOpened] = useState(false);
   const areaMenuRef = useRef<HTMLDivElement>(null);
 
@@ -58,9 +57,8 @@ export function ModeTabs({ selectedMode, areaSelectionMode = 'zone', onModeChang
   };
 
   const getAreaModeLabel = (mode: AreaSelectionMode): string => {
-    if (mode === 'zone') return t('modes.zone');
-    if (mode === 'no_go') return lang === 'tr' ? 'Yasak Alan' : 'No-Go Zone';
-    if (mode === 'no_mop') return lang === 'tr' ? 'Paspas Yasak' : 'No-Mop Zone';
+    if (mode === 'no_go') return t('modes.no_go');
+    if (mode === 'no_mop') return t('modes.no_mop');
     return t('modes.zone');
   };
 

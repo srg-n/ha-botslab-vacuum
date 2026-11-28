@@ -3,6 +3,7 @@ clean_rooms:
   description: Commands the Botslab vacuum robot to clean selected rooms with custom repetitions, suction, and water flow.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     room_ids:
@@ -19,12 +20,12 @@ clean_rooms:
         object:
     repeat_times:
       name: Repeat Times
-      description: Number of cleaning cycles for the selected rooms (1 or 2).
+      description: Number of cleaning cycles for the selected rooms (1 to 3).
       default: 1
       selector:
         number:
           min: 1
-          max: 2
+          max: 3
           mode: box
     fan_speed:
       name: Suction Power
@@ -64,6 +65,7 @@ clean_zone:
   description: Commands the Botslab vacuum robot to clean custom rectangular zones.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     zones:
@@ -75,12 +77,12 @@ clean_zone:
         object:
     repeat_times:
       name: Repeat Times
-      description: Number of cleaning passes.
+      description: Number of cleaning passes (1 to 3).
       default: 1
       selector:
         number:
           min: 1
-          max: 2
+          max: 3
           mode: box
     fan_speed:
       name: Suction Power
@@ -108,6 +110,7 @@ set_water_flow:
   description: Change the robot vacuum mopping water pump flow rate.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     water_level:
@@ -126,6 +129,7 @@ set_mop_mode:
   description: Change cleaning mode between vacuuming and mopping.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     mop_mode:
@@ -144,6 +148,7 @@ refresh_rooms:
   description: Explicitly fetch the latest room segmentation and room names from the active cloud map.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
 
 sync_map:
@@ -151,6 +156,7 @@ sync_map:
   description: Command the robot to immediately push its live map package to Alibaba Cloud OSS.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
 
 goto_location:
@@ -158,6 +164,7 @@ goto_location:
   description: Command the robot vacuum to navigate to target coordinates (pin-and-go).
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     x:
@@ -178,6 +185,7 @@ locate:
   description: Play an audible chime or voice greeting on the robot to find it.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
 
 reset_consumable:
@@ -185,6 +193,7 @@ reset_consumable:
   description: Reset life counter for a replaced consumable component.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     consumable_type:
@@ -199,11 +208,41 @@ reset_consumable:
             - side_brush
             - sensor
 
+vacuum_reset_consumable:
+  name: Reset Consumable Life (Alias)
+  description: Alias for reset_consumable for compatibility with vacuum map cards.
+  target:
+    entity:
+      integration: botslab_vacuum
+      domain: vacuum
+  fields:
+    consumable:
+      name: Consumable
+      description: Type of consumable to reset.
+      selector:
+        select:
+          options:
+            - filter
+            - main_brush
+            - side_brush
+            - sensor
+    consumable_type:
+      name: Consumable Type
+      description: Type of consumable to reset.
+      selector:
+        select:
+          options:
+            - filter
+            - main_brush
+            - side_brush
+            - sensor
+
 set_no_go_zones:
   name: Set No-Go Zones
   description: Create, replace, or clear forbidden (no-go) zones on the active map.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     zones:
@@ -240,6 +279,7 @@ add_no_go_zone:
   description: Add a forbidden zone (vacuum & mop restricted) to the active map.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     x1:
@@ -270,6 +310,12 @@ add_no_go_zone:
       selector:
         number:
           mode: box
+    points:
+      name: Points
+      description: Optional bounding box [x1, y1, x2, y2] in mm (alternative to individual coordinates).
+      example: [-1000, -1000, 1000, 1000]
+      selector:
+        object:
     zone_type:
       name: Zone Type
       description: Type of forbidden zone.
@@ -287,6 +333,7 @@ add_no_mop_zone:
   description: Add a mop-only forbidden zone (robot sweeps but avoids mopping with wet pads).
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     x1:
@@ -317,12 +364,19 @@ add_no_mop_zone:
       selector:
         number:
           mode: box
+    points:
+      name: Points
+      description: Optional bounding box [x1, y1, x2, y2] in mm (alternative to individual coordinates).
+      example: [-1000, -1000, 1000, 1000]
+      selector:
+        object:
 
 delete_no_go_zone:
   name: Delete No-Go Zone
   description: Remove a specific forbidden or mop forbidden zone.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     index:
@@ -340,6 +394,12 @@ delete_no_go_zone:
             - forbid
             - mop
             - line
+    points:
+      name: Points
+      description: Optional bounding box [x1, y1, x2, y2] in mm identifying the zone to remove.
+      example: [-1000, -1000, 1000, 1000]
+      selector:
+        object:
     clear_all:
       name: Clear All
       description: Remove all forbidden and no-mop zones.
@@ -352,6 +412,7 @@ clear_no_go_zones:
   description: Remove all regular forbidden zones from the active map.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
 
 clear_no_mop_zones:
@@ -359,6 +420,7 @@ clear_no_mop_zones:
   description: Remove all mop forbidden zones from the active map.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
 
 set_schedule:
@@ -366,6 +428,7 @@ set_schedule:
   description: Create or update a scheduled cleaning routine.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     time:
@@ -429,6 +492,7 @@ delete_schedule:
   description: Remove a cleaning routine by its slot index.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     slot:
@@ -445,6 +509,7 @@ run_schedule:
   description: Immediately execute a stored cleaning routine by its slot index.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     slot:
@@ -461,6 +526,7 @@ vacuum_clean_segment:
   description: Alias for clean_rooms for compatibility with generic vacuum cards.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     segments:
@@ -475,13 +541,14 @@ vacuum_clean_segment:
       selector:
         number:
           min: 1
-          max: 2
+          max: 3
 
 vacuum_clean_zone:
   name: Clean Zone (Alias)
   description: Alias for clean_zone for compatibility with generic vacuum cards.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     zone:
@@ -496,13 +563,14 @@ vacuum_clean_zone:
       selector:
         number:
           min: 1
-          max: 2
+          max: 3
 
 empty_dust_bin:
   name: Empty Dust Bin
   description: Triggers the self-cleaning base station to extract dirt from the vacuum robot's dust bin.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
 
 wash_mop:
@@ -510,6 +578,7 @@ wash_mop:
   description: Triggers the self-cleaning base station to wash the robot's mopping pads.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     wash_type:
@@ -529,6 +598,7 @@ dry_mop:
   description: Triggers the base station hot air blower to dry the mop pads.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     duration:
@@ -547,6 +617,7 @@ set_carpet_areas:
   description: Defines virtual carpet polygons. When mopping, the robot avoids these zones (Virtual Carpet Bridge). When vacuuming, it cleans them with turbo suction.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     carpets:
@@ -561,6 +632,7 @@ clear_carpet_areas:
   description: Clears all stored virtual carpet polygons.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
 
 switch_floor_map:
@@ -568,6 +640,7 @@ switch_floor_map:
   description: Switches the robot's active navigation map to a saved multi-floor map.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     map_id:
@@ -582,6 +655,7 @@ save_floor_map:
   description: Saves the currently explored SLAM map as a permanent floor map.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     map_name:
@@ -596,6 +670,7 @@ delete_floor_map:
   description: Deletes a saved multi-floor map.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     map_id:
@@ -610,6 +685,7 @@ custom_clean_sequencing:
   description: Commands the robot to clean rooms in a custom order with customized passes, suction, and water flow.
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     clean_order:
@@ -630,6 +706,7 @@ remote_control_drive:
   description: Sends manual driving direction pulse to the robot vacuum via direct LAN UDP (port 21020).
   target:
     entity:
+      integration: botslab_vacuum
       domain: vacuum
   fields:
     direction:
