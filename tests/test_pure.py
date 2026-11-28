@@ -3570,6 +3570,63 @@ def test_fault_extraction_and_error_description():
             assert opt in states, f"Missing error_code state '{opt}' in {rel}"
 
 
+@pytest.mark.asyncio
+async def test_s3_signs_ttl_bounding_and_eviction():
+    """Verify s3_signs cache expires old Expires URLs, bounds growth, and evicts on 403."""
+    import time
+    from unittest.mock import AsyncMock, MagicMock
+    from custom_components.botslab_vacuum.api_botslab import (
+        BotslabModernClient,
+        _MAX_CACHED_S3_SIGNS,
+        _is_signed_url_expired,
+    )
+
+    now = time.time()
+    past_url = f"https://oss.example.com/map_old.json?Expires={int(now - 60)}&Signature=abc"
+    future_url = f"https://oss.example.com/map_new.json?Expires={int(now + 600)}&Signature=xyz"
+
+    assert _is_signed_url_expired(past_url, now=now) is True
+    assert _is_signed_url_expired(future_url, now=now) is False
+    assert _is_signed_url_expired("opaque_test_token", now=now) is False
+
+    # Recording mixed signs skips expired URLs and caps fallback dict size
+    client = BotslabModernClient(MagicMock(), "eu1", "m2", "q", "t")
+    client._record_s3_signs(
+        "SN1",
+        {
+            "https://oss.example.com/old": past_url,
+            "https://oss.example.com/cur": future_url,
+        },
+    )
+    assert "https://oss.example.com/old" not in client._cached_s3_signs_by_sn["SN1"]
+    assert client._cached_s3_signs_by_sn["SN1"] == {"https://oss.example.com/cur": future_url}
+
+    many_signs = {
+        f"https://oss.example.com/u{i}": f"https://oss.example.com/u{i}?Expires={int(now + 600)}"
+        for i in range(_MAX_CACHED_S3_SIGNS + 10)
+    }
+    client._record_s3_signs("SN1", many_signs)
+    assert len(client.cached_s3_signs) == _MAX_CACHED_S3_SIGNS
+    assert "https://oss.example.com/u0" not in client.cached_s3_signs
+
+    # HTTP 403 from OSS must evict the rejected URL from all caches
+    bad_url = f"https://oss.example.com/u{_MAX_CACHED_S3_SIGNS + 5}"
+    assert bad_url in client._cached_s3_signs_by_sn["SN1"]
+    assert bad_url in client.cached_s3_signs
+
+    mock_resp = MagicMock()
+    mock_resp.status = 403
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__.return_value = mock_resp
+    mock_cm.__aexit__.return_value = False
+    client.session.get = MagicMock(return_value=mock_cm)
+
+    res = await client._fetch_signed_json(bad_url, f"{bad_url}?Expires={int(now + 600)}")
+    assert res is None
+    assert bad_url not in client.cached_s3_signs
+    assert bad_url not in client._cached_s3_signs_by_sn["SN1"]
+
+
 
 
 

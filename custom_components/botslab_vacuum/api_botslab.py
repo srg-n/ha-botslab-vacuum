@@ -285,6 +285,28 @@ def _raise_on_error_no(response: Any, action: str) -> dict[str, Any]:
     return response
 
 
+_MAX_CACHED_S3_SIGNS = 32
+
+
+def _is_signed_url_expired(signed_url: str | None, now: float | None = None) -> bool:
+    """Return True if a pre-signed OSS URL carries a past ``Expires`` timestamp."""
+    if not signed_url or not isinstance(signed_url, str):
+        return True
+    try:
+        query = urllib.parse.urlsplit(signed_url).query
+        if not query:
+            return False
+        params = urllib.parse.parse_qs(query)
+        exp_vals = params.get("Expires") or params.get("expires")
+        if not exp_vals:
+            return False
+        expires_at = float(exp_vals[0])
+    except (ValueError, TypeError):
+        return False
+    current_ts = time.time() if now is None else now
+    return expires_at <= current_ts
+
+
 def _response_succeeded(response: Any) -> bool:
     """Return True only if both envelope ``code`` and inner ``ErrorNO`` indicate success."""
     if not isinstance(response, dict) or response.get("code") not in (0, "0"):
@@ -522,8 +544,7 @@ class BotslabModernClient(BotslabBaseApiClient):
         inner = data.get("data") or data.get("result") or {}
         signs = inner.get("extend", {}).get("s3_signs", {})
         if signs:
-            self._cached_s3_signs_by_sn[sn] = dict(signs)
-            self.cached_s3_signs.update(signs)
+            self._record_s3_signs(sn, signs)
 
         result_raw = inner.get("result")
         props: dict[str, Any] = {}
@@ -568,8 +589,7 @@ class BotslabModernClient(BotslabBaseApiClient):
         inner = data.get("data") or data.get("result") or {}
         signs = inner.get("s3_signs") or {}
         if signs:
-            self._cached_s3_signs_by_sn[sn] = dict(signs)
-            self.cached_s3_signs.update(signs)
+            self._record_s3_signs(sn, signs)
 
         props: dict[str, Any] = {}
         for item in inner.get("properties") or []:
@@ -669,6 +689,57 @@ class BotslabModernClient(BotslabBaseApiClient):
             return parsed if isinstance(parsed, dict) else {}
         return {}
 
+    def _record_s3_signs(self, sn: str, signs: Any) -> None:
+        """Store per-device ``s3_signs`` and update the bounded fallback cache."""
+        if not isinstance(signs, dict) or not signs:
+            return
+        now = time.time()
+        clean: dict[str, str] = {}
+        for url, signed in signs.items():
+            if (
+                isinstance(url, str)
+                and isinstance(signed, str)
+                and signed
+                and not _is_signed_url_expired(signed, now)
+            ):
+                clean[url] = signed
+        if not clean:
+            return
+
+        # Keep only the latest snapshot per device so old cleaning/floor URLs do not accumulate.
+        self._cached_s3_signs_by_sn[sn] = clean
+
+        # Prune expired entries in the fallback dict, refresh recency, and cap size.
+        for existing_url in [
+            k for k, v in self.cached_s3_signs.items()
+            if _is_signed_url_expired(v, now)
+        ]:
+            self.cached_s3_signs.pop(existing_url, None)
+        for url, signed in clean.items():
+            self.cached_s3_signs.pop(url, None)
+            self.cached_s3_signs[url] = signed
+        while len(self.cached_s3_signs) > _MAX_CACHED_S3_SIGNS:
+            oldest_key = next(iter(self.cached_s3_signs))
+            self.cached_s3_signs.pop(oldest_key, None)
+
+    def _evict_s3_sign(self, url: str | None) -> None:
+        """Remove an expired or rejected signed URL from all S3 caches."""
+        if not url:
+            return
+        self.cached_s3_signs.pop(url, None)
+        for per_sn in self._cached_s3_signs_by_sn.values():
+            per_sn.pop(url, None)
+
+    def _prune_cached_signs(
+        self, cache: dict[str, str], now: float | None = None
+    ) -> dict[str, str]:
+        """Evict expired entries from ``cache`` in-place and return active entries."""
+        ts = time.time() if now is None else now
+        expired = [k for k, v in cache.items() if _is_signed_url_expired(v, ts)]
+        for key in expired:
+            cache.pop(key, None)
+        return dict(cache)
+
     async def _fetch_signed_json(
         self, url: str | None, signed: str | None
     ) -> dict[str, Any] | None:
@@ -681,6 +752,13 @@ class BotslabModernClient(BotslabBaseApiClient):
             ) as resp:
                 if resp.status in (200, 206):
                     return await resp.json(content_type=None)
+                if resp.status in (401, 403, 404, 410):
+                    _LOGGER.debug(
+                        "Evicting rejected/expired OSS signature for %s (HTTP %s)",
+                        url,
+                        resp.status,
+                    )
+                    self._evict_s3_sign(url)
         except Exception as err:
             _LOGGER.debug("Map JSON fetch error for %s: %s", url, err)
         return None
@@ -720,24 +798,27 @@ class BotslabModernClient(BotslabBaseApiClient):
             if v is not None and str(v).strip() not in ("", "0")
         }
 
-        # Prefer fresh signs returned by this poll (or this device's latest signs)
-        # so stale URLs from previously viewed floors cannot hijack map selection.
+        # Prefer fresh signs returned by this poll (or non-expired per-device signs)
+        # so stale or expired URLs cannot trigger dead OSS fetches or hijack map selection.
+        now = time.time()
         device_signs: dict[str, str] = {}
         if sn in self._cached_s3_signs_by_sn:
-            device_signs.update(self._cached_s3_signs_by_sn[sn])
+            device_signs.update(
+                self._prune_cached_signs(self._cached_s3_signs_by_sn[sn], now)
+            )
         elif self.cached_s3_signs:
-            device_signs.update(self.cached_s3_signs)
+            device_signs.update(self._prune_cached_signs(self.cached_s3_signs, now))
         if signs:
             device_signs.update(signs)
 
         candidates: list[tuple[dict[str, Any], str, str]] = []
 
         async def consider(url: str, label: str) -> None:
-            signed = (
-                (signs or {}).get(url)
-                or device_signs.get(url)
-                or self.cached_s3_signs.get(url)
-            )
+            cached_global = self.cached_s3_signs.get(url)
+            if cached_global and _is_signed_url_expired(cached_global, now):
+                self._evict_s3_sign(url)
+                cached_global = None
+            signed = (signs or {}).get(url) or device_signs.get(url) or cached_global
             document = await self._fetch_signed_json(url, signed)
             if document and (document.get("smartArea") or document.get("map")):
                 candidates.append((document, label, url))
