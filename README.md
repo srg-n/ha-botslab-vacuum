@@ -11,6 +11,23 @@ Production-ready Home Assistant integration for **Botslab** and **Qihoo 360** ro
 
 ---
 
+## 📸 Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="42%">
+      <img src="assets/map-card.png" alt="Botslab Vacuum Map Card" width="340" /><br />
+      <sub><b>Interactive Map Card</b> (<code>botslab-vacuum-map-card</code>)</sub>
+    </td>
+    <td align="center" width="58%">
+      <img src="assets/device-page.jpg" alt="Botslab S8 Device & Entities in Home Assistant" width="480" /><br />
+      <sub><b>Device Controls, Sensors & Diagnostics</b></sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## 📱 Supported Devices
 
 | Model | Status | Notes |

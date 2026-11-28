@@ -11,6 +11,23 @@
 
 ---
 
+## 📸 Ekran Görüntüleri
+
+<table>
+  <tr>
+    <td align="center" width="42%">
+      <img src="assets/map-card.png" alt="Botslab Süpürge Harita Kartı" width="340" /><br />
+      <sub><b>İnteraktif Harita Kartı</b> (<code>botslab-vacuum-map-card</code>)</sub>
+    </td>
+    <td align="center" width="58%">
+      <img src="assets/device-page.jpg" alt="Home Assistant'ta Botslab S8 Cihazı ve Varlıklar" width="480" /><br />
+      <sub><b>Cihaz Kontrolleri, Sensörler ve Tanılama</b></sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## 📱 Desteklenen Modeller
 
 | Model | Durum | Notlar |
